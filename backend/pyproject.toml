@@ -31,7 +31,7 @@ dev = [
 standalone = [
     "pyinstaller==5.13.2; sys_platform == 'darwin'",
     "pyinstaller==6.22.2; sys_platform != 'darwin'",
-    "setuptools==80.9.0; sys_platform == 'darwin'",
+    "setuptools==84.0.0; sys_platform == 'darwin'",
 ]
 
 [tool.pytest.ini_options]
