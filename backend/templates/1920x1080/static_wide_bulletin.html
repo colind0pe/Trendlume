@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=1920, height=1080">
+  <title>宽屏深度快讯 - 1920x1080</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    html, body {
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      background: #090a0f;
+      color: #f8fafc;
+      font-family: 'PingFang SC', 'Source Han Sans', 'Microsoft YaHei', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    .page-container {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 100px 120px;
+      background: radial-gradient(circle at 15% 25%, #141726 0%, #090a0f 75%);
+    }
+    .bg-grid {
+      position: absolute;
+      inset: 0;
+      background-image: 
+        linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+      background-size: 80px 80px;
+      pointer-events: none;
+    }
+    /* Left Statement Column */
+    .left-column {
+      position: relative;
+      z-index: 2;
+      width: 720px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+    .pill-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      border-radius: 9999px;
+      background: rgba(99, 102, 241, 0.12);
+      border: 1px solid rgba(99, 102, 241, 0.35);
+      color: #818cf8;
+      font-size: 15px;
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 600;
+      width: fit-content;
+      margin-bottom: 32px;
+    }
+    .pill-badge::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #38bdf8;
+    }
+    .title {
+      font-size: 54px;
+      font-weight: 700;
+      line-height: 1.28;
+      letter-spacing: -0.5px;
+      color: #ffffff;
+      margin-bottom: 28px;
+      text-wrap: balance;
+    }
+    .text {
+      font-size: 26px;
+      font-weight: 400;
+      line-height: 1.65;
+      color: #94a3b8;
+      text-wrap: pretty;
+    }
+    .footer-author {
+      margin-top: 48px;
+      font-size: 16px;
+      font-family: 'JetBrains Mono', Consolas, monospace;
+      color: #64748b;
+    }
+    /* Right Insights Container */
+    .right-column {
+      position: relative;
+      z-index: 2;
+      width: 880px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    .bullet-card {
+      background: rgba(17, 19, 26, 0.85);
+      backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 20px;
+      padding: 32px 36px;
+      display: flex;
+      align-items: flex-start;
+      gap: 20px;
+      box-shadow: 0 16px 40px -10px rgba(0, 0, 0, 0.5);
+    }
+    .bullet-index {
+      font-family: 'JetBrains Mono', Consolas, monospace;
+      font-size: 18px;
+      font-weight: 700;
+      color: #6366f1;
+      background: rgba(99, 102, 241, 0.12);
+      border-radius: 8px;
+      padding: 4px 10px;
+      line-height: 1;
+      margin-top: 4px;
+    }
+    .bullet-content {
+      flex: 1;
+      font-size: 24px;
+      line-height: 1.55;
+      color: #e2e8f0;
+      font-weight: 500;
+    }
+  
+        /* Title & Footer Auto-Collapse when empty */
+        .video-title:empty, .title:empty, .title-text:empty, .main-headline:empty { display: none !important; }
+        .header-section:not(:has(.video-title:not(:empty))):not(:has(.title:not(:empty))) { display: none !important; }
+        .video-title-wrapper:not(:has(.video-title:not(:empty))) { display: none !important; }
+        .top-header:not(:has(.title:not(:empty))):not(:has(.author-tag:not(:empty))) { display: none !important; }
+        .title-group:not(:has(.title-text:not(:empty))) { display: none !important; }
+        .author:empty, .author-text:empty, .author-desc:empty, .author-tag:empty, .logo:empty, .brand:empty, .brand-logo:empty { display: none !important; }
+        .footer:not(:has(.author:not(:empty))):not(:has(.author-text:not(:empty))):not(:has(.author-desc:not(:empty))):not(:has(.logo:not(:empty))):not(:has(.brand-logo:not(:empty))) { display: none !important; }
+        .footer-meta:not(:has(.author:not(:empty))) { display: none !important; }
+        .footer-signature:not(:has(span:not(:empty))) { display: none !important; }
+        .footer-area:not(:has(.author:not(:empty))) { display: none !important; }
+        .footer-author:empty { display: none !important; }
+    
+        /* Enhanced Hero Text adjustments when title is empty */
+        .left-column:not(:has(.title:not(:empty))) .accent-bar { display: none !important; }
+        .left-column:not(:has(.title:not(:empty))) .warm-diamond { display: none !important; }
+        .left-column:not(:has(.title:not(:empty))) .pill-badge { display: none !important; }
+        .left-column:not(:has(.title:not(:empty))) .text { font-size: 38px !important; font-weight: 500 !important; line-height: 1.6 !important; }
+        .content:not(:has(.title:not(:empty))) .text { font-size: 36px !important; line-height: 1.6 !important; }
+        .header-section:not(:has(.video-title:not(:empty))) .title-accent-wrapper { display: none !important; }
+        .top-letterbox:not(:has(.title-text:not(:empty))) .title-group { display: none !important; }
+        .header-zone:not(:has(.main-headline:not(:empty))) .topic-pill { display: none !important; }
+        /* Bulletin copy has predictable line limits for fast mobile landscape reading. */
+        .page-container {
+            padding: 104px 120px 132px;
+        }
+
+        .left-column {
+            width: 720px;
+            max-width: 46%;
+        }
+
+        .title {
+            max-height: 140px;
+            line-height: 1.2;
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 2;
+            overflow: hidden;
+        }
+
+        .text {
+            max-height: 108px;
+            line-height: 1.5;
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 3;
+            overflow: hidden;
+        }
+
+        .right-column {
+            max-width: 48%;
+        }
+
+        .bullet-card {
+            max-height: 190px;
+            overflow: hidden;
+        }
+
+        .bullet-content {
+            max-height: 108px;
+            line-height: 1.45;
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 3;
+            overflow: hidden;
+        }
+        /* Two-line title safety: keep CJK glyph bottoms inside the readable area. */
+        .title,
+        .video-title,
+        .title-text,
+        .main-headline {
+            line-height: 1.24 !important;
+            max-height: none !important;
+        }
+
+        .video-title-wrapper:has(.video-title) {
+            max-height: 240px;
+            overflow: visible;
+        }
+    </style>
+</head>
+<body>
+  <div class="page-container">
+    <div class="bg-grid"></div>
+
+    <div class="left-column">
+      <div class="pill-badge">KEY INSIGHTS</div>
+      <h1 class="title">{{title}}</h1>
+      <p class="text">{{text}}</p>
+      <div class="footer-author">{{author}}</div>
+    </div>
+
+    <div class="right-column">
+      <div class="bullet-card">
+        <div class="bullet-index">01</div>
+        <div class="bullet-content">{{point_1=核心洞察：横画幅与思考的深度共振}}</div>
+      </div>
+      <div class="bullet-card">
+        <div class="bullet-index">02</div>
+        <div class="bullet-content">{{point_2=结构化提炼：以高信噪比传递关键信息}}</div>
+      </div>
+      <div class="bullet-card">
+        <div class="bullet-index">03</div>
+        <div class="bullet-content">{{point_3=知识沉淀：在数字流明中固化思考成果}}</div>
+      </div>
+    </div>
+  </div>
+
+<script>
+    function autoFitTitle(element, maxWidth, minSize, maxSize) {
+        if (!element || !element.textContent || !element.textContent.trim()) return;
+        const measure = document.createElement('span');
+        measure.style.visibility = 'hidden';
+        measure.style.position = 'absolute';
+        measure.style.top = '-9999px';
+        measure.style.left = '-9999px';
+        measure.style.whiteSpace = 'normal';
+        measure.style.width = maxWidth + 'px';
+        const style = window.getComputedStyle(element);
+        measure.style.fontFamily = style.fontFamily;
+        measure.style.fontWeight = style.fontWeight;
+        measure.style.letterSpacing = style.letterSpacing;
+        measure.textContent = element.textContent;
+        document.body.appendChild(measure);
+        let low = minSize, high = maxSize, best = minSize;
+        while (high - low > 0.5) {
+            const mid = (low + high) / 2;
+            measure.style.fontSize = mid + 'px';
+            if (measure.offsetHeight <= 140) {
+                best = mid;
+                low = mid;
+            } else {
+                high = mid;
+            }
+        }
+        document.body.removeChild(measure);
+        element.style.fontSize = best + 'px';
+    }
+    window.addEventListener('DOMContentLoaded', () => {
+        const titleEl = document.querySelector('.title');
+        if (titleEl) autoFitTitle(titleEl, 700, 28, 54);
+    });
+
+    // Auto-collapse title and footer containers when empty
+    try {
+        const titleElements = document.querySelectorAll('.video-title, .title, .title-text, .main-headline');
+        titleElements.forEach(el => {
+            if (!el.textContent.trim()) {
+                const wrapper = el.closest('.header-section, .video-title-wrapper, .title-group, .header-zone, .top-header');
+                if (wrapper) wrapper.style.display = 'none';
+                el.style.display = 'none';
+            }
+        });
+        const footerElements = document.querySelectorAll('.footer, .footer-meta, .footer-author, .footer-signature, .footer-area, .footer-zone');
+        footerElements.forEach(el => {
+            const author = el.querySelector('.author, .author-text, .author-tag');
+            const desc = el.querySelector('.author-desc, .author-description');
+            const brand = el.querySelector('.logo, .brand, .brand-logo');
+            const hasAuthor = author && author.textContent.trim();
+            const hasDesc = desc && desc.textContent.trim();
+            const hasBrand = brand && brand.textContent.trim();
+            if (!hasAuthor && !hasDesc && !hasBrand && !el.textContent.trim()) {
+                el.style.display = 'none';
+            }
+        });
+    } catch (e) {}
+</script>
+</body>
+</html>

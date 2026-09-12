@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="template:media-width" content="1024">
+    <meta name="template:media-height" content="1024">
+    <style>
+        html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+        }
+        
+        body {
+            margin: 0;
+            padding: 0;
+            width: 1080px;
+            height: 1920px;
+            font-family: 'PingFang SC', 'Source Han Sans', 'Microsoft YaHei', sans-serif;
+            overflow: hidden;
+            background: #080d15;
+            position: relative;
+            box-sizing: border-box;
+        }
+        
+        .main-container {
+            position: relative;
+            width: 1080px;
+            height: 1920px;
+            overflow: hidden;
+        }
+        
+        /* 
+           全画幅环境弥散毛玻璃底层：
+           提取传入图片作为全幅弥散氛围，消弭图片与背景的生硬割裂
+        */
+        .background-image {
+            position: absolute;
+            inset: -35px;
+            background-image: url("{{image}}");
+            background-size: cover;
+            background-position: center;
+            filter: blur(48px) brightness(0.55) saturate(1.15);
+            transform: scale(1.1);
+            z-index: 0;
+        }
+        
+        /* 全局毛玻璃通透微光层 */
+        .glass-base-overlay {
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(circle at 50% 50%, rgba(8, 13, 21, 0.25) 0%, rgba(8, 13, 21, 0.72) 100%);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            z-index: 0;
+            pointer-events: none;
+        }
+        
+        /* 顶部轻质毛玻璃标题区 */
+        .video-title-wrapper {
+            position: absolute;
+            top: 170px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 900px;
+            max-height: 230px;
+            box-sizing: border-box;
+            padding: 20px 36px;
+            background: rgba(255, 255, 255, 0.08);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.16);
+            border-radius: 20px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+            z-index: 2;
+            text-align: center;
+        }
+        
+        .video-title {
+            width: 100%;
+            text-align: center;
+            font-size: 68px;
+            font-weight: 700;
+            color: #ffffff;
+            line-height: 1.25;
+            letter-spacing: 2px;
+            text-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+            white-space: normal;
+            text-wrap: balance;
+        }
+        
+        /* 核心 1:1 悬浮画芯视窗（900x900，贴近短视频画布边缘并保留呼吸边距） */
+        .image-wrapper {
+            position: absolute;
+            top: 390px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 900px;
+            height: 900px;
+            box-sizing: border-box;
+            border-radius: 18px;
+            overflow: hidden;
+            box-shadow: 0 25px 60px -10px rgba(0, 0, 0, 0.45);
+            border: 1px solid rgba(255, 255, 255, 0.22);
+            z-index: 1;
+            background: rgba(0, 0, 0, 0.2);
+        }
+        
+        .image-wrapper img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+        
+        /* 底部字幕区域：轻质毛玻璃托条，置于黄金安全视域（距底 >= 500px，与画芯间距 80px） */
+        .content {
+            position: absolute;
+            top: 1230px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 900px;
+            max-height: 190px;
+            box-sizing: border-box;
+            padding: 22px 36px;
+            background: rgba(255, 255, 255, 0.08);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.16);
+            border-radius: 18px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+            z-index: 4;
+            text-align: center;
+        }
+        
+        .text {
+            font-size: 38px;
+            color: #ffffff;
+            text-align: center;
+            line-height: 1.55;
+            font-weight: 500;
+            text-shadow: 0 2px 6px rgba(0, 0, 0, 0.7);
+            white-space: pre-line;
+            overflow-wrap: anywhere;
+        }
+        
+        /* 底部作者与品牌签名栏 */
+        .footer {
+            position: absolute;
+            top: 1510px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 900px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding-top: 26px;
+            border-top: 1px solid rgba(255, 255, 255, 0.18);
+            z-index: 2;
+            box-sizing: border-box;
+        }
+        
+        .author-section {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            text-align: left;
+        }
+        
+        .author {
+            font-size: 28px;
+            font-weight: 600;
+            color: #ffffff;
+            text-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+        }
+        
+        .author:empty, .author-desc:empty, .logo:empty {
+            display: none;
+        }
+        
+        .author-desc {
+            font-size: 20px;
+            color: rgba(255, 255, 255, 0.75);
+            font-weight: 400;
+        }
+        
+        .logo-section {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 4px;
+        }
+        
+        .logo {
+            font-size: 24px;
+            font-weight: 600;
+            color: #ffffff;
+            letter-spacing: 2px;
+            text-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+        }
+    
+        /* Footer auto-collapse when all author/brand info is empty */
+        .footer:not(:has(.author:not(:empty))):not(:has(.author-text:not(:empty))):not(:has(.author-desc:not(:empty))):not(:has(.logo:not(:empty))):not(:has(.brand-logo:not(:empty))) {
+            display: none !important;
+        }
+        .author-bullet {
+            display: none;
+        }
+        .author-name:has(.author-text:not(:empty)) .author-bullet {
+            display: inline-block;
+        }
+        .author-name:has(span:not(.author-bullet):not(:empty)) .author-bullet {
+            display: inline-block;
+        }
+    
+        /* Title & Footer Auto-Collapse when empty */
+        .video-title:empty, .title:empty, .title-text:empty, .main-headline:empty { display: none !important; }
+        .header-section:not(:has(.video-title:not(:empty))):not(:has(.title:not(:empty))) { display: none !important; }
+        .video-title-wrapper:not(:has(.video-title:not(:empty))) { display: none !important; }
+        .top-header:not(:has(.title:not(:empty))):not(:has(.author-tag:not(:empty))) { display: none !important; }
+        .title-group:not(:has(.title-text:not(:empty))) { display: none !important; }
+        .author:empty, .author-text:empty, .author-desc:empty, .author-tag:empty, .logo:empty, .brand:empty, .brand-logo:empty { display: none !important; }
+        .footer:not(:has(.author:not(:empty))):not(:has(.author-text:not(:empty))):not(:has(.author-desc:not(:empty))):not(:has(.logo:not(:empty))):not(:has(.brand-logo:not(:empty))) { display: none !important; }
+        .footer-meta:not(:has(.author:not(:empty))) { display: none !important; }
+        .footer-signature:not(:has(span:not(:empty))) { display: none !important; }
+        .footer-area:not(:has(.author:not(:empty))) { display: none !important; }
+        .footer-author:empty { display: none !important; }
+    
+        /* Enhanced Hero Text adjustments when title is empty */
+        .left-column:not(:has(.title:not(:empty))) .accent-bar { display: none !important; }
+        .left-column:not(:has(.title:not(:empty))) .warm-diamond { display: none !important; }
+        .left-column:not(:has(.title:not(:empty))) .pill-badge { display: none !important; }
+        .left-column:not(:has(.title:not(:empty))) .text { font-size: 38px !important; font-weight: 500 !important; line-height: 1.6 !important; }
+        .content:not(:has(.title:not(:empty))) .text { font-size: 36px !important; line-height: 1.6 !important; }
+        .header-section:not(:has(.video-title:not(:empty))) .title-accent-wrapper { display: none !important; }
+        .top-letterbox:not(:has(.title-text:not(:empty))) .title-group { display: none !important; }
+        .top-letterbox:not(:has(.title-text:not(:empty))) .scope-badge { display: none !important; }
+        .header-zone:not(:has(.main-headline:not(:empty))) .topic-pill { display: none !important; }
+        /* Glass panels remain readable while staying clear of platform controls. */
+        .video-title-wrapper {
+            top: 150px;
+            width: 820px;
+            max-width: calc(100% - 140px);
+            max-height: 210px;
+            padding: 20px 30px;
+        }
+
+        .video-title {
+            font-size: 60px;
+            line-height: 1.2;
+            white-space: normal;
+            max-height: 150px;
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 2;
+            overflow: hidden;
+        }
+
+        .image-wrapper {
+            top: 380px;
+            width: 900px;
+            height: 900px;
+        }
+
+        .content {
+            top: 1345px;
+            width: 820px;
+            max-width: calc(100% - 140px);
+            max-height: 200px;
+            padding: 20px 28px;
+        }
+
+        .text {
+            font-size: 36px;
+            line-height: 1.45;
+            max-height: 150px;
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 3;
+            overflow: hidden;
+        }
+
+        .footer {
+            top: auto;
+            bottom: 170px;
+            width: 820px;
+            max-width: calc(100% - 140px);
+        }
+        /* Two-line title safety: keep CJK glyph bottoms inside the readable area. */
+        .title,
+        .video-title,
+        .title-text,
+        .main-headline {
+            line-height: 1.24 !important;
+            max-height: none !important;
+        }
+
+        .video-title-wrapper:has(.video-title) {
+            max-height: 240px;
+            overflow: visible;
+        }
+    </style>
+</head>
+<body>
+    <div class="main-container">
+        <!-- 全幅弥散毛玻璃底图 -->
+        <div class="background-image"></div>
+        <div class="glass-base-overlay"></div>
+        
+        <!-- 简化的轻质毛玻璃主标题 -->
+        <div class="video-title-wrapper">
+            <div class="video-title">{{title}}</div>
+        </div>
+        
+        <!-- 核心 1:1 悬浮画芯 -->
+        <div class="image-wrapper">
+            <img src="{{image}}" alt="Frame Image">
+        </div>
+        
+        <!-- 简化的轻质毛玻璃字幕条 -->
+        <div class="content">
+            <div class="text">{{text}}</div>
+        </div>
+        
+        <!-- 底部标准信息栏（默认空值，为空自动折叠） -->
+        <div class="footer">
+            <div class="author-section">
+                <div class="author">{{author}}</div>
+                <div class="author-desc">{{describe}}</div>
+            </div>
+            <div class="logo-section">
+                <div class="logo">{{brand}}</div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // Auto-hide empty footer
+        try {
+            const footerEl = document.querySelector('.footer');
+            if (footerEl && !footerEl.textContent.trim()) {
+                footerEl.style.display = 'none';
+            }
+        } catch (e) {}
+
+        /**
+         * 标题自适应字号缩放算法
+         */
+        function autoFitTitle(element, maxWidth, maxHeight, minSize, maxSize) {
+            try {
+                if (!element || !element.textContent || !element.textContent.trim()) return;
+                
+                const measure = document.createElement('span');
+                measure.style.visibility = 'hidden';
+                measure.style.position = 'absolute';
+                measure.style.top = '-9999px';
+                measure.style.left = '-9999px';
+                measure.style.whiteSpace = 'normal';
+                measure.style.overflowWrap = 'break-word';
+                measure.style.width = maxWidth + 'px';
+                measure.style.lineHeight = '1.25';
+                
+                const style = window.getComputedStyle(element);
+                measure.style.fontFamily = style.fontFamily;
+                measure.style.fontWeight = style.fontWeight;
+                measure.style.letterSpacing = style.letterSpacing;
+                measure.textContent = element.textContent;
+                
+                document.body.appendChild(measure);
+                
+                let low = minSize;
+                let high = maxSize;
+                let best = minSize;
+                
+                while (high - low > 0.5) {
+                    const mid = (low + high) / 2;
+                    measure.style.fontSize = mid + 'px';
+                    if (measure.scrollHeight <= maxHeight && measure.scrollWidth <= maxWidth) {
+                        best = mid;
+                        low = mid;
+                    } else {
+                        high = mid;
+                    }
+                }
+                
+                document.body.removeChild(measure);
+                element.style.fontSize = best + 'px';
+            } catch (e) {
+                console.error(e);
+            }
+        }
+        
+        window.addEventListener('DOMContentLoaded', () => {
+            const titleEl = document.querySelector('.video-title');
+            if (titleEl) {
+                autoFitTitle(titleEl, 828, 190, 36, 64);
+            }
+        });
+    </script>
+
+<script>
+    // Auto-collapse title and footer containers when empty
+    try {
+        const titleElements = document.querySelectorAll('.video-title, .title, .title-text, .main-headline');
+        titleElements.forEach(el => {
+            if (!el.textContent.trim()) {
+                const wrapper = el.closest('.header-section, .video-title-wrapper, .title-group, .header-zone, .top-header');
+                if (wrapper) wrapper.style.display = 'none';
+                el.style.display = 'none';
+            }
+        });
+        const footerElements = document.querySelectorAll('.footer, .footer-meta, .footer-author, .footer-signature, .footer-area, .footer-zone');
+        footerElements.forEach(el => {
+            const author = el.querySelector('.author, .author-text, .author-tag');
+            const desc = el.querySelector('.author-desc, .author-description');
+            const brand = el.querySelector('.logo, .brand, .brand-logo');
+            const hasAuthor = author && author.textContent.trim();
+            const hasDesc = desc && desc.textContent.trim();
+            const hasBrand = brand && brand.textContent.trim();
+            if (!hasAuthor && !hasDesc && !hasBrand && !el.textContent.trim()) {
+                el.style.display = 'none';
+            }
+        });
+    } catch (e) {}
+</script>
+</body>
+</html>

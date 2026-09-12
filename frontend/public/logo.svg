@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="264" height="64" viewBox="0 0 264 64" fill="none">
+  <defs>
+    <linearGradient id="tl-logo-bg" x1="4" y1="4" x2="60" y2="60" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#111827" />
+      <stop offset="54%" stop-color="#172554" />
+      <stop offset="100%" stop-color="#312E81" />
+    </linearGradient>
+    <linearGradient id="tl-logo-play" x1="24" y1="43" x2="46" y2="21" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#7C3AED" />
+      <stop offset="48%" stop-color="#6366F1" />
+      <stop offset="100%" stop-color="#22D3EE" />
+    </linearGradient>
+    <linearGradient id="tl-logo-line" x1="15" y1="48" x2="49" y2="20" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#A78BFA" />
+      <stop offset="100%" stop-color="#67E8F9" />
+    </linearGradient>
+    <linearGradient id="tl-logo-spark" x1="39" y1="16" x2="48" y2="29" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="100%" stop-color="#67E8F9" />
+    </linearGradient>
+    <linearGradient id="tl-logo-wordmark" x1="128" y1="22" x2="192" y2="40" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#F8FAFC" />
+      <stop offset="66%" stop-color="#C4B5FD" />
+      <stop offset="100%" stop-color="#67E8F9" />
+    </linearGradient>
+    <filter id="tl-logo-shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="1.8" flood-color="#020617" flood-opacity="0.5" />
+    </filter>
+  </defs>
+
+  <!-- Brand mark: storyboard track, play prism, and publishing spark -->
+  <g transform="translate(4 4) scale(0.875)">
+    <rect x="2" y="2" width="60" height="60" rx="16" fill="url(#tl-logo-bg)" stroke="#A5B4FC" stroke-opacity="0.34" stroke-width="1.6" />
+    <rect x="10.5" y="12.5" width="43" height="35" rx="10" fill="#0F172A" fill-opacity="0.16" stroke="#C4B5FD" stroke-opacity="0.24" />
+    <path d="M16 21.5H21M16 28H19.5M16 40.5H21" stroke="#A5B4FC" stroke-opacity="0.7" stroke-width="2" stroke-linecap="round" />
+    <path
+      d="M28.2 20.7C26.1 19.5 23.5 20.9 23.5 23.3V40.7C23.5 43.1 26.1 44.5 28.2 43.3L44.3 34C46.4 32.8 46.4 29.8 44.3 28.6L28.2 20.7Z"
+      fill="url(#tl-logo-play)"
+      filter="url(#tl-logo-shadow)"
+    />
+    <path d="M29 25.4L41.2 32L29 38.6V25.4Z" fill="#FFFFFF" fill-opacity="0.22" />
+    <path d="M14 49H50" stroke="url(#tl-logo-line)" stroke-opacity="0.82" stroke-width="1.5" stroke-linecap="round" />
+    <circle cx="18" cy="49" r="2" fill="#C4B5FD" />
+    <circle cx="32" cy="49" r="2" fill="#818CF8" />
+    <circle cx="46" cy="49" r="2" fill="#67E8F9" />
+    <path d="M43 16C43 19.1 44.8 21 48 21C44.8 21 43 22.9 43 26C43 22.9 41.2 21 38 21C41.2 21 43 19.1 43 16Z" fill="url(#tl-logo-spark)" />
+    <circle cx="43" cy="21" r="1.2" fill="#FFFFFF" />
+  </g>
+
+  <text x="74" y="36" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="23" font-weight="800" letter-spacing="-0.6px" fill="url(#tl-logo-wordmark)">Trendlume</text>
+  <rect x="198" y="22" width="34" height="15" rx="3.5" fill="#6366F1" fill-opacity="0.12" stroke="#818CF8" stroke-opacity="0.34" stroke-width="1" />
+  <text x="202" y="32.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', monospace" font-size="8.5" font-weight="700" letter-spacing="0.8px" fill="#A5B4FC">STUDIO</text>
+  <text x="75" y="49" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="10.5" font-weight="400" letter-spacing="0.15px" fill="#94A3B8">AI 短视频创作与发布</text>
+</svg>

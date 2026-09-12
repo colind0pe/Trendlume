@@ -1,0 +1,582 @@
+import {
+  Asset,
+  AssetBatchResult,
+  AccountCheckResponse,
+  ContentMode,
+  Project,
+  ProjectDetail,
+  ProjectTemplate,
+  ProjectTemplateUpdate,
+  ProviderConfigItem,
+  ProviderCreatePayload,
+  ImageGenerationTestResult,
+  ProviderTestResult,
+  ProviderUpdatePayload,
+  SystemConfigSummary,
+  PublishingJob,
+  PlatformMetadata,
+  ResearchResponse,
+  ScheduledPublishConfig,
+  Scene,
+  SceneCreate,
+  ScriptGenerateRequest,
+  SocialAccount,
+  StructuredScript,
+  Task,
+  TaskDetail,
+  TemplateCatalogItem,
+  VerificationRequestItem,
+  VoiceInfo,
+  WorkflowJob,
+  WorkflowSnapshot,
+  VisualMode,
+  QRStartResponse,
+  QRStatusResponse,
+} from "./types";
+
+const BASE_URL = "/api/v1";
+
+export class ApiError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  const url = `${BASE_URL}${endpoint}`;
+  const res = await fetch(url, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+  if (!res.ok) {
+    let errorMsg = `HTTP Error ${res.status}`;
+    try {
+      const errorData = await res.json();
+      errorMsg =
+        errorData?.error?.message ||
+        errorData?.detail ||
+        errorData?.message ||
+        errorMsg;
+    } catch {
+      // ignore JSON parse error
+    }
+    throw new ApiError(errorMsg, res.status);
+  }
+
+  const json = await res.json();
+  return json.data !== undefined ? json.data : json;
+}
+
+export const api = {
+  getWorkflow: (taskId: string) => request<WorkflowSnapshot>(`/tasks/${taskId}/workflow`),
+  retryWorkflowStep: (taskId: string, step: string, unitKey?: string) => request<WorkflowJob>(`/tasks/${taskId}/steps/${step}/retry`, { method: "POST", body: JSON.stringify({ unit_key: unitKey }) }),
+  workflowArtifactUrl: (taskId: string, artifactId: string) => `${BASE_URL}/artifacts/${encodeURIComponent(artifactId)}/download?task_id=${encodeURIComponent(taskId)}`,
+
+  // Projects
+  listProjects: (limit = 50, offset = 0) =>
+    request<Project[]>(`/projects?limit=${limit}&offset=${offset}`),
+
+  getProject: (id: string) => request<ProjectDetail>(`/projects/${id}`),
+
+  createProject: (data: {
+    name: string;
+    description?: string;
+    aspect_ratio?: string;
+    default_voice_id?: string;
+    bgm_asset_id?: string | null;
+    settings?: Record<string, any>;
+  }) =>
+    request<Project>("/projects", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  updateProject: (id: string, data: Partial<Project>) =>
+    request<Project>(`/projects/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  getProjectBgm: (projectId: string) =>
+    request<Asset[]>(`/projects/${projectId}/bgm`),
+
+  deleteProject: (id: string) =>
+    request<boolean>(`/projects/${id}`, {
+      method: "DELETE",
+    }),
+
+  // Project Template (1:1)
+  getProjectTemplate: (projectId: string) =>
+    request<ProjectTemplate>(`/projects/${projectId}/template`),
+
+  updateProjectTemplate: (projectId: string, data: ProjectTemplateUpdate) =>
+    request<ProjectTemplate>(`/projects/${projectId}/template`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+
+  // Bundled template catalog across multiple aspect ratios and content modes
+  listTemplates: (aspect_ratio?: string, content_mode?: string) => {
+    const params = new URLSearchParams();
+    if (aspect_ratio) params.set("aspect_ratio", aspect_ratio);
+    if (content_mode) params.set("content_mode", content_mode);
+    const query = params.toString();
+    return request<TemplateCatalogItem[]>(query ? `/templates?${query}` : "/templates");
+  },
+
+  previewTemplate: (
+    templateId: string,
+    data: {
+      title?: string;
+      text?: string;
+      image_asset_id?: string | null;
+      video_asset_id?: string | null;
+      params?: Record<string, any>;
+      custom_css?: string | null;
+    } = {}
+  ) =>
+    request<{
+      template_id: string;
+      width: number;
+      height: number;
+      preview_url: string;
+    }>(`/templates/${encodeURIComponent(templateId)}/preview`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  // Project Tasks (1:N)
+  listProjectTasks: (projectId: string, status?: string) =>
+    request<Task[]>(
+      `/projects/${projectId}/tasks${status ? `?status=${status}` : ""}`
+    ),
+
+  createProjectTask: (
+    projectId: string,
+    data: {
+      title: string;
+      description?: string;
+      job_type?: string;
+      input_payload?: Record<string, any>;
+      visual_mode?: VisualMode;
+      template_id?: string;
+      bgm_asset_id?: string | null;
+      bgm_enabled?: boolean;
+      bgm_volume?: number;
+      voice_id?: string | null;
+      voice_speed?: number;
+      content_mode?: ContentMode;
+      material_provider_id?: string | null;
+      template_params?: Record<string, any>;
+      source_asset_id?: string | null;
+      enable_research?: boolean;
+      search_provider_id?: string | null;
+      research_max_queries?: number;
+      research_max_results?: number;
+      image_workflow_id?: string | null;
+      video_workflow_id?: string | null;
+      target_scene_count?: number;
+      scheduled_publish?: ScheduledPublishConfig | null;
+    }
+  ) =>
+    request<Task>(`/projects/${projectId}/tasks`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  // Tasks Resource & Workflow Actions
+  listAllTasks: (limit = 50, offset = 0, status?: string) =>
+    request<Task[]>(
+      `/tasks?limit=${limit}&offset=${offset}${status ? `&status=${status}` : ""}`
+    ),
+
+  getTask: (taskId: string) => request<TaskDetail>(`/tasks/${taskId}`),
+
+  getTaskResearch: (taskId: string) =>
+    request<ResearchResponse>(`/tasks/${taskId}/research`),
+
+  updateTask: (taskId: string, data: Partial<Task>) =>
+    request<TaskDetail>(`/tasks/${taskId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  deleteTask: (taskId: string) =>
+    request<boolean>(`/tasks/${taskId}`, {
+      method: "DELETE",
+    }),
+
+  generateTaskVideo: (taskId: string) =>
+    request<WorkflowJob>(`/tasks/${taskId}/generate`, {
+      method: "POST",
+    }),
+
+  cancelTaskGeneration: (taskId: string) =>
+    request<boolean>(`/tasks/${taskId}/cancel`, {
+      method: "POST",
+    }),
+
+  cancelScheduledPublish: (taskId: string) =>
+    request<boolean>(`/tasks/${taskId}/scheduled-publish/cancel`, {
+      method: "POST",
+    }),
+
+  retryTaskGeneration: (taskId: string) =>
+    request<WorkflowJob>(`/tasks/${taskId}/retry`, {
+      method: "POST",
+    }),
+
+  duplicateTask: (
+    taskId: string,
+    payload: { mode?: "settings_only" | "settings_and_script"; title?: string } = {}
+  ) =>
+    request<TaskDetail>(`/tasks/${taskId}/duplicate`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  rerenderTask: (
+    taskId: string,
+    payload: {
+      template_id?: string;
+      template_params?: Record<string, any>;
+      bgm_enabled?: boolean | null;
+      bgm_asset_id?: string | null;
+      bgm_volume?: number | null;
+    } = {}
+  ) =>
+    request<{ task_id: string; job: WorkflowJob }>(`/tasks/${taskId}/rerender`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  resumeTaskGeneration: (taskId: string, jobId?: string) =>
+    request<WorkflowJob>(`/tasks/${taskId}/resume`, {
+      method: "POST",
+      body: JSON.stringify(jobId ? { job_id: jobId } : {}),
+    }),
+
+  composeTaskVideo: (taskId: string) =>
+    request<Asset>(`/tasks/${taskId}/compose`, {
+      method: "POST",
+    }),
+
+  publishTaskVideo: (
+    taskId: string,
+    payload: {
+    account_id?: string;
+    title?: string;
+    description?: string;
+    tags?: string[];
+    cover_asset_id?: string | null;
+    } = {}
+  ) =>
+    request<PublishingJob>(`/tasks/${taskId}/publish`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  scheduleTaskVideo: (
+    taskId: string,
+    payload: {
+      scheduled_at: string;
+      account_id?: string;
+      title?: string;
+      description?: string;
+      tags?: string[];
+      cover_asset_id?: string | null;
+    }
+  ) =>
+    request<PublishingJob>(`/tasks/${taskId}/schedule`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  batchUpdateTaskScenes: (taskId: string, scenes: SceneCreate[]) =>
+    request<Scene[]>(`/tasks/${taskId}/scenes`, {
+      method: "PUT",
+      body: JSON.stringify({ scenes }),
+    }),
+
+  // AI Content Generation
+  researchTopic: (
+    topic: string,
+    options: { max_results?: number; max_queries?: number; search_provider_id?: string | null } = {}
+  ) =>
+    request<ResearchResponse>("/generation/research", {
+      method: "POST",
+      body: JSON.stringify({ topic, max_results: options.max_results ?? 5, max_queries: options.max_queries ?? 3, search_provider_id: options.search_provider_id }),
+    }),
+
+  researchTask: (taskId: string) =>
+    request<ResearchResponse>(`/generation/tasks/${taskId}/research`, {
+      method: "POST",
+    }),
+
+  generateScript: (payload: ScriptGenerateRequest) =>
+    request<StructuredScript>("/generation/script", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  applyScriptToTask: (taskId: string, script: StructuredScript) =>
+    request<TaskDetail>(`/generation/tasks/${taskId}/apply-script`, {
+      method: "POST",
+      body: JSON.stringify(script),
+    }),
+
+  generateSceneTTS: (sceneId: string, voiceId?: string, speed?: number) =>
+    request<Scene>(`/generation/scenes/${sceneId}/tts`, {
+      method: "POST",
+      body: JSON.stringify({ voice_id: voiceId, speed }),
+    }),
+
+  generateSceneImage: (sceneId: string, promptOverride?: string) =>
+    request<Scene>(`/generation/scenes/${sceneId}/image`, {
+      method: "POST",
+      body: JSON.stringify({ prompt_override: promptOverride }),
+    }),
+
+  generateSceneVideo: (sceneId: string, promptOverride?: string) =>
+    request<Scene>(`/generation/scenes/${sceneId}/video`, {
+      method: "POST",
+      body: JSON.stringify({ prompt_override: promptOverride }),
+    }),
+
+  // Assets
+  listAssets: (projectId?: string, assetType?: string) => {
+    const params = new URLSearchParams();
+    if (projectId) params.append("project_id", projectId);
+    if (assetType) params.append("asset_type", assetType);
+    const query = params.toString();
+    return request<Asset[]>(`/assets${query ? `?${query}` : ""}`);
+  },
+
+  uploadAsset: async (file: File, assetType: string, projectId?: string) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("asset_type", assetType);
+    if (projectId) formData.append("project_id", projectId);
+
+    const res = await fetch(`${BASE_URL}/assets/upload`, {
+      method: "POST",
+      body: formData,
+    });
+    if (!res.ok) throw new Error("Failed to upload asset");
+    const json = await res.json();
+    return json.data as Asset;
+  },
+
+  deleteAsset: (id: string) =>
+    request<boolean>(`/assets/${id}`, {
+      method: "DELETE",
+    }),
+
+  batchDeleteAssets: (assetIds: string[]) =>
+    request<AssetBatchResult>("/assets/batch/delete", {
+      method: "POST",
+      body: JSON.stringify({ asset_ids: assetIds }),
+    }),
+
+  batchTagAssets: (assetIds: string[], tags: string[]) =>
+    request<AssetBatchResult>("/assets/batch/tags", {
+      method: "POST",
+      body: JSON.stringify({ asset_ids: assetIds, tags }),
+    }),
+
+  downloadAssets: async (assetIds: string[]): Promise<Blob> => {
+    const res = await fetch(`${BASE_URL}/assets/batch/download`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ asset_ids: assetIds }),
+    });
+    if (!res.ok) {
+      let errorMsg = `HTTP Error ${res.status}`;
+      try {
+        const errorData = await res.json();
+        errorMsg = errorData?.error?.message || errorData?.detail || errorData?.message || errorMsg;
+      } catch {
+        // Ignore non-JSON error responses.
+      }
+      throw new ApiError(errorMsg, res.status);
+    }
+    return res.blob();
+  },
+
+  // Providers & Settings (Unified SQLite Management)
+  listProviders: (type?: string) =>
+    request<ProviderConfigItem[]>(`/providers${type ? `?type=${type}` : ""}`),
+
+  createProvider: (data: ProviderCreatePayload) =>
+    request<ProviderConfigItem>("/providers", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  updateProvider: (id: string, data: ProviderUpdatePayload) =>
+    request<ProviderConfigItem>(`/providers/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+
+  deleteProvider: (id: string) =>
+    request<boolean>(`/providers/${id}`, {
+      method: "DELETE",
+    }),
+
+  testProviderConnection: (data: {
+    provider_id?: string;
+    provider_type?: string;
+    provider_name?: string;
+    config?: Record<string, any>;
+    credentials?: Record<string, any>;
+    test_payload?: Record<string, any>;
+  }) =>
+    request<ProviderTestResult>("/providers/test", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  testImageGeneration: (data: {
+    provider_id?: string;
+    provider_name?: string;
+    config?: Record<string, any>;
+    credentials?: Record<string, any>;
+    prompt: string;
+    aspect_ratio?: "1:1" | "16:9" | "9:16";
+    style_preset?: string;
+  }) =>
+    request<ImageGenerationTestResult>("/providers/image/test-generate", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  getSystemConfigSummary: () =>
+    request<SystemConfigSummary>("/providers/summary"),
+
+  listComfyUIWorkflows: () =>
+    request<
+      { id: string; name: string; type: string; subfolder?: string; file_name: string }[]
+    >("/providers/comfyui/workflows"),
+
+  listVoices: (active = false) => request<VoiceInfo[]>(`/providers/voices${active ? "?active=true" : ""}`),
+
+  testVoice: async (
+    voiceId: string,
+    text?: string,
+    providerId?: string,
+    speedRatio?: number,
+  ): Promise<Blob> => {
+    const res = await fetch(`${BASE_URL}/providers/voices/test`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        voice_id: voiceId,
+        text: text || undefined,
+        provider_id: providerId || undefined,
+        speed_ratio: speedRatio,
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err?.detail || err?.error?.message || "语音试听合成失败");
+    }
+    return await res.blob();
+  },
+
+  // Publishing
+  listAccounts: (platform?: string) =>
+    request<SocialAccount[]>(
+      `/publishing/accounts${platform ? `?platform=${platform}` : ""}`
+    ),
+
+  deleteAccount: (accountId: string) =>
+    request<boolean>(`/publishing/accounts/${accountId}`, {
+      method: "DELETE",
+    }),
+
+  checkAccountStatus: (accountId: string) =>
+    request<AccountCheckResponse>(`/publishing/accounts/${accountId}/check`, {
+      method: "POST",
+    }),
+
+  // Interactive QR Code Login
+  startQRAuth: (platform = "douyin", headless = true) =>
+    request<QRStartResponse>("/publishing/auth/qr/start", {
+      method: "POST",
+      body: JSON.stringify({ platform, headless }),
+    }),
+
+  getQRAuthStatus: (sessionId: string) =>
+    request<QRStatusResponse>(`/publishing/auth/qr/status/${sessionId}`),
+
+  completeQRAuth: (data: { session_id: string; account_name: string; username?: string }) =>
+    request<SocialAccount>("/publishing/auth/qr/complete", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  listPublishingJobs: (projectId?: string, status?: string) => {
+    const params = new URLSearchParams();
+    if (projectId) params.append("project_id", projectId);
+    if (status) params.append("status", status);
+    const query = params.toString();
+    return request<PublishingJob[]>(`/publishing/jobs${query ? `?${query}` : ""}`);
+  },
+
+  executePublishingJob: (jobId: string) =>
+    request<PublishingJob>(`/publishing/jobs/${jobId}/publish`, {
+      method: "POST",
+    }),
+
+  retryPublishingJob: (jobId: string) =>
+    request<PublishingJob>(`/publishing/jobs/${jobId}/retry`, {
+      method: "POST",
+    }),
+
+  confirmMissedPublishingJob: (jobId: string) =>
+    request<PublishingJob>(`/publishing/jobs/${jobId}/confirm-missed`, {
+      method: "POST",
+    }),
+
+  cancelPublishingJob: (jobId: string) =>
+    request<PublishingJob>(`/publishing/jobs/${jobId}/cancel`, {
+      method: "POST",
+    }),
+
+  deletePublishingJob: (jobId: string) =>
+    request<boolean>(`/publishing/jobs/${jobId}`, { method: "DELETE" }),
+
+  regenerateTaskMetadata: (taskId: string) =>
+    request<PlatformMetadata>(`/generation/tasks/${taskId}/metadata/regenerate`, { method: "POST" }),
+
+  resolveUncertainPublishingJob: (jobId: string, action: "retry" | "acknowledge") =>
+    request<PublishingJob>(`/publishing/jobs/${jobId}/resolve-uncertain`, {
+      method: "POST",
+      body: JSON.stringify({ action }),
+    }),
+
+  // Interactive Verification Requests (SMS / 2FA)
+  getPendingVerifications: () =>
+    request<VerificationRequestItem[]>("/publishing/verification/pending"),
+
+  submitVerificationCode: (requestId: string, code: string) =>
+    request<boolean>("/publishing/verification/submit", {
+      method: "POST",
+      body: JSON.stringify({ request_id: requestId, code }),
+    }),
+
+  cancelVerification: (requestId: string) =>
+    request<boolean>("/publishing/verification/cancel", {
+      method: "POST",
+      body: JSON.stringify({ request_id: requestId }),
+    }),
+};

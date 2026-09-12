@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="template:media-width" content="1024">
+  <meta name="template:media-height" content="1024">
+  <meta name="viewport" content="width=1920, height=1080">
+  <title>雅致纸韵横屏社论 - 1920x1080</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    html, body {
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      background: #f4efe6;
+      color: #2c231c;
+      font-family: 'PingFang SC', 'Source Han Serif SC', 'Source Han Sans', -apple-system, BlinkMacSystemFont, serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    .page-container {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 90px 120px;
+      background: radial-gradient(ellipse at 30% 40%, #fbf9f4 0%, #ece4d6 100%);
+    }
+    /* Architectural Left Column */
+    .left-column {
+      position: relative;
+      width: 740px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+    .warm-diamond {
+      width: 12px;
+      height: 12px;
+      transform: rotate(45deg);
+      background: #8c6d52;
+      margin-bottom: 36px;
+    }
+    .title {
+      font-size: 50px;
+      font-weight: 700;
+      line-height: 1.32;
+      color: #26201b;
+      margin-bottom: 30px;
+      letter-spacing: 0.5px;
+      text-wrap: balance;
+    }
+    .text {
+      font-size: 25px;
+      font-weight: 400;
+      line-height: 1.75;
+      color: #635548;
+      text-wrap: pretty;
+    }
+    .footer-signature {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-top: 50px;
+      font-size: 16px;
+      font-family: 'JetBrains Mono', Consolas, monospace;
+      color: #8c7b6c;
+      letter-spacing: 1px;
+    }
+    /* Right Matted Card */
+    .right-column {
+      width: 860px;
+      height: 860px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .matted-frame {
+      width: 860px;
+      height: 860px;
+      border-radius: 12px;
+      background: #fcfbfa;
+      border: 1px solid rgba(140, 110, 80, 0.28);
+      box-shadow: 
+        0 24px 60px rgba(60, 48, 38, 0.12),
+        0 4px 16px rgba(60, 48, 38, 0.05);
+      padding: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .matted-frame img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      border-radius: 6px;
+      display: block;
+    }
+  
+        /* Title & Footer Auto-Collapse when empty */
+        .video-title:empty, .title:empty, .title-text:empty, .main-headline:empty { display: none !important; }
+        .header-section:not(:has(.video-title:not(:empty))):not(:has(.title:not(:empty))) { display: none !important; }
+        .video-title-wrapper:not(:has(.video-title:not(:empty))) { display: none !important; }
+        .top-header:not(:has(.title:not(:empty))):not(:has(.author-tag:not(:empty))) { display: none !important; }
+        .title-group:not(:has(.title-text:not(:empty))) { display: none !important; }
+        .author:empty, .author-text:empty, .author-desc:empty, .author-tag:empty, .logo:empty, .brand:empty, .brand-logo:empty { display: none !important; }
+        .footer:not(:has(.author:not(:empty))):not(:has(.author-text:not(:empty))):not(:has(.author-desc:not(:empty))):not(:has(.logo:not(:empty))):not(:has(.brand-logo:not(:empty))) { display: none !important; }
+        .footer-meta:not(:has(.author:not(:empty))) { display: none !important; }
+        .footer-signature:not(:has(span:not(:empty))) { display: none !important; }
+        .footer-area:not(:has(.author:not(:empty))) { display: none !important; }
+        .footer-author:empty { display: none !important; }
+    
+        /* Enhanced Hero Text adjustments when title is empty */
+        .left-column:not(:has(.title:not(:empty))) .accent-bar { display: none !important; }
+        .left-column:not(:has(.title:not(:empty))) .warm-diamond { display: none !important; }
+        .left-column:not(:has(.title:not(:empty))) .pill-badge { display: none !important; }
+        .left-column:not(:has(.title:not(:empty))) .text { font-size: 38px !important; font-weight: 500 !important; line-height: 1.6 !important; }
+        .content:not(:has(.title:not(:empty))) .text { font-size: 36px !important; line-height: 1.6 !important; }
+        .header-section:not(:has(.video-title:not(:empty))) .title-accent-wrapper { display: none !important; }
+        .top-letterbox:not(:has(.title-text:not(:empty))) .title-group { display: none !important; }
+        .header-zone:not(:has(.main-headline:not(:empty))) .topic-pill { display: none !important; }
+        /* Editorial columns align to the same top and bottom platform-safe bounds. */
+        .page-container {
+            padding: 104px 120px 132px;
+        }
+
+        .left-column {
+            width: 720px;
+            max-width: 46%;
+        }
+
+        .title {
+            max-height: 140px;
+            line-height: 1.2;
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 2;
+            overflow: hidden;
+        }
+
+        .text {
+            max-height: 108px;
+            line-height: 1.5;
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 3;
+            overflow: hidden;
+        }
+
+        .right-column {
+            max-width: 48%;
+        }
+        /* Two-line title safety: keep CJK glyph bottoms inside the readable area. */
+        .title,
+        .video-title,
+        .title-text,
+        .main-headline {
+            line-height: 1.24 !important;
+            max-height: none !important;
+        }
+
+        .video-title-wrapper:has(.video-title) {
+            max-height: 240px;
+            overflow: visible;
+        }
+    </style>
+</head>
+<body>
+  <div class="page-container">
+    <div class="left-column">
+      <div class="warm-diamond"></div>
+      <h1 class="title">{{title}}</h1>
+      <p class="text">{{text}}</p>
+      <div class="footer-signature">
+        <span>{{author}}</span>
+      </div>
+    </div>
+
+    <div class="right-column">
+      <div class="matted-frame">
+        <img src="{{image}}" alt="雅致画作">
+      </div>
+    </div>
+  </div>
+
+<script>
+    function autoFitTitle(element, maxWidth, minSize, maxSize) {
+        if (!element || !element.textContent || !element.textContent.trim()) return;
+        const measure = document.createElement('span');
+        measure.style.visibility = 'hidden';
+        measure.style.position = 'absolute';
+        measure.style.top = '-9999px';
+        measure.style.left = '-9999px';
+        measure.style.whiteSpace = 'normal';
+        measure.style.width = maxWidth + 'px';
+        const style = window.getComputedStyle(element);
+        measure.style.fontFamily = style.fontFamily;
+        measure.style.fontWeight = style.fontWeight;
+        measure.style.letterSpacing = style.letterSpacing;
+        measure.textContent = element.textContent;
+        document.body.appendChild(measure);
+        let low = minSize, high = maxSize, best = minSize;
+        while (high - low > 0.5) {
+            const mid = (low + high) / 2;
+            measure.style.fontSize = mid + 'px';
+            if (measure.offsetHeight <= 140) {
+                best = mid;
+                low = mid;
+            } else {
+                high = mid;
+            }
+        }
+        document.body.removeChild(measure);
+        element.style.fontSize = best + 'px';
+    }
+    window.addEventListener('DOMContentLoaded', () => {
+        const titleEl = document.querySelector('.title');
+        if (titleEl) autoFitTitle(titleEl, 700, 26, 50);
+    });
+
+    // Auto-collapse title and footer containers when empty
+    try {
+        const titleElements = document.querySelectorAll('.video-title, .title, .title-text, .main-headline');
+        titleElements.forEach(el => {
+            if (!el.textContent.trim()) {
+                const wrapper = el.closest('.header-section, .video-title-wrapper, .title-group, .header-zone, .top-header');
+                if (wrapper) wrapper.style.display = 'none';
+                el.style.display = 'none';
+            }
+        });
+        const footerElements = document.querySelectorAll('.footer, .footer-meta, .footer-author, .footer-signature, .footer-area, .footer-zone');
+        footerElements.forEach(el => {
+            const author = el.querySelector('.author, .author-text, .author-tag');
+            const desc = el.querySelector('.author-desc, .author-description');
+            const brand = el.querySelector('.logo, .brand, .brand-logo');
+            const hasAuthor = author && author.textContent.trim();
+            const hasDesc = desc && desc.textContent.trim();
+            const hasBrand = brand && brand.textContent.trim();
+            if (!hasAuthor && !hasDesc && !hasBrand && !el.textContent.trim()) {
+                el.style.display = 'none';
+            }
+        });
+    } catch (e) {}
+</script>
+</body>
+</html>

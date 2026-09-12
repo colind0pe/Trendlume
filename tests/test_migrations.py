@@ -1,0 +1,104 @@
+from __future__ import annotations
+
+import sqlite3
+from pathlib import Path
+
+import pytest
+from alembic.config import Config
+from sqlalchemy.ext.asyncio import create_async_engine
+
+from alembic import command
+from src.core.config import settings
+from src.core.database import verify_schema
+from src.models import Base
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+BACKEND_DIR = ROOT_DIR / "backend"
+RELEASE_REVISION = "001_release_baseline"
+
+
+def _migration_database(tmp_path: Path, filename: str) -> tuple[Path, str]:
+    database_file = tmp_path / filename
+    return database_file, f"sqlite+aiosqlite:///{database_file.as_posix()}"
+
+
+def _run_migration(database_url: str, revision: str) -> None:
+    original_database_url = settings.database_url
+    try:
+        settings.database_url = database_url
+        alembic_config = Config(str(BACKEND_DIR / "alembic.ini"))
+        alembic_config.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
+        command.upgrade(alembic_config, revision)
+    finally:
+        settings.database_url = original_database_url
+
+
+def _table_columns(connection: sqlite3.Connection, table_name: str) -> set[str]:
+    return {row[1] for row in connection.execute(f'PRAGMA table_info("{table_name}")')}
+
+
+def _table_names(connection: sqlite3.Connection) -> set[str]:
+    return {
+        row[0]
+        for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        if not row[0].startswith("sqlite_")
+    }
+
+
+def test_release_baseline_creates_current_schema(tmp_path: Path):
+    database_file, database_url = _migration_database(tmp_path, "release.db")
+
+    _run_migration(database_url, "head")
+
+    with sqlite3.connect(database_file) as connection:
+        assert _table_names(connection) == set(Base.metadata.tables) | {"alembic_version"}
+        assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
+            RELEASE_REVISION,
+        )
+        assert "task_batches" not in _table_names(connection)
+        assert "batch_id" not in _table_columns(connection, "tasks")
+        assert "lease_token" in _table_columns(connection, "workflow_jobs")
+        assert {
+            "last_test_connected",
+            "last_tested_at",
+            "last_test_message",
+            "last_test_latency_ms",
+        } <= _table_columns(connection, "provider_configs")
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+@pytest.mark.asyncio
+async def test_verify_schema_reports_missing_columns(tmp_path: Path):
+    database_file, _ = _migration_database(tmp_path, "incomplete.db")
+    engine = create_async_engine(f"sqlite+aiosqlite:///{database_file}")
+
+    async with engine.begin() as connection:
+        for table_name in (
+            "alembic_version",
+            "projects",
+            "project_templates",
+            "tasks",
+            "workflow_jobs",
+            "workflow_step_runs",
+            "workflow_artifacts",
+            "workflow_step_artifacts",
+            "job_events",
+            "assets",
+            "scenes",
+            "credentials",
+            "social_accounts",
+            "publishing_jobs",
+            "provider_configs",
+        ):
+            await connection.exec_driver_sql(
+                f'CREATE TABLE "{table_name}" (id VARCHAR(36) PRIMARY KEY)'
+            )
+
+    missing = await verify_schema(engine)
+    assert "project_templates.template_id" in missing
+    assert "provider_configs.last_test_connected" in missing
+    assert "workflow_jobs.lease_token" in missing
+    assert "workflow_step_runs.input_fingerprint" in missing
+    assert "prompt_call_observations" in missing
+
+    await engine.dispose()

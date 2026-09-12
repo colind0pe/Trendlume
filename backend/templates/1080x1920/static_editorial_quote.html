@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        html {
+            margin: 0;
+            padding: 0;
+        }
+        
+        body {
+            margin: 0;
+            padding: 0;
+            width: 1080px;
+            height: 1920px;
+            background: #fafaf7;
+            font-family: 'PingFang SC', 'Source Han Sans', 'Microsoft YaHei', sans-serif;
+            position: relative;
+            overflow: hidden;
+            box-sizing: border-box;
+        }
+        
+        /* 页面主体容器 */
+        .page-container {
+            width: 1080px;
+            height: 1920px;
+            padding: 90px 70px 80px 70px;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            align-items: center;
+            position: relative;
+            z-index: 1;
+        }
+        
+        /* 画面微点缀层（四角准星、侧边标尺、微导线，与候选1一脉相承） */
+        .bg-decorations {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            z-index: 0;
+            overflow: hidden;
+        }
+        
+        .cross-mark {
+            position: absolute;
+            width: 16px;
+            height: 16px;
+        }
+        .cross-mark::before, .cross-mark::after {
+            content: '';
+            position: absolute;
+            background: rgba(40, 40, 40, 0.22);
+        }
+        .cross-mark::before {
+            top: 7px;
+            left: 0;
+            width: 16px;
+            height: 1.5px;
+        }
+        .cross-mark::after {
+            top: 0;
+            left: 7px;
+            width: 1.5px;
+            height: 16px;
+        }
+        .cross-tl { top: 60px; left: 60px; }
+        .cross-tr { top: 60px; right: 60px; }
+        .cross-bl { bottom: 60px; left: 60px; }
+        .cross-br { bottom: 60px; right: 60px; }
+        
+        .side-ruler {
+            position: absolute;
+            right: 46px;
+            top: 50%;
+            transform: translateY(-50%);
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            align-items: flex-end;
+        }
+        .ruler-tick {
+            height: 1.5px;
+            background: rgba(40, 40, 40, 0.22);
+        }
+        .ruler-tick.sm { width: 8px; }
+        .ruler-tick.lg { width: 16px; background: rgba(40, 40, 40, 0.45); }
+        
+        .side-guide-left {
+            position: absolute;
+            left: 56px;
+            top: 48%;
+            width: 1px;
+            height: 90px;
+            background: linear-gradient(
+                180deg,
+                rgba(40, 40, 40, 0) 0%,
+                rgba(40, 40, 40, 0.2) 30%,
+                rgba(40, 40, 40, 0.2) 70%,
+                rgba(40, 40, 40, 0) 100%
+            );
+        }
+        
+        /* 顶部标题指引区 */
+        .header-section {
+            width: 100%;
+            max-width: 900px;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 14px;
+            margin-top: 10px;
+        }
+        
+        .title {
+            font-size: 68px;
+            font-weight: 800;
+            color: #1c1917;
+            line-height: 1.3;
+            letter-spacing: 2px;
+            max-width: 880px;
+            word-wrap: break-word;
+        }
+        
+        .title-accent-wrapper {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            margin-top: 4px;
+        }
+        .title-accent-dot {
+            width: 4px;
+            height: 4px;
+            border-radius: 50%;
+            background: rgba(28, 25, 23, 0.35);
+        }
+        .title-accent-bar {
+            width: 50px;
+            height: 2px;
+            background: #1c1917;
+        }
+        
+        /* 核心文字金句展示区（纯粹版印大字，占据黄金视觉中枢） */
+        .statement-container {
+            width: 100%;
+            max-width: 920px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            margin: auto 0;
+            padding: 20px 0;
+            position: relative;
+        }
+        
+        .statement-text {
+            font-size: 64px;
+            font-weight: 700;
+            color: #1c1917;
+            line-height: 1.6;
+            letter-spacing: 1.5px;
+            text-align: center;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+            white-space: normal;
+            text-wrap: balance;
+        }
+        
+        .statement-divider {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            margin-top: 48px;
+        }
+        .statement-divider-line {
+            width: 45px;
+            height: 1.5px;
+            background: rgba(40, 40, 40, 0.25);
+        }
+        .statement-divider-diamond {
+            width: 6px;
+            height: 6px;
+            transform: rotate(45deg);
+            background: #1c1917;
+        }
+        
+        /* 底部信息栏 */
+        .footer {
+            width: 100%;
+            max-width: 900px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding-top: 24px;
+            border-top: 1px solid rgba(0, 0, 0, 0.12);
+            box-sizing: border-box;
+        }
+        
+        .author-info {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            text-align: left;
+        }
+        
+        .author-name {
+            font-size: 28px;
+            font-weight: 600;
+            color: #1c1917;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .author-name:empty, .author-desc:empty, .brand-logo:empty {
+            display: none;
+        }
+        
+        .author-bullet {
+            width: 6px;
+            height: 6px;
+            background: #1c1917;
+        }
+        
+        .author-desc {
+            font-size: 20px;
+            color: #78716c;
+            font-weight: 400;
+        }
+        
+        .brand-section {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 4px;
+        }
+        
+        .brand-logo {
+            font-size: 24px;
+            font-weight: 600;
+            color: #1c1917;
+            letter-spacing: 2px;
+        }
+    
+        /* Footer auto-collapse when all author/brand info is empty */
+        .footer:not(:has(.author:not(:empty))):not(:has(.author-text:not(:empty))):not(:has(.author-desc:not(:empty))):not(:has(.logo:not(:empty))):not(:has(.brand-logo:not(:empty))) {
+            display: none !important;
+        }
+        .author-bullet {
+            display: none;
+        }
+        .author-name:has(.author-text:not(:empty)) .author-bullet {
+            display: inline-block;
+        }
+        .author-name:has(span:not(.author-bullet):not(:empty)) .author-bullet {
+            display: inline-block;
+        }
+    
+        /* Title & Footer Auto-Collapse when empty */
+        .video-title:empty, .title:empty, .title-text:empty, .main-headline:empty { display: none !important; }
+        .header-section:not(:has(.video-title:not(:empty))):not(:has(.title:not(:empty))) { display: none !important; }
+        .video-title-wrapper:not(:has(.video-title:not(:empty))) { display: none !important; }
+        .top-header:not(:has(.title:not(:empty))):not(:has(.author-tag:not(:empty))) { display: none !important; }
+        .title-group:not(:has(.title-text:not(:empty))) { display: none !important; }
+        .author:empty, .author-text:empty, .author-desc:empty, .author-tag:empty, .logo:empty, .brand:empty, .brand-logo:empty { display: none !important; }
+        .footer:not(:has(.author:not(:empty))):not(:has(.author-text:not(:empty))):not(:has(.author-desc:not(:empty))):not(:has(.logo:not(:empty))):not(:has(.brand-logo:not(:empty))) { display: none !important; }
+        .footer-meta:not(:has(.author:not(:empty))) { display: none !important; }
+        .footer-signature:not(:has(span:not(:empty))) { display: none !important; }
+        .footer-area:not(:has(.author:not(:empty))) { display: none !important; }
+        .footer-author:empty { display: none !important; }
+    
+        /* Enhanced Hero Text adjustments when title is empty */
+        .left-column:not(:has(.title:not(:empty))) .accent-bar { display: none !important; }
+        .left-column:not(:has(.title:not(:empty))) .warm-diamond { display: none !important; }
+        .left-column:not(:has(.title:not(:empty))) .pill-badge { display: none !important; }
+        .left-column:not(:has(.title:not(:empty))) .text { font-size: 38px !important; font-weight: 500 !important; line-height: 1.6 !important; }
+        .content:not(:has(.title:not(:empty))) .text { font-size: 36px !important; line-height: 1.6 !important; }
+        .header-section:not(:has(.video-title:not(:empty))) .title-accent-wrapper { display: none !important; }
+        .top-letterbox:not(:has(.title-text:not(:empty))) .title-group { display: none !important; }
+        .top-letterbox:not(:has(.title-text:not(:empty))) .scope-badge { display: none !important; }
+        .header-zone:not(:has(.main-headline:not(:empty))) .topic-pill { display: none !important; }
+        /* The statement is centered in the content-safe band, not the full canvas. */
+        .page-container {
+            padding: 0 70px;
+        }
+
+        .header-section {
+            position: absolute;
+            top: 150px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 840px;
+            max-width: calc(100% - 140px);
+            margin: 0;
+            z-index: 2;
+        }
+
+        .title {
+            font-size: 60px;
+            line-height: 1.2;
+            max-height: 150px;
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 2;
+            overflow: hidden;
+        }
+
+        .statement-container {
+            position: absolute;
+            top: 620px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 820px;
+            max-width: calc(100% - 140px);
+            max-height: 480px;
+            margin: 0;
+            padding: 20px 0;
+            z-index: 2;
+        }
+
+        .statement-text {
+            font-size: 54px;
+            line-height: 1.35;
+            max-height: 300px;
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 4;
+            overflow: hidden;
+        }
+
+        .footer {
+            position: absolute;
+            bottom: 170px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 820px;
+            max-width: calc(100% - 140px);
+            z-index: 2;
+        }
+        /* Two-line title safety: keep CJK glyph bottoms inside the readable area. */
+        .title,
+        .video-title,
+        .title-text,
+        .main-headline {
+            line-height: 1.24 !important;
+            max-height: none !important;
+        }
+
+        .video-title-wrapper:has(.video-title) {
+            max-height: 240px;
+            overflow: visible;
+        }
+    </style>
+</head>
+<body>
+    <div class="bg-decorations">
+        <div class="cross-mark cross-tl"></div>
+        <div class="cross-mark cross-tr"></div>
+        <div class="cross-mark cross-bl"></div>
+        <div class="cross-mark cross-br"></div>
+        <div class="side-ruler">
+            <div class="ruler-tick sm"></div>
+            <div class="ruler-tick lg"></div>
+            <div class="ruler-tick sm"></div>
+            <div class="ruler-tick lg"></div>
+            <div class="ruler-tick sm"></div>
+        </div>
+        <div class="side-guide-left"></div>
+    </div>
+    
+    <div class="page-container">
+        <!-- 顶部标题区 -->
+        <div class="header-section">
+            <div class="title">{{title}}</div>
+            <div class="title-accent-wrapper">
+                <div class="title-accent-dot"></div>
+                <div class="title-accent-bar"></div>
+                <div class="title-accent-dot"></div>
+            </div>
+        </div>
+        
+        <!-- 核心文字金句区（纯粹版印大字，占据黄金视觉中枢） -->
+        <div class="statement-container">
+            <div class="statement-text">{{text}}</div>
+            <div class="statement-divider">
+                <div class="statement-divider-line"></div>
+                <div class="statement-divider-diamond"></div>
+                <div class="statement-divider-line"></div>
+            </div>
+        </div>
+        
+        <!-- 底部标准信息栏 -->
+        <div class="footer">
+            <div class="author-info">
+                <div class="author-name">
+                    <span class="author-bullet"></span>
+                    <span class="author-text">{{author}}</span>
+                </div>
+                <div class="author-desc">{{describe}}</div>
+            </div>
+            <div class="brand-section">
+                <div class="brand-logo">{{brand}}</div>
+            </div>
+        </div>
+    </div>
+<script>
+    function autoFitTitle(element, maxWidth, minSize, maxSize) {
+        if (!element || !element.textContent || !element.textContent.trim()) return;
+        const measure = document.createElement('span');
+        measure.style.visibility = 'hidden';
+        measure.style.position = 'absolute';
+        measure.style.top = '-9999px';
+        measure.style.left = '-9999px';
+        measure.style.whiteSpace = 'normal';
+        measure.style.width = maxWidth + 'px';
+        const style = window.getComputedStyle(element);
+        measure.style.fontFamily = style.fontFamily;
+        measure.style.fontWeight = style.fontWeight;
+        measure.style.letterSpacing = style.letterSpacing;
+        measure.textContent = element.textContent;
+        document.body.appendChild(measure);
+        let low = minSize, high = maxSize, best = minSize;
+        while (high - low > 0.5) {
+            const mid = (low + high) / 2;
+            measure.style.fontSize = mid + 'px';
+            if (measure.offsetHeight <= 180) {
+                best = mid;
+                low = mid;
+            } else {
+                high = mid;
+            }
+        }
+        document.body.removeChild(measure);
+        element.style.fontSize = best + 'px';
+    }
+    window.addEventListener('DOMContentLoaded', () => {
+        const titleEl = document.querySelector('.title');
+        if (titleEl) autoFitTitle(titleEl, 880, 36, 64);
+    });
+
+    // Auto-hide empty footer
+    try {
+            const footerEl = document.querySelector('.footer');
+            if (footerEl && !footerEl.textContent.trim()) {
+                footerEl.style.display = 'none';
+            }
+        } catch (e) {}
+</script>
+
+<script>
+    // Auto-collapse title and footer containers when empty
+    try {
+        const titleElements = document.querySelectorAll('.video-title, .title, .title-text, .main-headline');
+        titleElements.forEach(el => {
+            if (!el.textContent.trim()) {
+                const wrapper = el.closest('.header-section, .video-title-wrapper, .title-group, .header-zone, .top-header');
+                if (wrapper) wrapper.style.display = 'none';
+                el.style.display = 'none';
+            }
+        });
+        const footerElements = document.querySelectorAll('.footer, .footer-meta, .footer-author, .footer-signature, .footer-area, .footer-zone');
+        footerElements.forEach(el => {
+            const author = el.querySelector('.author, .author-text, .author-tag');
+            const desc = el.querySelector('.author-desc, .author-description');
+            const brand = el.querySelector('.logo, .brand, .brand-logo');
+            const hasAuthor = author && author.textContent.trim();
+            const hasDesc = desc && desc.textContent.trim();
+            const hasBrand = brand && brand.textContent.trim();
+            if (!hasAuthor && !hasDesc && !hasBrand && !el.textContent.trim()) {
+                el.style.display = 'none';
+            }
+        });
+    } catch (e) {}
+</script>
+</body>
+</html>

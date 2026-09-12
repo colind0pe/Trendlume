@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="template:media-width" content="1024">
+    <meta name="template:media-height" content="1024">
+    <style>
+        html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+        }
+        
+        body {
+            margin: 0;
+            padding: 0;
+            width: 1080px;
+            height: 1920px;
+            background: #f4efe6;
+            font-family: 'PingFang SC', 'Source Han Sans', 'Microsoft YaHei', sans-serif;
+            position: relative;
+            overflow: hidden;
+            box-sizing: border-box;
+        }
+        
+        /* 雅致自然暖纸漫射底色 */
+        .warm-background {
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(ellipse at 50% 35%, #fdfbf7 0%, #ece4d6 100%);
+            z-index: 0;
+        }
+        
+        /* 页面主体容器 */
+        .page-container {
+            position: relative;
+            width: 1080px;
+            height: 1920px;
+            padding: 80px 70px 60px 70px;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            z-index: 1;
+            overflow: hidden;
+        }
+        
+        /* 人文典雅装饰框线与微标尺 */
+        .bg-decorations {
+            position: absolute;
+            inset: 40px;
+            pointer-events: none;
+            z-index: 0;
+            border: 1px solid rgba(140, 110, 80, 0.18);
+        }
+        
+        .corner-notch {
+            position: absolute;
+            width: 12px;
+            height: 12px;
+            border-color: rgba(140, 110, 80, 0.45);
+            border-style: solid;
+        }
+        .notch-tl { top: -1px; left: -1px; border-width: 2px 0 0 2px; }
+        .notch-tr { top: -1px; right: -1px; border-width: 2px 2px 0 0; }
+        .notch-bl { bottom: -1px; left: -1px; border-width: 0 0 2px 2px; }
+        .notch-br { bottom: -1px; right: -1px; border-width: 0 2px 2px 0; }
+        
+        /* 顶部标题区 */
+        .header-section {
+            width: 100%;
+            max-width: 900px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 14px;
+            margin-top: 6px;
+            margin-bottom: 24px;
+            text-align: center;
+        }
+        
+        .video-title {
+            font-size: 66px;
+            font-weight: 700;
+            color: #1f1c19;
+            line-height: 1.28;
+            letter-spacing: 2px;
+            max-width: 880px;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+            white-space: normal;
+            text-wrap: balance;
+        }
+        
+        .title-ornament {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            margin-top: 2px;
+        }
+        .ornament-line {
+            width: 42px;
+            height: 1.5px;
+            background: rgba(140, 110, 80, 0.3);
+        }
+        .ornament-diamond {
+            width: 5px;
+            height: 5px;
+            transform: rotate(45deg);
+            background: #8c6d52;
+        }
+        
+        /* 核心 1:1 图片视窗（900x900，贴近短视频画布边缘并保留呼吸边距） */
+        .image-wrapper {
+            width: 900px;
+            height: 900px;
+            position: relative;
+            box-sizing: border-box;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 280px;
+        }
+        
+        .image-container {
+            width: 100%;
+            height: 100%;
+            border-radius: 4px;
+            overflow: hidden;
+            position: relative;
+            border: 1px solid rgba(138, 109, 82, 0.25);
+            box-shadow: 0 18px 48px -8px rgba(60, 48, 38, 0.16);
+            background: #fdfbf7;
+        }
+        
+        .image-container img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+        
+        /* 正文文字区：置于黄金安全视域（距底 >= 450px） */
+        .text-section {
+            width: 100%;
+            max-width: 900px;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 14px;
+            margin-bottom: auto;
+        }
+        
+        .main-text {
+            font-size: 38px;
+            color: #38312b;
+            line-height: 1.7;
+            font-weight: 500;
+            padding: 0 20px;
+            letter-spacing: 0.5px;
+            white-space: pre-line;
+            word-wrap: break-word;
+        }
+        
+        /* 底部信息栏 */
+        .footer {
+            width: 100%;
+            max-width: 900px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding-top: 24px;
+            border-top: 1px solid rgba(140, 110, 80, 0.22);
+            box-sizing: border-box;
+            margin-top: auto;
+        }
+        
+        .author-info {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            text-align: left;
+        }
+        
+        .author-name {
+            font-size: 28px;
+            font-weight: 600;
+            color: #1f1c19;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .author-name:empty, .author-desc:empty, .brand-logo:empty {
+            display: none;
+        }
+        
+        .author-bullet {
+            width: 6px;
+            height: 6px;
+            transform: rotate(45deg);
+            background: #8c6d52;
+        }
+        
+        .author-desc {
+            font-size: 20px;
+            color: #796859;
+            font-weight: 400;
+        }
+        
+        .brand-section {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 4px;
+        }
+        
+        .brand-logo {
+            font-size: 24px;
+            font-weight: 600;
+            color: #1f1c19;
+            letter-spacing: 2px;
+        }
+    
+        /* Footer auto-collapse when all author/brand info is empty */
+        .footer:not(:has(.author:not(:empty))):not(:has(.author-text:not(:empty))):not(:has(.author-desc:not(:empty))):not(:has(.logo:not(:empty))):not(:has(.brand-logo:not(:empty))) {
+            display: none !important;
+        }
+        .author-bullet {
+            display: none;
+        }
+        .author-name:has(.author-text:not(:empty)) .author-bullet {
+            display: inline-block;
+        }
+        .author-name:has(span:not(.author-bullet):not(:empty)) .author-bullet {
+            display: inline-block;
+        }
+    
+        /* Title & Footer Auto-Collapse when empty */
+        .video-title:empty, .title:empty, .title-text:empty, .main-headline:empty { display: none !important; }
+        .header-section:not(:has(.video-title:not(:empty))):not(:has(.title:not(:empty))) { display: none !important; }
+        .video-title-wrapper:not(:has(.video-title:not(:empty))) { display: none !important; }
+        .top-header:not(:has(.title:not(:empty))):not(:has(.author-tag:not(:empty))) { display: none !important; }
+        .title-group:not(:has(.title-text:not(:empty))) { display: none !important; }
+        .author:empty, .author-text:empty, .author-desc:empty, .author-tag:empty, .logo:empty, .brand:empty, .brand-logo:empty { display: none !important; }
+        .footer:not(:has(.author:not(:empty))):not(:has(.author-text:not(:empty))):not(:has(.author-desc:not(:empty))):not(:has(.logo:not(:empty))):not(:has(.brand-logo:not(:empty))) { display: none !important; }
+        .footer-meta:not(:has(.author:not(:empty))) { display: none !important; }
+        .footer-signature:not(:has(span:not(:empty))) { display: none !important; }
+        .footer-area:not(:has(.author:not(:empty))) { display: none !important; }
+        .footer-author:empty { display: none !important; }
+    
+        /* Enhanced Hero Text adjustments when title is empty */
+        .left-column:not(:has(.title:not(:empty))) .accent-bar { display: none !important; }
+        .left-column:not(:has(.title:not(:empty))) .warm-diamond { display: none !important; }
+        .left-column:not(:has(.title:not(:empty))) .pill-badge { display: none !important; }
+        .left-column:not(:has(.title:not(:empty))) .text { font-size: 38px !important; font-weight: 500 !important; line-height: 1.6 !important; }
+        .content:not(:has(.title:not(:empty))) .text { font-size: 36px !important; line-height: 1.6 !important; }
+        .header-section:not(:has(.video-title:not(:empty))) .title-accent-wrapper { display: none !important; }
+        .top-letterbox:not(:has(.title-text:not(:empty))) .title-group { display: none !important; }
+        .top-letterbox:not(:has(.title-text:not(:empty))) .scope-badge { display: none !important; }
+        .header-zone:not(:has(.main-headline:not(:empty))) .topic-pill { display: none !important; }
+        /* Warm editorial layout follows a predictable thumb-first reading path. */
+        .page-container {
+            padding: 0 70px;
+        }
+
+        .header-section {
+            position: absolute;
+            top: 150px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 840px;
+            max-width: calc(100% - 140px);
+            margin: 0;
+            z-index: 3;
+        }
+
+        .video-title {
+            font-size: 60px;
+            line-height: 1.2;
+            max-height: 150px;
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 2;
+            overflow: hidden;
+        }
+
+        .image-wrapper {
+            position: absolute;
+            top: 360px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 900px;
+            height: 900px;
+            margin: 0;
+            z-index: 2;
+        }
+
+        .text-section {
+            position: absolute;
+            top: 1340px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 820px;
+            max-width: calc(100% - 140px);
+            max-height: 190px;
+            margin: 0;
+            z-index: 3;
+        }
+
+        .main-text {
+            font-size: 36px;
+            line-height: 1.45;
+            max-height: 160px;
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 3;
+            overflow: hidden;
+        }
+
+        .footer {
+            position: absolute;
+            bottom: 170px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 820px;
+            max-width: calc(100% - 140px);
+            margin: 0;
+            z-index: 3;
+        }
+        /* Two-line title safety: keep CJK glyph bottoms inside the readable area. */
+        .title,
+        .video-title,
+        .title-text,
+        .main-headline {
+            line-height: 1.24 !important;
+            max-height: none !important;
+        }
+
+        .video-title-wrapper:has(.video-title) {
+            max-height: 240px;
+            overflow: visible;
+        }
+    </style>
+</head>
+<body>
+    <div class="warm-background"></div>
+    
+    <div class="page-container">
+        <div class="bg-decorations">
+            <div class="corner-notch notch-tl"></div>
+            <div class="corner-notch notch-tr"></div>
+            <div class="corner-notch notch-bl"></div>
+            <div class="corner-notch notch-br"></div>
+        </div>
+        
+        <!-- 顶部标题区 -->
+        <div class="header-section">
+            <div class="video-title">{{title}}</div>
+            <div class="title-ornament">
+                <span class="ornament-line"></span>
+                <span class="ornament-diamond"></span>
+                <span class="ornament-line"></span>
+            </div>
+        </div>
+        
+        <!-- 核心 1:1 图片视窗 -->
+        <div class="image-wrapper">
+            <div class="image-container">
+                <img src="{{image}}" alt="visual content">
+            </div>
+        </div>
+        
+        <!-- 正文叙事区 -->
+        <div class="text-section">
+            <div class="main-text">{{text}}</div>
+        </div>
+        
+        <!-- 底部作者与品牌签名栏 -->
+        <div class="footer">
+            <div class="author-info">
+                <div class="author-name">
+                    <span class="author-bullet"></span>
+                    <span>{{author}}</span>
+                </div>
+                <div class="author-desc">{{describe}}</div>
+            </div>
+            <div class="brand-section">
+                <div class="brand-logo">{{brand}}</div>
+            </div>
+        </div>
+    </div>
+<script>
+    function autoFitTitle(element, maxWidth, minSize, maxSize) {
+        if (!element || !element.textContent || !element.textContent.trim()) return;
+        const measure = document.createElement('span');
+        measure.style.visibility = 'hidden';
+        measure.style.position = 'absolute';
+        measure.style.top = '-9999px';
+        measure.style.left = '-9999px';
+        measure.style.whiteSpace = 'normal';
+        measure.style.width = maxWidth + 'px';
+        const style = window.getComputedStyle(element);
+        measure.style.fontFamily = style.fontFamily;
+        measure.style.fontWeight = style.fontWeight;
+        measure.style.letterSpacing = style.letterSpacing;
+        measure.textContent = element.textContent;
+        document.body.appendChild(measure);
+        let low = minSize, high = maxSize, best = minSize;
+        while (high - low > 0.5) {
+            const mid = (low + high) / 2;
+            measure.style.fontSize = mid + 'px';
+            if (measure.offsetHeight <= 180) {
+                best = mid;
+                low = mid;
+            } else {
+                high = mid;
+            }
+        }
+        document.body.removeChild(measure);
+        element.style.fontSize = best + 'px';
+    }
+    window.addEventListener('DOMContentLoaded', () => {
+        const titleEl = document.querySelector('.video-title');
+        if (titleEl) autoFitTitle(titleEl, 880, 34, 64);
+    });
+
+    // Auto-hide empty footer
+    try {
+            const footerEl = document.querySelector('.footer');
+            if (footerEl && !footerEl.textContent.trim()) {
+                footerEl.style.display = 'none';
+            }
+        } catch (e) {}
+</script>
+
+<script>
+    // Auto-collapse title and footer containers when empty
+    try {
+        const titleElements = document.querySelectorAll('.video-title, .title, .title-text, .main-headline');
+        titleElements.forEach(el => {
+            if (!el.textContent.trim()) {
+                const wrapper = el.closest('.header-section, .video-title-wrapper, .title-group, .header-zone, .top-header');
+                if (wrapper) wrapper.style.display = 'none';
+                el.style.display = 'none';
+            }
+        });
+        const footerElements = document.querySelectorAll('.footer, .footer-meta, .footer-author, .footer-signature, .footer-area, .footer-zone');
+        footerElements.forEach(el => {
+            const author = el.querySelector('.author, .author-text, .author-tag');
+            const desc = el.querySelector('.author-desc, .author-description');
+            const brand = el.querySelector('.logo, .brand, .brand-logo');
+            const hasAuthor = author && author.textContent.trim();
+            const hasDesc = desc && desc.textContent.trim();
+            const hasBrand = brand && brand.textContent.trim();
+            if (!hasAuthor && !hasDesc && !hasBrand && !el.textContent.trim()) {
+                el.style.display = 'none';
+            }
+        });
+    } catch (e) {}
+</script>
+</body>
+</html>

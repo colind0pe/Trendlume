@@ -1,0 +1,29 @@
+{
+  "snapshot_id": "stage5-candidate-v2",
+  "prompt_id": "script.structured",
+  "prompt_version": "v2-candidate",
+  "template_hash": "fixture-candidate",
+  "cases": [
+    {
+      "case_id": "scene_count_improves",
+      "prompt_id": "script.structured",
+      "input": {"topic": "城市夜班交通", "target_scene_count": 8, "sources": []},
+      "expected": {"target_scene_count": 8},
+      "output": {"title": "夜班交通", "scenes": [{"sequence_index": 0, "narration_text": "一段", "visual_prompt": "夜间图片画面"}, {"sequence_index": 1, "narration_text": "二段", "visual_prompt": "夜间图片画面"}, {"sequence_index": 2, "narration_text": "三段", "visual_prompt": "夜间图片画面"}, {"sequence_index": 3, "narration_text": "四段", "visual_prompt": "夜间图片画面"}, {"sequence_index": 4, "narration_text": "五段", "visual_prompt": "夜间图片画面"}, {"sequence_index": 5, "narration_text": "六段", "visual_prompt": "夜间图片画面"}, {"sequence_index": 6, "narration_text": "七段", "visual_prompt": "夜间图片画面"}, {"sequence_index": 7, "narration_text": "八段", "visual_prompt": "夜间图片画面"}]}
+    },
+    {
+      "case_id": "title_regresses",
+      "prompt_id": "script.structured",
+      "input": {"topic": "咖啡器具", "sources": []},
+      "expected": {"title_max_length": 30},
+      "output": {"title": "这是一个非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常长的标题"}
+    },
+    {
+      "case_id": "stable_case",
+      "prompt_id": "script.structured",
+      "input": {"topic": "城市散步", "sources": []},
+      "expected": {"title_max_length": 30},
+      "output": {"title": "城市散步观察"}
+    }
+  ]
+}

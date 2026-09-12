@@ -1,0 +1,59 @@
+# Local-only
+.agents/
+references/
+AGENTS.md
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# Python environments and caches
+.venv/
+**/.venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+**/.pytest_cache/
+.ruff_cache/
+**/.ruff_cache/
+
+# Frontend dependencies and build output
+node_modules/
+**/node_modules/
+.next/
+**/.next/
+**/.next-*/
+out/
+**/out/
+*.tsbuildinfo
+
+# Runtime databases and SQLite sidecars/backups
+*.db
+*.db-*
+*.db.*
+*.sqlite
+*.sqlite-*
+*.sqlite.*
+*.sqlite3
+*.sqlite3-*
+*.sqlite3.*
+
+# Logs
+*.log
+
+# Test runtime directories
+.test-tmp-*/
+
+# Generated runtime media and storage
+data/storage/
+**/data/storage/
+data/.credential-encryption-key
+
+# Standalone packaging output
+standalone/.build/
+standalone/dist/

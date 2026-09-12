@@ -1,0 +1,29 @@
+{
+  "snapshot_id": "stage5-baseline-v1",
+  "prompt_id": "script.structured",
+  "prompt_version": "v1",
+  "template_hash": "fixture-baseline",
+  "cases": [
+    {
+      "case_id": "scene_count_improves",
+      "prompt_id": "script.structured",
+      "input": {"topic": "城市夜班交通", "target_scene_count": 8, "sources": []},
+      "expected": {"target_scene_count": 8},
+      "output": {"title": "夜班交通", "scenes": [{"sequence_index": 0, "narration_text": "一段", "visual_prompt": "夜间图片画面"}]}
+    },
+    {
+      "case_id": "title_regresses",
+      "prompt_id": "script.structured",
+      "input": {"topic": "咖啡器具", "sources": []},
+      "expected": {"title_max_length": 30},
+      "output": {"title": "一杯咖啡从研磨到入口的完整方法"}
+    },
+    {
+      "case_id": "stable_case",
+      "prompt_id": "script.structured",
+      "input": {"topic": "城市散步", "sources": []},
+      "expected": {"title_max_length": 30},
+      "output": {"title": "城市散步观察"}
+    }
+  ]
+}

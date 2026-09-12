@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="template:media-width" content="1280">
+    <meta name="template:media-height" content="720">
+    <meta name="template:video-frame-x" content="0">
+    <meta name="template:video-frame-y" content="0">
+    <meta name="template:video-frame-width" content="1920">
+    <meta name="template:video-frame-height" content="1080">
+    <style>
+        html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+        }
+        
+        body {
+            margin: 0;
+            padding: 0;
+            width: 1920px;
+            height: 1080px;
+            font-family: 'PingFang SC', 'Source Han Sans', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, sans-serif;
+            overflow: hidden;
+            background: #090a0f;
+            position: relative;
+            box-sizing: border-box;
+        }
+        
+        .main-container {
+            position: relative;
+            width: 1920px;
+            height: 1080px;
+            overflow: hidden;
+        }
+        
+        /* 16:9 全屏视频槽位（0, 0, 1920, 1080） */
+        .video-overlay {
+            position: absolute;
+            inset: 0;
+            z-index: 1;
+            background-size: cover;
+            background-position: center;
+            background-image: url("{{image}}");
+        }
+        
+        /* 顶部悬浮微岛标题 - 强视觉 Hook 大标题 */
+        .video-title-wrapper {
+            position: absolute;
+            top: 48px;
+            left: 80px;
+            max-width: 1400px;
+            display: inline-flex;
+            align-items: center;
+            box-sizing: border-box;
+            padding: 14px 34px;
+            background: rgba(9, 10, 15, 0.55);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            border-radius: 9999px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+            z-index: 3;
+        }
+        
+        .video-title {
+            font-size: 48px;
+            font-weight: 700;
+            color: #ffffff;
+            line-height: 1.25;
+            letter-spacing: 1.2px;
+            text-shadow: 0 2px 10px rgba(0, 0, 0, 0.85);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        /* 底部宽幅暗度保护渐变（高 340px，柔和衬托字幕） */
+        .bottom-protection-zone {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 1920px;
+            height: 340px;
+            background: linear-gradient(
+                0deg,
+                rgba(0, 0, 0, 0.88) 0%,
+                rgba(0, 0, 0, 0.50) 50%,
+                rgba(0, 0, 0, 0) 100%
+            );
+            z-index: 2;
+            box-sizing: border-box;
+            pointer-events: none;
+        }
+        
+        /* 核心解说字幕区：居中平衡排版 */
+        .content {
+            position: absolute;
+            bottom: 80px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 1440px;
+            box-sizing: border-box;
+            z-index: 4;
+            text-align: center;
+        }
+        
+        .text {
+            font-size: 42px;
+            color: #ffffff;
+            text-align: center;
+            line-height: 1.45;
+            font-weight: 600;
+            letter-spacing: 1px;
+            text-shadow: 
+                0 2px 8px rgba(0, 0, 0, 0.95),
+                0 0 16px rgba(0, 0, 0, 0.7);
+            white-space: pre-line;
+            overflow-wrap: anywhere;
+            text-wrap: balance;
+        }
+        
+        /* 底部作者与品牌签名栏 */
+        .footer {
+            position: absolute;
+            bottom: 32px;
+            right: 64px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            z-index: 3;
+            box-sizing: border-box;
+        }
+        
+        .author-section {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .author {
+            font-size: 18px;
+            font-weight: 500;
+            color: rgba(255, 255, 255, 0.75);
+            text-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
+        }
+        
+        .author:empty, .logo:empty {
+            display: none;
+        }
+        
+        .logo {
+            font-size: 16px;
+            font-weight: 600;
+            color: #818cf8;
+            letter-spacing: 1.5px;
+            text-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
+        }
+        
+        .footer:not(:has(.author:not(:empty))):not(:has(.logo:not(:empty))) {
+            display: none !important;
+        }
+    
+        /* Title & Footer Auto-Collapse when empty */
+        .video-title:empty, .title:empty, .title-text:empty, .main-headline:empty { display: none !important; }
+        .header-section:not(:has(.video-title:not(:empty))):not(:has(.title:not(:empty))) { display: none !important; }
+        .video-title-wrapper:not(:has(.video-title:not(:empty))) { display: none !important; }
+        .top-header:not(:has(.title:not(:empty))):not(:has(.author-tag:not(:empty))) { display: none !important; }
+        .title-group:not(:has(.title-text:not(:empty))) { display: none !important; }
+        .author:empty, .author-text:empty, .author-desc:empty, .author-tag:empty, .logo:empty, .brand:empty, .brand-logo:empty { display: none !important; }
+        .footer:not(:has(.author:not(:empty))):not(:has(.author-text:not(:empty))):not(:has(.author-desc:not(:empty))):not(:has(.logo:not(:empty))):not(:has(.brand-logo:not(:empty))) { display: none !important; }
+        .footer-meta:not(:has(.author:not(:empty))) { display: none !important; }
+        .footer-signature:not(:has(span:not(:empty))) { display: none !important; }
+        .footer-area:not(:has(.author:not(:empty))) { display: none !important; }
+        .footer-author:empty { display: none !important; }
+    
+        /* Enhanced Hero Text adjustments when title is empty */
+        .left-column:not(:has(.title:not(:empty))) .accent-bar { display: none !important; }
+        .left-column:not(:has(.title:not(:empty))) .warm-diamond { display: none !important; }
+        .left-column:not(:has(.title:not(:empty))) .pill-badge { display: none !important; }
+        .left-column:not(:has(.title:not(:empty))) .text { font-size: 38px !important; font-weight: 500 !important; line-height: 1.6 !important; }
+        .content:not(:has(.title:not(:empty))) .text { font-size: 36px !important; line-height: 1.6 !important; }
+        .header-section:not(:has(.video-title:not(:empty))) .title-accent-wrapper { display: none !important; }
+        .top-letterbox:not(:has(.title-text:not(:empty))) .title-group { display: none !important; }
+        .header-zone:not(:has(.main-headline:not(:empty))) .topic-pill { display: none !important; }
+        /* Horizontal short-video safe area: keep copy away from top and bottom chrome. */
+        .video-title-wrapper {
+            top: 104px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 1320px;
+            max-width: calc(100% - 224px);
+            padding: 12px 28px;
+            justify-content: center;
+            text-align: center;
+        }
+
+        .video-title {
+            width: 100%;
+            max-width: 1180px;
+            max-height: 120px;
+            white-space: normal;
+            line-height: 1.25;
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 2;
+            overflow: hidden;
+        }
+
+        .bottom-protection-zone {
+            height: 300px;
+        }
+
+        .content {
+            bottom: 136px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 1320px;
+            max-width: calc(100% - 224px);
+        }
+
+        .text {
+            font-size: 38px;
+            line-height: 1.45;
+            max-height: 112px;
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 2;
+            overflow: hidden;
+        }
+
+        .footer {
+            bottom: 88px;
+            right: 96px;
+        }
+        /* Two-line title safety: keep CJK glyph bottoms inside the readable area. */
+        .title,
+        .video-title,
+        .title-text,
+        .main-headline {
+            line-height: 1.24 !important;
+            max-height: none !important;
+        }
+
+        .video-title-wrapper:has(.video-title) {
+            max-height: 240px;
+            overflow: visible;
+        }
+    </style>
+</head>
+<body>
+    <div class="main-container">
+        <!-- 16:9 全屏动态视频槽位 -->
+        <div class="video-overlay"></div>
+        
+        <!-- 顶部轻质毛玻璃标题 -->
+        <div class="video-title-wrapper">
+            <div class="video-title">{{title}}</div>
+        </div>
+        
+        <!-- 底部渐变暗度保护层 -->
+        <div class="bottom-protection-zone"></div>
+        
+        <!-- 核心字幕区 -->
+        <div class="content">
+            <div class="text">{{narration}}</div>
+        </div>
+        
+        <!-- 底部角标签名 -->
+        <div class="footer">
+            <div class="author-section">
+                <div class="author">{{author}}</div>
+            </div>
+            <div class="logo">{{brand}}</div>
+        </div>
+    </div>
+
+<script>
+    function autoFitTitle(element, maxWidth, minSize, maxSize) {
+        if (!element || !element.textContent || !element.textContent.trim()) return;
+        const measure = document.createElement('span');
+        measure.style.visibility = 'hidden';
+        measure.style.position = 'absolute';
+        measure.style.top = '-9999px';
+        measure.style.left = '-9999px';
+        measure.style.whiteSpace = 'nowrap';
+        const style = window.getComputedStyle(element);
+        measure.style.fontFamily = style.fontFamily;
+        measure.style.fontWeight = style.fontWeight;
+        measure.style.letterSpacing = style.letterSpacing;
+        measure.textContent = element.textContent;
+        document.body.appendChild(measure);
+        let low = minSize, high = maxSize, best = minSize;
+        while (high - low > 0.5) {
+            const mid = (low + high) / 2;
+            measure.style.fontSize = mid + 'px';
+            if (measure.offsetWidth <= maxWidth) {
+                best = mid;
+                low = mid;
+            } else {
+                high = mid;
+            }
+        }
+        document.body.removeChild(measure);
+        element.style.fontSize = best + 'px';
+    }
+    window.addEventListener('DOMContentLoaded', () => {
+        const titleEl = document.querySelector('.video-title');
+        if (titleEl) autoFitTitle(titleEl, 1150, 26, 48);
+    });
+
+    // Auto-collapse title and footer containers when empty
+    try {
+        const titleElements = document.querySelectorAll('.video-title, .title, .title-text, .main-headline');
+        titleElements.forEach(el => {
+            if (!el.textContent.trim()) {
+                const wrapper = el.closest('.header-section, .video-title-wrapper, .title-group, .header-zone, .top-header');
+                if (wrapper) wrapper.style.display = 'none';
+                el.style.display = 'none';
+            }
+        });
+        const footerElements = document.querySelectorAll('.footer, .footer-meta, .footer-author, .footer-signature, .footer-area, .footer-zone');
+        footerElements.forEach(el => {
+            const author = el.querySelector('.author, .author-text, .author-tag');
+            const desc = el.querySelector('.author-desc, .author-description');
+            const brand = el.querySelector('.logo, .brand, .brand-logo');
+            const hasAuthor = author && author.textContent.trim();
+            const hasDesc = desc && desc.textContent.trim();
+            const hasBrand = brand && brand.textContent.trim();
+            if (!hasAuthor && !hasDesc && !hasBrand && !el.textContent.trim()) {
+                el.style.display = 'none';
+            }
+        });
+    } catch (e) {}
+</script>
+</body>
+</html>

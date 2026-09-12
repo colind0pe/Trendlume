@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="template:media-width" content="1280">
+  <meta name="template:media-height" content="720">
+  <meta name="viewport" content="width=1920, height=1080">
+  <title>宽画幅电影质感 - 1920x1080</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    html, body {
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      background: #000000;
+      color: #ffffff;
+      font-family: 'PingFang SC', 'Source Han Sans', 'Microsoft YaHei', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    .page-container {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      background: #000000;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+    /* Cinema Viewport Frame */
+    .cinema-stage {
+      position: relative;
+      width: 1920px;
+      height: 940px;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #090a0f;
+    }
+    .cinema-stage img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+      filter: brightness(0.92) contrast(1.05);
+    }
+    /* Ambient cinematic vignettes */
+    .vignette-layer {
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at 50% 50%, transparent 60%, rgba(0, 0, 0, 0.6) 100%);
+      pointer-events: none;
+    }
+    .bottom-gradient-zone {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      height: 480px;
+      background: linear-gradient(to top, rgba(0, 0, 0, 0.95) 0%, rgba(0, 0, 0, 0.65) 45%, transparent 100%);
+      pointer-events: none;
+    }
+    /* Cinematic Overlay Typography */
+    .top-header {
+      position: absolute;
+      top: 60px;
+      left: 100px;
+      right: 100px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      z-index: 10;
+    }
+    .title {
+      font-size: 48px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      color: rgba(255, 255, 255, 0.95);
+      text-shadow: 0 4px 16px rgba(0, 0, 0, 0.8);
+      max-width: 1200px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .author-tag {
+      font-size: 16px;
+      font-family: 'JetBrains Mono', Consolas, monospace;
+      color: rgba(255, 255, 255, 0.7);
+      letter-spacing: 1px;
+    }
+    .bottom-subtitle-box {
+      position: absolute;
+      bottom: 90px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 1440px;
+      text-align: center;
+      z-index: 10;
+    }
+    .text {
+      font-size: 40px;
+      font-weight: 600;
+      line-height: 1.5;
+      color: #ffffff;
+      text-shadow: 
+        0 2px 8px rgba(0, 0, 0, 0.95),
+        0 0 20px rgba(0, 0, 0, 0.85);
+      text-wrap: balance;
+      letter-spacing: 0.5px;
+    }
+  
+        /* Title & Footer Auto-Collapse when empty */
+        .video-title:empty, .title:empty, .title-text:empty, .main-headline:empty { display: none !important; }
+        .header-section:not(:has(.video-title:not(:empty))):not(:has(.title:not(:empty))) { display: none !important; }
+        .video-title-wrapper:not(:has(.video-title:not(:empty))) { display: none !important; }
+        .top-header:not(:has(.title:not(:empty))):not(:has(.author-tag:not(:empty))) { display: none !important; }
+        .title-group:not(:has(.title-text:not(:empty))) { display: none !important; }
+        .author:empty, .author-text:empty, .author-desc:empty, .author-tag:empty, .logo:empty, .brand:empty, .brand-logo:empty { display: none !important; }
+        .footer:not(:has(.author:not(:empty))):not(:has(.author-text:not(:empty))):not(:has(.author-desc:not(:empty))):not(:has(.logo:not(:empty))):not(:has(.brand-logo:not(:empty))) { display: none !important; }
+        .footer-meta:not(:has(.author:not(:empty))) { display: none !important; }
+        .footer-signature:not(:has(span:not(:empty))) { display: none !important; }
+        .footer-area:not(:has(.author:not(:empty))) { display: none !important; }
+        .footer-author:empty { display: none !important; }
+    
+        /* Enhanced Hero Text adjustments when title is empty */
+        .left-column:not(:has(.title:not(:empty))) .accent-bar { display: none !important; }
+        .left-column:not(:has(.title:not(:empty))) .warm-diamond { display: none !important; }
+        .left-column:not(:has(.title:not(:empty))) .pill-badge { display: none !important; }
+        .left-column:not(:has(.title:not(:empty))) .text { font-size: 38px !important; font-weight: 500 !important; line-height: 1.6 !important; }
+        .content:not(:has(.title:not(:empty))) .text { font-size: 36px !important; line-height: 1.6 !important; }
+        .header-section:not(:has(.video-title:not(:empty))) .title-accent-wrapper { display: none !important; }
+        .top-letterbox:not(:has(.title-text:not(:empty))) .title-group { display: none !important; }
+        .header-zone:not(:has(.main-headline:not(:empty))) .topic-pill { display: none !important; }
+        /* Full-bleed cinema keeps title and subtitle in the central safe band. */
+        .page-container {
+            padding: 0 120px;
+        }
+
+        .top-header {
+            top: 112px;
+            left: 120px;
+            right: 120px;
+        }
+
+        .title {
+            max-width: 1100px;
+            max-height: 112px;
+            line-height: 1.2;
+            white-space: normal;
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 2;
+            overflow: hidden;
+        }
+
+        .bottom-subtitle-box {
+            bottom: 126px;
+            width: 1440px;
+            max-width: calc(100% - 240px);
+        }
+
+        .text {
+            max-height: 72px;
+            line-height: 1.35;
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 2;
+            overflow: hidden;
+        }
+        /* Two-line title safety: keep CJK glyph bottoms inside the readable area. */
+        .title,
+        .video-title,
+        .title-text,
+        .main-headline {
+            line-height: 1.24 !important;
+            max-height: none !important;
+        }
+
+        .video-title-wrapper:has(.video-title) {
+            max-height: 240px;
+            overflow: visible;
+        }
+    </style>
+</head>
+<body>
+  <div class="page-container">
+    <div class="cinema-stage">
+      <img src="{{image}}" alt="电影全宽画面">
+      <div class="vignette-layer"></div>
+      <div class="bottom-gradient-zone"></div>
+      
+      <div class="top-header">
+        <h1 class="title">{{title}}</h1>
+        <div class="author-tag">{{author}}</div>
+      </div>
+
+      <div class="bottom-subtitle-box">
+        <p class="text">{{text}}</p>
+      </div>
+    </div>
+  </div>
+
+<script>
+    function autoFitTitle(element, maxWidth, minSize, maxSize) {
+        if (!element || !element.textContent || !element.textContent.trim()) return;
+        const measure = document.createElement('span');
+        measure.style.visibility = 'hidden';
+        measure.style.position = 'absolute';
+        measure.style.top = '-9999px';
+        measure.style.left = '-9999px';
+        measure.style.whiteSpace = 'nowrap';
+        const style = window.getComputedStyle(element);
+        measure.style.fontFamily = style.fontFamily;
+        measure.style.fontWeight = style.fontWeight;
+        measure.style.letterSpacing = style.letterSpacing;
+        measure.textContent = element.textContent;
+        document.body.appendChild(measure);
+        let low = minSize, high = maxSize, best = minSize;
+        while (high - low > 0.5) {
+            const mid = (low + high) / 2;
+            measure.style.fontSize = mid + 'px';
+            if (measure.offsetWidth <= maxWidth) {
+                best = mid;
+                low = mid;
+            } else {
+                high = mid;
+            }
+        }
+        document.body.removeChild(measure);
+        element.style.fontSize = best + 'px';
+    }
+    window.addEventListener('DOMContentLoaded', () => {
+        const titleEl = document.querySelector('.title');
+        if (titleEl) autoFitTitle(titleEl, 1150, 26, 48);
+    });
+
+    // Auto-collapse title and footer containers when empty
+    try {
+        const titleElements = document.querySelectorAll('.video-title, .title, .title-text, .main-headline');
+        titleElements.forEach(el => {
+            if (!el.textContent.trim()) {
+                const wrapper = el.closest('.header-section, .video-title-wrapper, .title-group, .header-zone, .top-header');
+                if (wrapper) wrapper.style.display = 'none';
+                el.style.display = 'none';
+            }
+        });
+        const footerElements = document.querySelectorAll('.footer, .footer-meta, .footer-author, .footer-signature, .footer-area, .footer-zone');
+        footerElements.forEach(el => {
+            const author = el.querySelector('.author, .author-text, .author-tag');
+            const desc = el.querySelector('.author-desc, .author-description');
+            const brand = el.querySelector('.logo, .brand, .brand-logo');
+            const hasAuthor = author && author.textContent.trim();
+            const hasDesc = desc && desc.textContent.trim();
+            const hasBrand = brand && brand.textContent.trim();
+            if (!hasAuthor && !hasDesc && !hasBrand && !el.textContent.trim()) {
+                el.style.display = 'none';
+            }
+        });
+    } catch (e) {}
+</script>
+</body>
+</html>

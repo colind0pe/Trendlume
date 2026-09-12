@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="template:media-width" content="1024">
+  <meta name="template:media-height" content="1024">
+  <meta name="viewport" content="width=1920, height=1080">
+  <title>极简宽画幅 · 视听工坊 - 1920x1080</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    html, body {
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      background: #090a0f;
+      color: #f8fafc;
+      font-family: 'PingFang SC', 'Source Han Sans', 'Microsoft YaHei', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    .page-container {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 90px 110px;
+      background: radial-gradient(circle at 20% 30%, #151828 0%, #090a0f 70%);
+    }
+    /* Subtle background grid & ambient light */
+    .bg-grid {
+      position: absolute;
+      inset: 0;
+      background-image: 
+        linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+      background-size: 80px 80px;
+      pointer-events: none;
+      z-index: 1;
+    }
+    .ambient-glow {
+      position: absolute;
+      width: 750px;
+      height: 750px;
+      right: 180px;
+      top: 165px;
+      background: radial-gradient(circle, rgba(99, 102, 241, 0.12) 0%, rgba(56, 189, 248, 0.04) 50%, transparent 70%);
+      filter: blur(80px);
+      pointer-events: none;
+      z-index: 1;
+    }
+    /* Left Editorial Column */
+    .left-column {
+      position: relative;
+      z-index: 2;
+      width: 720px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+    .accent-bar {
+      width: 44px;
+      height: 4px;
+      border-radius: 2px;
+      background: linear-gradient(90deg, #6366f1, #38bdf8);
+      margin-bottom: 36px;
+    }
+    .title {
+      font-size: 52px;
+      font-weight: 700;
+      line-height: 1.28;
+      letter-spacing: -0.5px;
+      color: #ffffff;
+      margin-bottom: 28px;
+      text-wrap: balance;
+    }
+    .text {
+      font-size: 26px;
+      font-weight: 400;
+      line-height: 1.65;
+      color: #94a3b8;
+      text-wrap: pretty;
+    }
+    .footer-meta {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-top: 48px;
+      font-size: 16px;
+      color: #64748b;
+      font-family: 'JetBrains Mono', Consolas, monospace;
+      letter-spacing: 0.5px;
+    }
+    .footer-meta .author {
+      color: #a5b4fc;
+      font-weight: 500;
+    }
+    /* Right Visual Window */
+    .right-column {
+      position: relative;
+      z-index: 2;
+      width: 880px;
+      height: 880px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .image-card {
+      width: 880px;
+      height: 880px;
+      border-radius: 28px;
+      background: #11131a;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 
+        0 30px 80px -15px rgba(0, 0, 0, 0.8),
+        0 0 0 1px rgba(99, 102, 241, 0.15);
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 12px;
+    }
+    .image-card img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      border-radius: 18px;
+      display: block;
+    }
+  
+        /* Title & Footer Auto-Collapse when empty */
+        .video-title:empty, .title:empty, .title-text:empty, .main-headline:empty { display: none !important; }
+        .header-section:not(:has(.video-title:not(:empty))):not(:has(.title:not(:empty))) { display: none !important; }
+        .video-title-wrapper:not(:has(.video-title:not(:empty))) { display: none !important; }
+        .top-header:not(:has(.title:not(:empty))):not(:has(.author-tag:not(:empty))) { display: none !important; }
+        .title-group:not(:has(.title-text:not(:empty))) { display: none !important; }
+        .author:empty, .author-text:empty, .author-desc:empty, .author-tag:empty, .logo:empty, .brand:empty, .brand-logo:empty { display: none !important; }
+        .footer:not(:has(.author:not(:empty))):not(:has(.author-text:not(:empty))):not(:has(.author-desc:not(:empty))):not(:has(.logo:not(:empty))):not(:has(.brand-logo:not(:empty))) { display: none !important; }
+        .footer-meta:not(:has(.author:not(:empty))) { display: none !important; }
+        .footer-signature:not(:has(span:not(:empty))) { display: none !important; }
+        .footer-area:not(:has(.author:not(:empty))) { display: none !important; }
+        .footer-author:empty { display: none !important; }
+    
+        /* Enhanced Hero Text adjustments when title is empty */
+        .left-column:not(:has(.title:not(:empty))) .accent-bar { display: none !important; }
+        .left-column:not(:has(.title:not(:empty))) .warm-diamond { display: none !important; }
+        .left-column:not(:has(.title:not(:empty))) .pill-badge { display: none !important; }
+        .left-column:not(:has(.title:not(:empty))) .text { font-size: 38px !important; font-weight: 500 !important; line-height: 1.6 !important; }
+        .content:not(:has(.title:not(:empty))) .text { font-size: 36px !important; line-height: 1.6 !important; }
+        .header-section:not(:has(.video-title:not(:empty))) .title-accent-wrapper { display: none !important; }
+        .top-letterbox:not(:has(.title-text:not(:empty))) .title-group { display: none !important; }
+        .header-zone:not(:has(.main-headline:not(:empty))) .topic-pill { display: none !important; }
+        /* Keep the two-column reading path inside a generous 16:9 safe margin. */
+        .page-container {
+            padding: 104px 120px 132px;
+        }
+
+        .left-column {
+            width: 720px;
+            max-width: 46%;
+        }
+
+        .title {
+            max-height: 140px;
+            line-height: 1.2;
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 2;
+            overflow: hidden;
+        }
+
+        .text {
+            max-height: 108px;
+            line-height: 1.5;
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 3;
+            overflow: hidden;
+        }
+
+        .right-column {
+            max-width: 48%;
+        }
+        /* Two-line title safety: keep CJK glyph bottoms inside the readable area. */
+        .title,
+        .video-title,
+        .title-text,
+        .main-headline {
+            line-height: 1.24 !important;
+            max-height: none !important;
+        }
+
+        .video-title-wrapper:has(.video-title) {
+            max-height: 240px;
+            overflow: visible;
+        }
+    </style>
+</head>
+<body>
+  <div class="page-container">
+    <div class="bg-grid"></div>
+    <div class="ambient-glow"></div>
+
+    <div class="left-column">
+      <div class="accent-bar"></div>
+      <h1 class="title">{{title}}</h1>
+      <p class="text">{{text}}</p>
+      <div class="footer-meta">
+        <span class="author">{{author}}</span>
+      </div>
+    </div>
+
+    <div class="right-column">
+      <div class="image-card">
+        <img src="{{image}}" alt="视觉画面">
+      </div>
+    </div>
+  </div>
+
+<script>
+    function autoFitTitle(element, maxWidth, minSize, maxSize) {
+        if (!element || !element.textContent || !element.textContent.trim()) return;
+        const measure = document.createElement('span');
+        measure.style.visibility = 'hidden';
+        measure.style.position = 'absolute';
+        measure.style.top = '-9999px';
+        measure.style.left = '-9999px';
+        measure.style.whiteSpace = 'normal';
+        measure.style.width = maxWidth + 'px';
+        const style = window.getComputedStyle(element);
+        measure.style.fontFamily = style.fontFamily;
+        measure.style.fontWeight = style.fontWeight;
+        measure.style.letterSpacing = style.letterSpacing;
+        measure.textContent = element.textContent;
+        document.body.appendChild(measure);
+        let low = minSize, high = maxSize, best = minSize;
+        while (high - low > 0.5) {
+            const mid = (low + high) / 2;
+            measure.style.fontSize = mid + 'px';
+            if (measure.offsetHeight <= 140) {
+                best = mid;
+                low = mid;
+            } else {
+                high = mid;
+            }
+        }
+        document.body.removeChild(measure);
+        element.style.fontSize = best + 'px';
+    }
+    window.addEventListener('DOMContentLoaded', () => {
+        const titleEl = document.querySelector('.title');
+        if (titleEl) autoFitTitle(titleEl, 700, 28, 52);
+    });
+
+    // Auto-collapse title and footer containers when empty
+    try {
+        const titleElements = document.querySelectorAll('.video-title, .title, .title-text, .main-headline');
+        titleElements.forEach(el => {
+            if (!el.textContent.trim()) {
+                const wrapper = el.closest('.header-section, .video-title-wrapper, .title-group, .header-zone, .top-header');
+                if (wrapper) wrapper.style.display = 'none';
+                el.style.display = 'none';
+            }
+        });
+        const footerElements = document.querySelectorAll('.footer, .footer-meta, .footer-author, .footer-signature, .footer-area, .footer-zone');
+        footerElements.forEach(el => {
+            const author = el.querySelector('.author, .author-text, .author-tag');
+            const desc = el.querySelector('.author-desc, .author-description');
+            const brand = el.querySelector('.logo, .brand, .brand-logo');
+            const hasAuthor = author && author.textContent.trim();
+            const hasDesc = desc && desc.textContent.trim();
+            const hasBrand = brand && brand.textContent.trim();
+            if (!hasAuthor && !hasDesc && !hasBrand && !el.textContent.trim()) {
+                el.style.display = 'none';
+            }
+        });
+    } catch (e) {}
+</script>
+</body>
+</html>

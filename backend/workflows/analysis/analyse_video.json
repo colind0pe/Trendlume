@@ -1,0 +1,69 @@
+{
+  "14": {
+    "inputs": {
+      "video": "c5f10873db98434fa756ae20f939d711ff892531daba32c71d0381ce.mp4",
+      "force_rate": 0,
+      "custom_width": 0,
+      "custom_height": 0,
+      "frame_load_cap": 0,
+      "skip_first_frames": 0,
+      "select_every_nth": 2,
+      "format": "AnimateDiff"
+    },
+    "class_type": "VHS_LoadVideo",
+    "_meta": {
+      "title": "$video.video"
+    }
+  },
+  "18": {
+    "inputs": {
+      "text": "该视频为静态图文模板，背景采用柔和的蓝紫色渐变色调，营造宁静、深邃且富有哲思氛围。画面顶部以醒目白色字体呈现标题“如何成为百万富翁”，下方配有一条简约横线作为视觉分隔。\n\n中间区域是一个半透明浅色对话框，内含引文文字：“日常里一点一滴的积累和选择才真正影响你的未来”。文字简洁有力，强调长期主义与微小决策的重要性；两侧配有双引号符号，增强语句权威感。\n\n底部左右分布两组信息：左侧标注“@Trendlume”及副标“Open Source Omnimodal AI Creative Agent”，表明内容由开源AI创意代理生成；右侧则显示“Trendlume Text Only Template”，说明这是纯文本风格的视频模板。整体排版对称平衡，设计现代而专业。\n\n画面边缘点缀几枝绿叶图案，在蓝色背景下形成自然呼吸般的装饰元素，增添一丝生机与人文气息。整个界面无动态效果或人物出现，纯粹通过色彩、构图和文案传递关于财富成长的核心理念——真正的成功源于日积月累的生活细节与明智抉择。适合用于个人发展类短视频、财经科普或励志分享场景，兼具美学质感与实用价值。",
+      "anything": [
+        "19",
+        0
+      ]
+    },
+    "class_type": "easy showAnything",
+    "_meta": {
+      "title": "Show Any"
+    }
+  },
+  "19": {
+    "inputs": {
+      "model_name": "Qwen3-VL-8B-Instruct",
+      "quantization": "None (FP16)",
+      "attention_mode": "auto",
+      "preset_prompt": "📹 Video Summary",
+      "custom_prompt": "",
+      "max_tokens": 1024,
+      "keep_model_loaded": true,
+      "seed": 974676377,
+      "video": [
+        "20",
+        0
+      ]
+    },
+    "class_type": "AILab_QwenVL",
+    "_meta": {
+      "title": "QwenVL"
+    }
+  },
+  "20": {
+    "inputs": {
+      "width": 1080,
+      "height": 1080,
+      "interpolation": "nearest",
+      "method": "keep proportion",
+      "condition": "downscale if bigger",
+      "multiple_of": 0,
+      "image": [
+        "14",
+        0
+      ]
+    },
+    "class_type": "ImageResize+",
+    "_meta": {
+      "title": "🔧 Image Resize"
+    }
+  }
+}

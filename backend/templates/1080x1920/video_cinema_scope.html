@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="template:media-width" content="1080">
+    <meta name="template:media-height" content="1120">
+    <meta name="template:video-frame-x" content="0">
+    <meta name="template:video-frame-y" content="260">
+    <meta name="template:video-frame-width" content="1080">
+    <meta name="template:video-frame-height" content="1120">
+    <style>
+        html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+        }
+        
+        body {
+            margin: 0;
+            padding: 0;
+            width: 1080px;
+            height: 1920px;
+            font-family: 'PingFang SC', 'Source Han Sans', 'Microsoft YaHei', sans-serif;
+            overflow: hidden;
+            background: #000000;
+            position: relative;
+            box-sizing: border-box;
+        }
+        
+        .main-container {
+            position: relative;
+            width: 1080px;
+            height: 1920px;
+            overflow: hidden;
+            background: #000000;
+        }
+        
+        /* 紧凑黑边电影动态视频核心槽位（0, 260, 1080, 1120）纯净无阴影 */
+        .video-overlay {
+            position: absolute;
+            top: 260px;
+            left: 0;
+            width: 1080px;
+            height: 1120px;
+            z-index: 1;
+            background-size: cover;
+            background-position: center;
+            background-image: url("{{image}}");
+            box-shadow: none !important;
+        }
+        
+        /* 顶部黑边条（0 ~ 260px）：紧凑纯黑背景，承载主标题，绝不遮挡原视频主体 */
+        .top-letterbox {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 1080px;
+            height: 260px;
+            background: #000000;
+            z-index: 2;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 0 80px;
+            box-sizing: border-box;
+            box-shadow: none !important;
+        }
+        
+        .video-title-wrapper {
+            width: 920px;
+            max-height: 180px;
+            box-sizing: border-box;
+            text-align: center;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .video-title {
+            width: 100%;
+            text-align: center;
+            font-size: 64px;
+            font-weight: 700;
+            color: #ffffff;
+            line-height: 1.25;
+            letter-spacing: 2px;
+            text-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+            white-space: normal;
+            text-wrap: balance;
+        }
+        
+        /* 底部黑边条（1380 ~ 1920px）：紧凑纯黑背景，字幕置于黄金安全区（距底 >= 410px） */
+        .bottom-letterbox {
+            position: absolute;
+            top: 1380px;
+            left: 0;
+            width: 1080px;
+            height: 540px;
+            background: #000000;
+            z-index: 2;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 44px 90px 30px 90px;
+            box-sizing: border-box;
+            box-shadow: none !important;
+        }
+        
+        .content {
+            width: 900px;
+            max-height: 160px;
+            box-sizing: border-box;
+            text-align: center;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .text {
+            font-size: 38px;
+            color: #ffffff;
+            text-align: center;
+            line-height: 1.5;
+            font-weight: 500;
+            text-shadow: 0 2px 6px rgba(0, 0, 0, 0.8);
+            white-space: pre-line;
+            overflow-wrap: anywhere;
+        }
+        
+        /* 底部作者与品牌签名栏 */
+        .footer {
+            width: 900px;
+            margin-top: auto;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding-top: 24px;
+            border-top: 1px solid rgba(255, 255, 255, 0.18);
+            box-sizing: border-box;
+        }
+        
+        .author-section {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            text-align: left;
+        }
+        
+        .author {
+            font-size: 28px;
+            font-weight: 600;
+            color: #ffffff;
+            text-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+        }
+        
+        .author:empty, .author-desc:empty, .logo:empty {
+            display: none;
+        }
+        
+        .author-desc {
+            font-size: 20px;
+            color: rgba(255, 255, 255, 0.75);
+            font-weight: 400;
+        }
+        
+        .logo-section {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 4px;
+        }
+        
+        .logo {
+            font-size: 24px;
+            font-weight: 600;
+            color: #ffffff;
+            letter-spacing: 2px;
+            text-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+        }
+    
+        /* Footer auto-collapse when all author/brand info is empty */
+        .footer:not(:has(.author:not(:empty))):not(:has(.author-text:not(:empty))):not(:has(.author-desc:not(:empty))):not(:has(.logo:not(:empty))):not(:has(.brand-logo:not(:empty))) {
+            display: none !important;
+        }
+        .author-bullet {
+            display: none;
+        }
+        .author-name:has(.author-text:not(:empty)) .author-bullet {
+            display: inline-block;
+        }
+        .author-name:has(span:not(.author-bullet):not(:empty)) .author-bullet {
+            display: inline-block;
+        }
+    
+        /* Title & Footer Auto-Collapse when empty */
+        .video-title:empty, .title:empty, .title-text:empty, .main-headline:empty { display: none !important; }
+        .header-section:not(:has(.video-title:not(:empty))):not(:has(.title:not(:empty))) { display: none !important; }
+        .video-title-wrapper:not(:has(.video-title:not(:empty))) { display: none !important; }
+        .top-letterbox:not(:has(.video-title:not(:empty))) { display: none !important; }
+        .top-header:not(:has(.title:not(:empty))):not(:has(.author-tag:not(:empty))) { display: none !important; }
+        .title-group:not(:has(.title-text:not(:empty))) { display: none !important; }
+        .author:empty, .author-text:empty, .author-desc:empty, .author-tag:empty, .logo:empty, .brand:empty, .brand-logo:empty { display: none !important; }
+        .footer:not(:has(.author:not(:empty))):not(:has(.author-text:not(:empty))):not(:has(.author-desc:not(:empty))):not(:has(.logo:not(:empty))):not(:has(.brand-logo:not(:empty))) { display: none !important; }
+        .footer-meta:not(:has(.author:not(:empty))) { display: none !important; }
+        .footer-signature:not(:has(span:not(:empty))) { display: none !important; }
+        .footer-area:not(:has(.author:not(:empty))) { display: none !important; }
+        .footer-author:empty { display: none !important; }
+    
+        /* Enhanced Hero Text adjustments when title is empty */
+        .left-column:not(:has(.title:not(:empty))) .accent-bar { display: none !important; }
+        .left-column:not(:has(.title:not(:empty))) .warm-diamond { display: none !important; }
+        .left-column:not(:has(.title:not(:empty))) .pill-badge { display: none !important; }
+        .left-column:not(:has(.title:not(:empty))) .text { font-size: 38px !important; font-weight: 500 !important; line-height: 1.6 !important; }
+        .content:not(:has(.title:not(:empty))) .text { font-size: 36px !important; line-height: 1.6 !important; }
+        .header-section:not(:has(.video-title:not(:empty))) .title-accent-wrapper { display: none !important; }
+        .top-letterbox:not(:has(.title-text:not(:empty))) .title-group { display: none !important; }
+        .top-letterbox:not(:has(.title-text:not(:empty))) .scope-badge { display: none !important; }
+        .header-zone:not(:has(.main-headline:not(:empty))) .topic-pill { display: none !important; }
+        /* Keep the title and narration inside the letterbox safe zones. */
+        .top-letterbox {
+            align-items: flex-start;
+            padding: 84px 80px 0;
+        }
+
+        .video-title-wrapper {
+            width: 820px;
+            max-width: 100%;
+            max-height: 118px;
+            padding: 0;
+            overflow: hidden;
+        }
+
+        .video-title {
+            font-size: 46px !important;
+            line-height: 1.18;
+            white-space: normal;
+            max-height: 110px;
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 2;
+            overflow: hidden;
+        }
+
+        .bottom-letterbox {
+            align-items: flex-start;
+            padding: 24px 90px 145px;
+        }
+
+        .content {
+            width: 820px;
+            max-width: 100%;
+            max-height: 150px;
+        }
+
+        .text {
+            font-size: 34px;
+            line-height: 1.4;
+            max-height: 96px;
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 2;
+            overflow: hidden;
+        }
+
+        .footer {
+            width: 820px;
+            max-width: 100%;
+        }
+        /* Two-line title safety: keep CJK glyph bottoms inside the readable area. */
+        .title,
+        .video-title,
+        .title-text,
+        .main-headline {
+            line-height: 1.24 !important;
+            max-height: none !important;
+        }
+
+        .video-title-wrapper:has(.video-title) {
+            max-height: 240px;
+            overflow: visible;
+        }
+    </style>
+</head>
+<body>
+    <div class="main-container">
+        <!-- 紧凑黑边电影动态视频核心槽位（纯净通透，无任何暗角与周边阴影） -->
+        <div class="video-overlay"></div>
+        
+        <!-- 顶部纯黑遮幅条（0 ~ 260px） -->
+        <div class="top-letterbox">
+            <div class="video-title-wrapper">
+                <div class="video-title">{{title}}</div>
+            </div>
+        </div>
+        
+        <!-- 底部纯黑遮幅条（1380 ~ 1920px） -->
+        <div class="bottom-letterbox">
+            <div class="content">
+                <div class="text">{{text}}</div>
+            </div>
+            
+            <div class="footer">
+                <div class="author-section">
+                    <div class="author">{{author}}</div>
+                    <div class="author-desc">{{describe}}</div>
+                </div>
+                <div class="logo-section">
+                    <div class="logo">{{brand}}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // Auto-hide empty footer
+        try {
+            const footerEl = document.querySelector('.footer');
+            if (footerEl && !footerEl.textContent.trim()) {
+                footerEl.style.display = 'none';
+            }
+        } catch (e) {}
+
+        function autoFitTitle(element, maxWidth, maxHeight, minSize, maxSize) {
+            try {
+                if (!element || !element.textContent || !element.textContent.trim()) return;
+                
+                const measure = document.createElement('span');
+                measure.style.visibility = 'hidden';
+                measure.style.position = 'absolute';
+                measure.style.top = '-9999px';
+                measure.style.left = '-9999px';
+                measure.style.whiteSpace = 'normal';
+                measure.style.overflowWrap = 'break-word';
+                measure.style.width = maxWidth + 'px';
+                measure.style.lineHeight = '1.25';
+                
+                const style = window.getComputedStyle(element);
+                measure.style.fontFamily = style.fontFamily;
+                measure.style.fontWeight = style.fontWeight;
+                measure.style.letterSpacing = style.letterSpacing;
+                measure.textContent = element.textContent;
+                
+                document.body.appendChild(measure);
+                
+                let low = minSize;
+                let high = maxSize;
+                let best = minSize;
+                
+                while (high - low > 0.5) {
+                    const mid = (low + high) / 2;
+                    measure.style.fontSize = mid + 'px';
+                    if (measure.scrollHeight <= maxHeight && measure.scrollWidth <= maxWidth) {
+                        best = mid;
+                        low = mid;
+                    } else {
+                        high = mid;
+                    }
+                }
+                
+                document.body.removeChild(measure);
+                element.style.fontSize = best + 'px';
+            } catch (e) {
+                console.error(e);
+            }
+        }
+        
+        window.addEventListener('DOMContentLoaded', () => {
+            const titleEl = document.querySelector('.video-title');
+            if (titleEl) {
+                autoFitTitle(titleEl, 836, 210, 36, 70);
+            }
+        });
+    </script>
+
+<script>
+    // Auto-collapse title and footer containers when empty
+    try {
+        const titleElements = document.querySelectorAll('.video-title, .title, .title-text, .main-headline');
+        titleElements.forEach(el => {
+            if (!el.textContent.trim()) {
+                const wrapper = el.closest('.header-section, .video-title-wrapper, .title-group, .header-zone, .top-header');
+                if (wrapper) wrapper.style.display = 'none';
+                el.style.display = 'none';
+            }
+        });
+        const footerElements = document.querySelectorAll('.footer, .footer-meta, .footer-author, .footer-signature, .footer-area, .footer-zone');
+        footerElements.forEach(el => {
+            const author = el.querySelector('.author, .author-text, .author-tag');
+            const desc = el.querySelector('.author-desc, .author-description');
+            const brand = el.querySelector('.logo, .brand, .brand-logo');
+            const hasAuthor = author && author.textContent.trim();
+            const hasDesc = desc && desc.textContent.trim();
+            const hasBrand = brand && brand.textContent.trim();
+            if (!hasAuthor && !hasDesc && !hasBrand && !el.textContent.trim()) {
+                el.style.display = 'none';
+            }
+        });
+    } catch (e) {}
+</script>
+</body>
+</html>
