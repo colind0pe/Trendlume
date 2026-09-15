@@ -9,12 +9,14 @@ import {
   Share2,
   Settings,
   LayoutDashboard,
+  Flame,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { BrandMark } from "@/components/brand/logo";
 
 const navigation = [
   { name: "工作台", href: "/", icon: LayoutDashboard },
+  { name: "热点中心", href: "/trends", icon: Flame },
   { name: "项目库", href: "/projects", icon: FolderKanban },
   { name: "任务中心", href: "/tasks", icon: Film },
   { name: "素材库", href: "/assets", icon: ImageIcon },

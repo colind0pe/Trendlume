@@ -56,8 +56,8 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { StatusBadge } from "@/components/ui/status-badge";
-import { SceneCreate, StructuredScript, ResearchResponse, PlatformMetadata, TemplateCatalogItem } from "@/lib/types";
-import { generationStatus, isGenerationLifecycleEvent } from "@/lib/task-generation-state";
+import { ContentMode, SceneCreate, StructuredScript, ResearchResponse, PlatformMetadata, TemplateCatalogItem } from "@/lib/types";
+import { generationStatus, isGenerationLifecycleEvent, isSourceMaterialMode } from "@/lib/task-generation-state";
 import { VerificationModal } from "@/components/verification-modal";
 import { useToast } from "@/components/ui/toast";
 import {
@@ -77,6 +77,7 @@ import {
   PUBLISH_STATUS_LABELS,
   formatTemplateName,
   formatParamLabel,
+  getContentModeSpec,
 } from "@/lib/ui-constants";
 
 const TASK_LIFECYCLE_EVENTS = new Set([
@@ -184,12 +185,60 @@ export default function TaskStoryboardPage() {
   const searchStatus = categoryStatus("search");
   const imageStatus = categoryStatus("image");
   const videoStatus = categoryStatus("video");
+  const materialStatus = categoryStatus("material");
   const ttsStatus = categoryStatus("tts");
   const pubStatus = categoryStatus("publishing");
   const llmConfigured = !["not_configured", "disabled"].includes(llmStatus);
   const searchConfigured = !["not_configured", "disabled"].includes(searchStatus);
 
-  const isOnlineAssetMode = task?.input_payload?.content_mode === "online_asset";
+  const configuredContentMode = task?.input_payload?.content_mode || (
+    task?.input_payload?.visual_mode === "video" ? "generated_video" : "generated_image"
+  );
+  const configuredContentModeSpec = getContentModeSpec(configuredContentMode);
+  const isOnlineAssetMode = configuredContentModeSpec?.sourceKind === "online";
+  const isGeneratedImageMode =
+    configuredContentModeSpec?.sourceKind === "ai" && configuredContentModeSpec.visualKind === "image";
+  const isGeneratedVideoMode =
+    configuredContentModeSpec?.sourceKind === "ai" && configuredContentModeSpec.visualKind === "video";
+  const sourceMaterialMode = isSourceMaterialMode(configuredContentMode);
+
+  const visualReadinessItems = isOnlineAssetMode
+    ? [
+        {
+          type: "material",
+          title: "素材库视频 Provider",
+          status: materialStatus,
+          ready: materialStatus === "ready",
+          critical: true,
+          impact: "无法检索素材库实拍视频（需配置素材库 Provider）",
+          solution: "当前为素材库视频模式，流水线将自动检索实拍视频；也可在各分镜中绑定我的素材。",
+        },
+      ]
+    : isGeneratedVideoMode
+    ? [
+        {
+          type: "video",
+          title: "AI 视频生成 Provider",
+          status: videoStatus,
+          ready: videoStatus === "ready",
+          critical: true,
+          impact: "无法生成 AI 动态分镜视频片段。",
+          solution: "请配置视频生成 Provider，或新建任务时改用 AI 图片、素材库视频或我的素材。",
+        },
+      ]
+    : isGeneratedImageMode
+    ? [
+        {
+          type: "image",
+          title: "AI 图片生成 Provider",
+          status: imageStatus,
+          ready: imageStatus === "ready",
+          critical: true,
+          impact: "无法自动生成各分镜的静态画面素材。",
+          solution: "请配置图像生成 Provider，或在各分镜中绑定我的素材。",
+        },
+      ]
+    : [];
 
   const readinessItems = [
     {
@@ -199,7 +248,7 @@ export default function TaskStoryboardPage() {
       ready: llmStatus === "ready",
       critical: true,
       impact: "无法使用 AI 自动提炼剧本与分镜故事板",
-      solution: isOnlineAssetMode
+      solution: sourceMaterialMode
         ? "您仍可手动录入各分镜台词继续生成，或在设置中配置大语言模型 (LLM) Provider。"
         : "您仍可手动录入各分镜台词与画面提示词继续生成，或在设置中配置大语言模型 (LLM) Provider。",
     },
@@ -212,28 +261,7 @@ export default function TaskStoryboardPage() {
       impact: "无法进行全网实时热点事实调研（自动跳过）",
       solution: "AI 剧本生成将自动跳过联网搜索，直接基于语言模型已有知识创作，不阻塞流程。",
     },
-    {
-      type: "image",
-      title: isOnlineAssetMode ? "在线素材 Provider" : "分镜画面生图 Provider",
-      status: imageStatus,
-      ready: isOnlineAssetMode || imageStatus === "ready",
-      critical: !isOnlineAssetMode,
-      impact: isOnlineAssetMode
-        ? "无法在线检索免版权实拍素材（需配置在线素材 Provider）"
-        : "无法自动渲染各分镜的静态画面素材",
-      solution: isOnlineAssetMode
-        ? "当前为在线素材模式，流水线将自动检索免版权实拍素材；也可在各分镜中手动上传素材。"
-        : "可在各分镜中手动上传图片素材，或在设置中配置图像生成 Provider (ComfyUI / OpenAI)。",
-    },
-    {
-      type: "video",
-      title: "动态视频生成 Provider",
-      status: videoStatus,
-      ready: videoStatus === "ready",
-      critical: false,
-      impact: "无法生成动态分镜视频片段（自动降级）",
-      solution: "成片流水线将自动降级为“静态图片 + 平移缩放/转场动效”合成完整视频，不阻断流程。",
-    },
+    ...visualReadinessItems,
     {
       type: "tts",
       title: "旁白语音配音 Provider",
@@ -1039,9 +1067,9 @@ export default function TaskStoryboardPage() {
     : Math.max(persistedProgress, liveProgressForCurrentJob ?? 0);
   const isRunning = currentStatus === "running" || currentStatus === "pending";
   const finalVideoUrl = liveVideoUrl || task?.result_payload?.final_video_url;
-  const taskContentMode = task?.input_payload?.content_mode || (
-    task?.input_payload?.visual_mode === "video" ? "generated_video" : "generated_image"
-  );
+  const taskContentMode = configuredContentMode as ContentMode;
+  const taskContentModeSpec = getContentModeSpec(taskContentMode);
+  const usesVisualPrompt = taskContentModeSpec?.usesVisualPrompt === true;
   const taskMetadata = task?.input_payload?.metadata as PlatformMetadata | undefined;
   const scheduledPublish = task?.scheduled_publish || task?.input_payload?.scheduled_publish;
   const scheduledPublishStatus = String(scheduledPublish?.status || "pending");
@@ -1154,10 +1182,12 @@ export default function TaskStoryboardPage() {
         )}
         description={
           taskContentMode === "online_asset"
-            ? "调优分镜脚本、检索在线素材与配音，控制视频渲染流水线。"
+            ? "调优分镜脚本、获取素材库视频与配音，控制视频渲染流水线。"
+            : taskContentMode === "uploaded_asset"
+            ? "调优分镜脚本、绑定我的素材与配音，控制视频渲染流水线。"
             : taskContentMode === "static"
             ? "调优分镜文本、动态版式与配音，控制视频渲染流水线。"
-            : "调优分镜脚本、画面提示词与配音，控制视频渲染流水线。"
+            : taskContentModeSpec?.description || "调优分镜脚本、画面与配音，控制视频渲染流水线。"
         }
         actions={(
           <div className="flex items-center gap-2">
@@ -1938,6 +1968,13 @@ export default function TaskStoryboardPage() {
             const contentMode = task?.input_payload?.content_mode || "generated_image";
             const sceneAsset = projectAssets.find((asset) => asset.id === dbScene?.media_asset_id);
             const sceneMediaType = dbScene?.layout_params?.media_type || sceneAsset?.asset_type;
+            const sceneMediaSource = dbScene?.layout_params?.media_source;
+            const isManualSceneAsset = Boolean(
+              dbScene?.media_asset_id &&
+              (contentMode === "uploaded_asset" ||
+                sceneMediaSource === "manual" ||
+                sceneMediaSource === "uploaded")
+            );
 
             return (
               <Card
@@ -2049,7 +2086,7 @@ export default function TaskStoryboardPage() {
 
                     {/* Visual Prompt, Duration & Bound Asset */}
                     <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
-                      {taskContentMode !== "online_asset" && taskContentMode !== "static" && (
+                      {usesVisualPrompt && (
                         <div className="sm:col-span-6 space-y-1.5">
                           <label htmlFor={`scene-${index}-prompt`} className="text-xs font-medium text-muted-foreground">画面提示词</label>
                           <Input
@@ -2064,7 +2101,7 @@ export default function TaskStoryboardPage() {
                         </div>
                       )}
 
-                      <div className={`${taskContentMode === "online_asset" || taskContentMode === "static" ? "sm:col-span-4" : "sm:col-span-2"} space-y-1.5`}>
+                      <div className={`${usesVisualPrompt ? "sm:col-span-2" : "sm:col-span-4"} space-y-1.5`}>
                         <label htmlFor={`scene-${index}-duration`} className="text-xs font-medium text-muted-foreground">时长（秒）</label>
                         <Input
                           id={`scene-${index}-duration`}
@@ -2084,8 +2121,10 @@ export default function TaskStoryboardPage() {
                         />
                       </div>
 
-                      <div className={`${taskContentMode === "online_asset" || taskContentMode === "static" ? "sm:col-span-8" : "sm:col-span-4"} space-y-1.5`}>
-                        <label htmlFor={`scene-${index}-asset`} className="text-xs font-medium text-muted-foreground">绑定项目素材（可选）</label>
+                      <div className={`${usesVisualPrompt ? "sm:col-span-4" : "sm:col-span-8"} space-y-1.5`}>
+                        <label htmlFor={`scene-${index}-asset`} className="text-xs font-medium text-muted-foreground">
+                          {contentMode === "uploaded_asset" ? "本镜头素材" : "本镜头覆盖素材（可选）"}
+                        </label>
                         <Select
                           id={`scene-${index}-asset`}
                           value={scene.media_asset_id || ""}
@@ -2104,14 +2143,18 @@ export default function TaskStoryboardPage() {
                             markDirty();
                             setScenes(updated);
                           }}
-                        >
-                          <option value="">
-                            {taskContentMode === "online_asset"
-                              ? "自动匹配 Pexels 实拍素材"
-                              : taskContentMode === "static"
-                              ? "纯文字动态排版"
-                              : "使用 AI 生成画面"}
-                          </option>
+                          >
+                            <option value="">
+                              {taskContentMode === "online_asset"
+                                ? "自动匹配素材库视频"
+                                : taskContentMode === "static"
+                                ? "文字排版（无需素材）"
+                                : taskContentMode === "uploaded_asset"
+                                ? "请选择我的素材"
+                                : taskContentMode === "generated_video"
+                                ? "使用 AI 生成视频"
+                                : "使用 AI 生成图片"}
+                            </option>
                           {projectAssets.filter((asset) => asset.asset_type === "image" || asset.asset_type === "video").map((asset) => (
                             <option key={asset.id} value={asset.id}>{asset.file_name}（{ASSET_TYPE_LABELS[asset.asset_type] || asset.asset_type}）</option>
                           ))}
@@ -2126,7 +2169,7 @@ export default function TaskStoryboardPage() {
                       sceneIndex={index}
                       workflow={workflowSnapshot}
                       busy={isRunning}
-                      isManualAsset={Boolean(scene.media_asset_id && sceneAsset?.asset_type)}
+                      isManualAsset={isManualSceneAsset}
                       onRetryUnit={handleRetryWorkflowUnit}
                       isUnitRetrying={Boolean(
                         retryingUnits[`voice-${dbScene?.id}`] || retryingUnits[`assets-${dbScene?.id}`]
@@ -2263,7 +2306,7 @@ export default function TaskStoryboardPage() {
           </div>
 
           <div className="grid grid-cols-2 gap-3">
-            {taskContentMode !== "online_asset" && taskContentMode !== "static" ? (
+            {usesVisualPrompt ? (
               <div className="space-y-1">
                 <label htmlFor="ai-style" className="text-xs font-semibold text-foreground">视觉风格</label>
                 <Select
@@ -2282,7 +2325,7 @@ export default function TaskStoryboardPage() {
               <div className="space-y-1">
                 <span className="text-xs font-semibold text-foreground">素材媒介模式</span>
                 <div className="h-9 rounded-md border border-border bg-secondary/40 px-3 flex items-center text-xs text-muted-foreground font-medium">
-                  {taskContentMode === "online_asset" ? "Pexels 免版权实拍视频切片" : "纯文字动态排版字效"}
+                  {taskContentMode === "online_asset" ? "素材库实拍视频（不使用 AI 兜底）" : taskContentMode === "uploaded_asset" ? "我的素材（用户绑定后保持不变）" : "文字排版字效"}
                 </div>
               </div>
             )}
@@ -2427,7 +2470,7 @@ export default function TaskStoryboardPage() {
                         <span>#{i + 1} {sc.badge_text || "分镜"}</span>
                       </div>
                     <p className="text-foreground">{sc.narration_text}</p>
-                    {taskContentMode !== "online_asset" && taskContentMode !== "static" && sc.visual_prompt && (
+                    {usesVisualPrompt && sc.visual_prompt && (
                       <p className="text-xs font-mono text-muted-foreground">{sc.visual_prompt}</p>
                     )}
                   </div>
@@ -2814,7 +2857,7 @@ export default function TaskStoryboardPage() {
           if (!open) setSceneToDelete(null);
         }}
         title="删除分镜？"
-        description={sceneToDelete ? `“${sceneToDelete.label}”的台词、${taskContentMode === "online_asset" ? "在线素材匹配" : "画面提示词"}和排序将从当前故事板中移除。` : undefined}
+        description={sceneToDelete ? `“${sceneToDelete.label}”的台词、${isSourceMaterialMode(taskContentMode) ? "来源素材匹配" : taskContentMode === "uploaded_asset" ? "我的素材绑定" : taskContentMode === "static" ? "文字排版内容" : "画面提示词"}和排序将从当前故事板中移除。` : undefined}
         confirmLabel="确认删除"
         variant="destructive"
         onConfirm={async () => {
@@ -2828,7 +2871,7 @@ export default function TaskStoryboardPage() {
         open={isApplyScriptConfirmOpen}
         onOpenChange={setIsApplyScriptConfirmOpen}
         title="应用新脚本？"
-        description={taskContentMode === "online_asset" ? "当前故事板中的旁白台词会被新脚本替换，并重新匹配在线素材。" : "当前故事板中的旁白和画面提示词会被新脚本替换。"}
+        description={isSourceMaterialMode(taskContentMode) ? "当前故事板中的旁白台词会被新脚本替换，并重新匹配来源素材。" : taskContentMode === "uploaded_asset" ? "当前故事板中的旁白台词会被新脚本替换，保留我的素材绑定。" : taskContentMode === "static" ? "当前故事板中的旁白台词会被新脚本替换，保留文字排版。" : "当前故事板中的旁白和画面提示词会被新脚本替换。"}
         confirmLabel="确认应用"
         onConfirm={async () => {
           if (generatedScript) await applyScriptMutation.mutateAsync(generatedScript);

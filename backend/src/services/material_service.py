@@ -454,7 +454,7 @@ class MaterialService:
         if not await self.session.get(ProjectModel, project_id):
             raise NotFoundException("Project", project_id)
         candidate = await self._candidate_for_import(request.candidate_id or "")
-        provider = await self._provider(request.provider_id or candidate.get("provider"))
+        provider = await self._provider(request.provider_id)
         if candidate.get("provider") != provider.name:
             raise ValidationException("素材候选与当前 Provider 不匹配。")
         temporary_rel = f"cache/material_download_{uuid.uuid4().hex}.mp4"

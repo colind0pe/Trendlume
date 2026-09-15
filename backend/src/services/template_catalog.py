@@ -14,6 +14,11 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
+from src.domain.content_modes import (
+    get_content_mode_capability,
+    supported_content_modes,
+)
+
 _PARAM_PATTERN = re.compile(
     r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*(?::\s*([a-z]+))?\s*(?:=\s*([^}]+?))?\s*\}\}"
 )
@@ -296,13 +301,7 @@ class TemplateCatalog:
 
     @staticmethod
     def _supported_modes(template_type: str) -> list[str]:
-        if template_type == "image":
-            return ["generated_image", "uploaded_asset"]
-        if template_type == "video":
-            return ["generated_video", "online_asset", "uploaded_asset"]
-        if template_type == "static":
-            return ["static"]
-        return ["uploaded_asset"]
+        return supported_content_modes(template_type)
 
     def _find_preview(self, stem: str, size: str = "1080x1920") -> str | None:
         size_preview_dir = self.root / "previews" / size
@@ -437,7 +436,8 @@ class TemplateCatalog:
     def get_default_for_aspect(
         self, aspect_ratio: str, content_mode: str | None = None
     ) -> str:
-        if content_mode in ("generated_video", "online_asset"):
+        capability = get_content_mode_capability(content_mode)
+        if capability and capability.media_kind == "video":
             if aspect_ratio == "16:9":
                 return "video_wide_full"
             if aspect_ratio == "1:1":

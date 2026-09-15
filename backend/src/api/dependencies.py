@@ -13,6 +13,7 @@ from src.services.rendering_service import RenderingService
 from src.services.scene_service import SceneService
 from src.services.task_service import TaskService
 from src.services.template_service import ProjectTemplateService
+from src.services.trend_service import TrendService
 
 
 def request_session_factory(db: AsyncSession):
@@ -57,3 +58,7 @@ def get_rendering_service(session: AsyncSession = Depends(get_db)) -> RenderingS
 
 def get_publishing_service(session: AsyncSession = Depends(get_db)) -> PublishingService:
     return PublishingService(session)
+
+
+def get_trend_service(session: AsyncSession = Depends(get_db)) -> TrendService:
+    return TrendService(session)

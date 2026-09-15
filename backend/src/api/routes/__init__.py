@@ -9,6 +9,7 @@ from src.api.routes.publishing import router as publishing_router
 from src.api.routes.scenes import router as scenes_router
 from src.api.routes.tasks import router as tasks_router
 from src.api.routes.templates import router as templates_router
+from src.api.routes.trends import router as trends_router
 
 __all__ = [
     "health_router",
@@ -22,4 +23,5 @@ __all__ = [
     "providers_router",
     "events_router",
     "templates_router",
+    "trends_router",
 ]

@@ -5,7 +5,10 @@ from fastapi import APIRouter, Depends, Query, Response, status
 from pydantic import BaseModel, Field
 
 from src.api.dependencies import get_provider_manager
-from src.providers.image.comfyui_image import ComfyUIImageProvider
+from src.providers.image.comfyui_image import (
+    DEFAULT_COMFYUI_IMAGE_WORKFLOW,
+    ComfyUIImageProvider,
+)
 from src.providers.image.protocol import DEFAULT_IMAGE_TEST_PROMPT
 from src.providers.image.style_presets import DEFAULT_IMAGE_STYLE_PRESET, ImageStylePreset
 from src.providers.llm.defaults import DEFAULT_OPENAI_MODEL, default_llm_model
@@ -110,6 +113,10 @@ async def get_provider_config_summary(
     default_vid = next((p for p in all_providers if p.provider_type == "video" and p.is_default), None)
     default_search = next((p for p in all_providers if p.provider_type == "search" and p.is_default), None)
     default_tts = next((p for p in all_providers if p.provider_type == "tts" and p.is_default), None)
+    comfyui_image_workflow = (
+        (default_img.config.get("default_workflow") if default_img else None)
+        or DEFAULT_COMFYUI_IMAGE_WORKFLOW
+    )
 
     # Collect provider keys for quick preset matching in UI
     provider_keys: dict[str, str | None] = {}
@@ -127,7 +134,7 @@ async def get_provider_config_summary(
                 default_llm.config.get("model") if default_llm else default_llm_model("deepseek")
             ),
             "comfyui_base_url": (default_img.config.get("base_url") if default_img else "http://127.0.0.1:8188"),
-            "comfyui_image_workflow": (default_img.config.get("default_workflow") if default_img else "image/image_flux.json"),
+            "comfyui_image_workflow": comfyui_image_workflow,
             "comfyui_video_workflow": (default_vid.config.get("default_workflow") if default_vid else "video/video_wan2.1_fusionx.json"),
             "is_llm_configured": bool(default_llm and default_llm.has_credentials and default_llm.enabled),
             "is_image_configured": bool(default_img and default_img.enabled),
@@ -228,7 +235,7 @@ async def test_comfyui_connection(
 
 class ComfyUIGenerateTestRequest(BaseModel):
     prompt: str = DEFAULT_IMAGE_TEST_PROMPT
-    workflow: str = "image/image_flux.json"
+    workflow: str | None = None
     base_url: str = "http://127.0.0.1:8188"
     api_key: str | None = None
 
@@ -239,7 +246,7 @@ async def test_comfyui_generate(payload: ComfyUIGenerateTestRequest):
     provider = ComfyUIImageProvider(
         base_url=payload.base_url or "http://127.0.0.1:8188",
         api_key=payload.api_key,
-        default_workflow=payload.workflow or "image/image_flux.json",
+        default_workflow=payload.workflow or DEFAULT_COMFYUI_IMAGE_WORKFLOW,
         timeout=120.0,
     )
     res = await provider.generate_image(
