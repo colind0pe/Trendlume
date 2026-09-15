@@ -10,6 +10,7 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.exceptions import NotFoundException, ValidationException
+from src.domain.content_modes import is_content_mode_supported, resolve_content_mode
 from src.domain.enums import AssetType
 from src.models.asset import AssetModel
 from src.repositories.asset_repository import AssetRepository
@@ -114,11 +115,14 @@ class RenderingService:
         template_item = template_catalog.get(template_id)
         if not template_item:
             raise ValidationException(f"模板不存在: {template_id}")
-        content_mode = input_payload.get("content_mode")
-        if not content_mode:
-            content_mode = "generated_video" if input_payload.get("visual_mode") == "video" else "generated_image"
-        if content_mode not in template_item["supported_content_modes"]:
+        content_mode = resolve_content_mode(
+            input_payload.get("content_mode"),
+            template_type=template_item["template_type"],
+            visual_mode=input_payload.get("visual_mode"),
+        )
+        if not is_content_mode_supported(content_mode, template_item["template_type"]):
             raise ValidationException(f"模板 {template_id} 不支持内容模式 {content_mode}")
+        external_material_mode = content_mode == "online_asset"
 
         canvas_width = int(template_item.get("width") or 1080)
         canvas_height = int(template_item.get("height") or 1920)
@@ -276,10 +280,10 @@ class RenderingService:
                     "height": frame_height,
                     "canvas_width": canvas_width,
                     "canvas_height": canvas_height,
-                } if (content_mode == "online_asset" or media_is_video) else None,
+                } if (external_material_mode or media_is_video) else None,
                 "scene_render_format_version": (
                     self.ONLINE_SCENE_RENDER_FORMAT_VERSION
-                    if content_mode == "online_asset"
+                    if external_material_mode
                     else None
                 ),
                 "actual_duration_seconds": (
@@ -400,8 +404,12 @@ class RenderingService:
 
         input_payload = (task.input_payload or {})
         explicit_bgm_override = bgm_asset_id is not None
-        content_mode = input_payload.get("content_mode") or (
-            "generated_video" if input_payload.get("visual_mode") == "video" else "generated_image"
+        template_id = input_payload.get("template_id", "default_portrait")
+        template_item = template_catalog.get(template_id)
+        content_mode = resolve_content_mode(
+            input_payload.get("content_mode"),
+            template_type=(template_item or {}).get("template_type"),
+            visual_mode=input_payload.get("visual_mode"),
         )
         expected_scene_render_version = (
             self.ONLINE_SCENE_RENDER_FORMAT_VERSION

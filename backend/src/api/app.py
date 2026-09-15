@@ -21,6 +21,7 @@ from src.api.routes import (
     scenes_router,
     tasks_router,
     templates_router,
+    trends_router,
 )
 from src.api.routes.workflow import router as workflow_router
 from src.core.config import settings
@@ -31,6 +32,7 @@ from src.services.provider_bootstrap import bootstrap_default_providers
 from src.services.publishing_service import PublishingService
 from src.services.system_asset_service import ensure_default_bgm, sync_bgm_directory_assets
 from src.services.template_renderer import TemplateRenderer
+from src.services.trend_scheduler import trend_scheduler
 from src.tasks.manager import task_manager
 
 install_log_filters()
@@ -65,7 +67,9 @@ async def lifespan(app: FastAPI):
             "Playwright Chromium is unavailable; template preview/render requests will fail explicitly."
         )
     await task_manager.start()
+    await trend_scheduler.start()
     yield
+    await trend_scheduler.stop()
     await task_manager.stop()
     await TemplateRenderer.close()
     logger.info("🛑 Application shutdown complete.")
@@ -109,6 +113,7 @@ def create_app() -> FastAPI:
     app.include_router(providers_router, prefix=api_v1_prefix)
     app.include_router(events_router, prefix=api_v1_prefix)
     app.include_router(templates_router, prefix=api_v1_prefix)
+    app.include_router(trends_router, prefix=api_v1_prefix)
 
     return app
 

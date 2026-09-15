@@ -11,7 +11,10 @@ from src.core.config import settings
 from src.core.exceptions import NotFoundException, ProviderException, ValidationException
 from src.core.security import redact_sensitive_text, secret_cipher
 from src.models.provider_config import ProviderConfigModel
-from src.providers.image.comfyui_image import ComfyUIImageProvider
+from src.providers.image.comfyui_image import (
+    DEFAULT_COMFYUI_IMAGE_WORKFLOW,
+    ComfyUIImageProvider,
+)
 from src.providers.image.protocol import DEFAULT_IMAGE_TEST_PROMPT, ImageProvider
 from src.providers.image.style_presets import DEFAULT_IMAGE_STYLE_PRESET
 from src.providers.image.volcengine_image import VolcengineImageProvider
@@ -124,7 +127,7 @@ class ProviderManager:
         for category in ('image', 'video'):
             entry = self.snapshot.get(category)
             if entry and entry['provider_name'] == 'comfyui':
-                default = 'image/image_flux.json' if category == 'image' else 'video/video_wan2.1_fusionx.json'
+                default = DEFAULT_COMFYUI_IMAGE_WORKFLOW if category == 'image' else 'video/video_wan2.1_fusionx.json'
                 path = workflow_service.resolve_workflow_file(entry['config'].get('default_workflow') or default)
                 entry['workflow_sha256'] = await sha256_file(path) if path else None
         return copy.deepcopy(self.snapshot)
@@ -682,7 +685,7 @@ class ProviderManager:
             return ComfyUIImageProvider(
                 base_url=cfg.get("base_url", "http://127.0.0.1:8188"),
                 api_key=creds.get("api_key"),
-                default_workflow=cfg.get("default_workflow", "image/image_flux.json"),
+                default_workflow=cfg.get("default_workflow", DEFAULT_COMFYUI_IMAGE_WORKFLOW),
                 timeout=float(cfg.get("timeout", 180.0)),
                 generation_timeout=float(cfg.get("generation_timeout", 1800.0)),
             )
@@ -867,17 +870,23 @@ class ProviderManager:
             )
 
         if db_model and persist_result:
-            db_model.last_test_connected = result.connected
-            db_model.last_tested_at = datetime.now(UTC)
-            db_model.last_test_message = redact_sensitive_text(result.message)
-            db_model.last_test_latency_ms = result.latency_ms
             try:
+                db_model.last_test_connected = result.connected
+                db_model.last_tested_at = datetime.now(UTC)
+                db_model.last_test_message = redact_sensitive_text(result.message)
+                db_model.last_test_latency_ms = result.latency_ms
                 await self.session.commit()
             except Exception as exc:
                 # A preview response must not be discarded when SQLite is
                 # briefly locked by another local workflow. The test result
                 # remains valid; only its optional status evidence is lost.
-                await self.session.rollback()
+                try:
+                    await self.session.rollback()
+                except Exception as rollback_exc:
+                    logger.warning(
+                        "Provider test status rollback also failed: {}",
+                        redact_sensitive_text(str(rollback_exc)),
+                    )
                 logger.warning(
                     "Provider test succeeded but persisting test evidence failed: {}",
                     redact_sensitive_text(str(exc)),
@@ -899,7 +908,7 @@ class ProviderManager:
         api_key = str(creds.get("api_key") or "").strip()
 
         if provider_name == "comfyui":
-            default_workflow = cfg.get("default_workflow") or "image/image_flux.json"
+            default_workflow = cfg.get("default_workflow") or DEFAULT_COMFYUI_IMAGE_WORKFLOW
             provider = ComfyUIImageProvider(
                 base_url=cfg.get("base_url") or "http://127.0.0.1:8188",
                 api_key=api_key or None,
@@ -927,13 +936,20 @@ class ProviderManager:
                 message=f"不支持的图像 Provider 实现: {provider_name}",
             )
 
-        workflow = cfg.get("default_workflow") or getattr(provider, "default_workflow", None)
+        workflow_override = str(test_payload.get("workflow") or "").strip() or None
+        workflow = workflow_override
+        if workflow is None and provider_name != "comfyui":
+            workflow = cfg.get("default_workflow") or getattr(provider, "default_workflow", None)
         start_time = time.perf_counter()
         try:
             result = await provider.generate_image(
                 prompt=prompt,
                 aspect_ratio=aspect_ratio,
                 style_preset=style_preset,
+                # None means "exercise the provider's configured default".
+                # A test payload may supply an explicit one-off override; the
+                # ComfyUI provider never applies its default compatibility
+                # retry to that override.
                 workflow=workflow,
             )
             latency_ms = round((time.perf_counter() - start_time) * 1000, 1)

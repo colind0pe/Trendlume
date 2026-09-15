@@ -7,6 +7,15 @@ from src.models.publishing import CredentialModel, PublishingJobModel, SocialAcc
 from src.models.scene import SceneModel
 from src.models.task import TaskModel
 from src.models.template import ProjectTemplateModel
+from src.models.trend import (
+    TopicProposalModel,
+    TrendItemModel,
+    TrendObservationModel,
+    TrendProjectMatchModel,
+    TrendRunModel,
+    TrendSourceRunModel,
+    TrendSubscriptionModel,
+)
 from src.models.workflow import (
     JobEventModel,
     WorkflowArtifactModel,
@@ -32,4 +41,11 @@ __all__ = [
     "WorkflowStepRunModel",
     "WorkflowArtifactModel",
     "WorkflowStepArtifactModel",
+    "TrendRunModel",
+    "TrendSourceRunModel",
+    "TrendItemModel",
+    "TrendObservationModel",
+    "TrendProjectMatchModel",
+    "TopicProposalModel",
+    "TrendSubscriptionModel",
 ]

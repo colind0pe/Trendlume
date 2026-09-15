@@ -1,4 +1,5 @@
 import type { StatusTone } from "@/components/ui/status-badge";
+import type { ContentMode, TrendFrequency } from "@/lib/types";
 
 export const GENRE_OPTIONS = [
   { value: "auto", label: "自动匹配", desc: "根据标题、文案和调研内容自动选择最合适的表达方向" },
@@ -29,6 +30,22 @@ export const HOOK_OPTIONS = [
   { value: "story_twist", label: "故事反转" },
   { value: "pain_point", label: "直击痛点" },
 ] as const;
+
+export const SPEED_PRESETS = [0.8, 1.0, 1.1, 1.2, 1.5] as const;
+
+export const TREND_FREQUENCY_OPTIONS: ReadonlyArray<{
+  value: TrendFrequency;
+  label: string;
+}> = [
+  { value: "15m", label: "每 15 分钟" },
+  { value: "1h", label: "每小时" },
+  { value: "6h", label: "每 6 小时" },
+  { value: "24h", label: "每天" },
+];
+
+export const TREND_FREQUENCY_LABELS = Object.fromEntries(
+  TREND_FREQUENCY_OPTIONS.map((option) => [option.value, option.label]),
+) as Record<TrendFrequency, string>;
 
 export const STYLE_PRESET_OPTIONS = [
   { value: "stick_figure", label: "简约火柴人", desc: "黑白线条与纯白留白，适合概念拆解和流程说明" },
@@ -64,13 +81,115 @@ export const TEMPLATE_TYPE_LABELS: Record<string, string> = {
   asset: "素材",
 };
 
-export const CONTENT_MODE_LABELS: Record<string, string> = {
-  generated_image: "生成图片",
-  generated_video: "生成视频",
-  online_asset: "在线素材",
-  static: "纯文字静态",
-  uploaded_asset: "上传素材",
+export type ContentModeGroup = "ai" | "real" | "text";
+export type ContentModeSource = "ai" | "online" | "uploaded" | "text";
+export type ContentModeVisualKind = "image" | "video" | "none";
+
+export interface ContentModeSpec {
+  group: ContentModeGroup;
+  label: string;
+  /** One-line hint for the creation form; keep detailed semantics in description. */
+  selectionHint: string;
+  description: string;
+  sourceKind: ContentModeSource;
+  visualKind: ContentModeVisualKind;
+  requiresSourceAsset: boolean;
+  usesVisualPrompt: boolean;
+  supportsSceneRetry: boolean;
+}
+
+/**
+ * User-facing mode semantics. Keep labels and progressive-disclosure copy in one place.
+ */
+export const CONTENT_MODE_SPECS: Record<ContentMode, ContentModeSpec> = {
+  generated_image: {
+    group: "ai",
+    label: "AI 生成图片",
+    selectionHint: "根据分镜生成图片",
+    description: "根据分镜提示词生成静态画面，稳定、快速，适合大多数普通任务。",
+    sourceKind: "ai",
+    visualKind: "image",
+    requiresSourceAsset: false,
+    usesVisualPrompt: true,
+    supportsSceneRetry: true,
+  },
+  generated_video: {
+    group: "ai",
+    label: "AI 生成视频",
+    selectionHint: "根据分镜生成视频片段",
+    description: "为每个分镜生成动态视频片段，耗时和 Provider 成本通常更高。",
+    sourceKind: "ai",
+    visualKind: "video",
+    requiresSourceAsset: false,
+    usesVisualPrompt: true,
+    supportsSceneRetry: true,
+  },
+  online_asset: {
+    group: "real",
+    label: "素材库视频",
+    selectionHint: "从已配置素材库获取实拍视频",
+    description: "从已配置的素材库获取实拍视频并下载到任务资产，不自动替换为 AI 画面。",
+    sourceKind: "online",
+    visualKind: "video",
+    requiresSourceAsset: false,
+    usesVisualPrompt: false,
+    supportsSceneRetry: true,
+  },
+  uploaded_asset: {
+    group: "real",
+    label: "我的素材",
+    selectionHint: "使用我的图片或视频",
+    description: "使用项目中已有或上传的图片、视频，用户绑定的素材不会被自动替换。",
+    sourceKind: "uploaded",
+    visualKind: "none",
+    requiresSourceAsset: true,
+    usesVisualPrompt: false,
+    supportsSceneRetry: false,
+  },
+  static: {
+    group: "text",
+    label: "文字排版",
+    selectionHint: "用文字排版完成画面",
+    description: "使用文字卡片和动态版式完成画面，不需要图片或视频素材。",
+    sourceKind: "text",
+    visualKind: "none",
+    requiresSourceAsset: false,
+    usesVisualPrompt: false,
+    supportsSceneRetry: false,
+  },
 };
+
+export const CONTENT_MODE_VALUES = Object.keys(CONTENT_MODE_SPECS) as ContentMode[];
+
+const CONTENT_MODE_GROUP_ORDER: ReadonlyArray<{
+  value: ContentModeGroup;
+  label: string;
+}> = [
+  { value: "ai", label: "AI 创作" },
+  { value: "real", label: "真实素材" },
+  { value: "text", label: "文字排版" },
+];
+
+export const CONTENT_MODE_GROUPS: ReadonlyArray<{
+  value: ContentModeGroup;
+  label: string;
+  modes: ReadonlyArray<ContentMode>;
+}> = CONTENT_MODE_GROUP_ORDER.map((group) => ({
+  ...group,
+  modes: CONTENT_MODE_VALUES.filter((mode) => CONTENT_MODE_SPECS[mode].group === group.value),
+}));
+
+export function isContentMode(value: unknown): value is ContentMode {
+  return typeof value === "string" && CONTENT_MODE_VALUES.includes(value as ContentMode);
+}
+
+export function getContentModeSpec(value: unknown): ContentModeSpec | undefined {
+  return isContentMode(value) ? CONTENT_MODE_SPECS[value] : undefined;
+}
+
+export const CONTENT_MODE_LABELS: Record<ContentMode, string> = Object.fromEntries(
+  Object.entries(CONTENT_MODE_SPECS).map(([mode, spec]) => [mode, spec.label])
+) as Record<ContentMode, string>;
 
 export const STAGE_LABELS: Record<string, string> = {
   topic: "选题规划",

@@ -33,7 +33,11 @@ import {
   SCENE_COUNT_PRESETS,
   STYLE_PRESET_OPTIONS,
   ASSET_TYPE_LABELS,
+  CONTENT_MODE_GROUPS,
+  CONTENT_MODE_LABELS,
+  CONTENT_MODE_SPECS,
   formatTemplateName,
+  SPEED_PRESETS,
 } from "@/lib/ui-constants";
 import {
   Asset,
@@ -43,6 +47,7 @@ import {
   TemplateCatalogItem,
   VoiceInfo,
 } from "@/lib/types";
+import { buildGenerationOptions } from "@/lib/task-generation-state";
 
 interface ComfyUIWorkflowItem {
   id: string;
@@ -67,8 +72,6 @@ export interface CreateTaskDialogProps {
   refetchVoices: () => void;
   canonicalTemplateId: (id?: string | null) => string;
 }
-
-const SPEED_PRESETS = [0.8, 1.0, 1.1, 1.2, 1.5];
 
 const assetFileUrl = (filePath: string) =>
   `/api/v1/assets/files/${filePath.split("/").map(encodeURIComponent).join("/")}`;
@@ -203,36 +206,39 @@ export function CreateTaskDialog({
         : null;
 
       const selectedVisualMode = contentMode === "generated_video" ? "video" : "image";
+      const generationOptions = buildGenerationOptions({
+        targetSceneCount,
+        enableResearch,
+        contentMode,
+        templateId: selectedTemplateId,
+        genre: taskGenre,
+        hookType: taskHookType,
+        stylePreset: taskStylePreset,
+        promptPrefix: customPromptPrefix,
+        voiceId: taskVoiceId,
+        speed: taskSpeed,
+        bgmEnabled,
+        bgmAssetId,
+        bgmVolume,
+        sourceAssetId,
+      });
 
       return api.createProjectTask(projectId, {
         title: finalTitle,
         description:
           creationMode === "fixed"
             ? rawScript.slice(0, 200)
-            : `题材: ${taskGenre}, 风格: ${taskStylePreset}, 分镜: ${targetSceneCount}`,
+            : `题材: ${taskGenre}, 画面来源: ${CONTENT_MODE_LABELS[contentMode]}, 分镜: ${targetSceneCount}`,
         job_type: "video_composition",
         input_payload: {
           mode: creationMode,
           topic: finalTitle,
           raw_script: rawScript,
           split_mode: splitMode,
-          genre: taskGenre,
-          hook_type: taskHookType,
-          style_preset: taskStylePreset,
-          prompt_prefix: customPromptPrefix,
-          voice_id: taskVoiceId,
-          speed: taskSpeed,
+          ...generationOptions,
           visual_mode: selectedVisualMode,
-          template_id: selectedTemplateId,
-          content_mode: contentMode,
           template_params: templateParams,
-          source_asset_id: contentMode === "uploaded_asset" ? sourceAssetId || null : null,
-          bgm_asset_id: bgmAssetId || null,
-          bgm_enabled: bgmEnabled,
-          bgm_volume: bgmVolume,
-          target_scene_count: targetSceneCount,
           scheduled_publish: scheduledPublish,
-          enable_research: enableResearch,
           image_workflow_id: imageWorkflowId || null,
           video_workflow_id: videoWorkflowId || null,
         },
@@ -277,15 +283,6 @@ export function CreateTaskDialog({
     createTaskMutation.mutate();
   };
 
-  // Content mode labels
-  const CONTENT_MODE_LABELS: Record<ContentMode, string> = {
-    generated_image: "AI 生图",
-    generated_video: "AI 视频",
-    online_asset: "免版权实拍素材",
-    static: "纯文字排版",
-    uploaded_asset: "自选素材",
-  };
-
   const selectedVoice = taskVoices.find((v) => v.id === taskVoiceId);
   const voiceDisplayName = selectedVoice
     ? `${selectedVoice.name}`
@@ -295,10 +292,12 @@ export function CreateTaskDialog({
     availableTemplates.find((t) => t.id === selectedTemplateId) ||
     templates.find((t) => t.id === selectedTemplateId);
   const selectedStyle = STYLE_PRESET_OPTIONS.find((s) => s.value === taskStylePreset);
+  const contentModeSpec = CONTENT_MODE_SPECS[contentMode];
+  const usesAiVisualStyle = contentModeSpec.usesVisualPrompt;
 
   const isFormValid =
     (creationMode === "generate" ? Boolean(taskTitle.trim()) : Boolean(rawScript.trim())) &&
-    (contentMode !== "uploaded_asset" || Boolean(sourceAssetId)) &&
+    (!contentModeSpec.requiresSourceAsset || Boolean(sourceAssetId)) &&
     (!autoSchedulePublish || (Boolean(scheduleAccountId) && Boolean(scheduleAt))) &&
     Boolean(selectedTemplateId);
 
@@ -524,46 +523,48 @@ export function CreateTaskDialog({
               )}
 
               {/* Visual Style Preset Selection */}
-              <div className="space-y-2.5 pt-3 border-t border-border">
-                <div className="flex items-center justify-between">
-                  <label className="text-sm font-medium text-foreground flex items-center gap-2">
-                    <Palette className="h-4 w-4 text-primary" />
-                    <span>视觉美学风格预设</span>
-                  </label>
-                </div>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                  {STYLE_PRESET_OPTIONS.map((style) => (
-                    <button
-                      key={style.value}
-                      type="button"
-                      onClick={() => setTaskStylePreset(style.value)}
-                      aria-pressed={taskStylePreset === style.value}
-                      className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer ${
-                        taskStylePreset === style.value
-                          ? "border-primary bg-primary/10 text-foreground ring-1 ring-primary/80 shadow-xs"
-                          : "border-border bg-card text-muted-foreground hover:bg-secondary/40 hover:text-foreground"
-                      }`}
-                    >
-                      <div className="text-sm font-medium text-foreground leading-snug">{style.label}</div>
-                      <div className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
-                        {style.desc}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-
-                {taskStylePreset === "custom" && (
-                  <div className="pt-1.5">
-                    <Input
-                      id="studio-custom-style"
-                      placeholder="输入自定义风格提示词，例如：赛博朋克、新海诚唯美风、复古工笔画"
-                      value={customPromptPrefix}
-                      onChange={(e) => setCustomPromptPrefix(e.target.value)}
-                      className="h-9 text-sm"
-                    />
+              {usesAiVisualStyle && (
+                <div className="space-y-2.5 pt-3 border-t border-border">
+                  <div className="flex items-center justify-between">
+                    <label className="text-sm font-medium text-foreground flex items-center gap-2">
+                      <Palette className="h-4 w-4 text-primary" />
+                      <span>视觉美学风格预设</span>
+                    </label>
                   </div>
-                )}
-              </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {STYLE_PRESET_OPTIONS.map((style) => (
+                      <button
+                        key={style.value}
+                        type="button"
+                        onClick={() => setTaskStylePreset(style.value)}
+                        aria-pressed={taskStylePreset === style.value}
+                        className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer ${
+                          taskStylePreset === style.value
+                            ? "border-primary bg-primary/10 text-foreground ring-1 ring-primary/80 shadow-xs"
+                            : "border-border bg-card text-muted-foreground hover:bg-secondary/40 hover:text-foreground"
+                        }`}
+                      >
+                        <div className="text-sm font-medium text-foreground leading-snug">{style.label}</div>
+                        <div className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
+                          {style.desc}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+
+                  {taskStylePreset === "custom" && (
+                    <div className="pt-1.5">
+                      <Input
+                        id="studio-custom-style"
+                        placeholder="输入自定义风格提示词，例如：赛博朋克、新海诚唯美风、复古工笔画"
+                        value={customPromptPrefix}
+                        onChange={(e) => setCustomPromptPrefix(e.target.value)}
+                        className="h-9 text-sm"
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Right Column: Spec, Voice & Settings (42%) */}
@@ -588,17 +589,19 @@ export function CreateTaskDialog({
                       </p>
                     </div>
                     <div className="space-y-0.5">
-                      <span className="text-xs text-muted-foreground">生成模式</span>
+                      <span className="text-xs text-muted-foreground">画面来源</span>
                       <p className="font-medium text-foreground">{CONTENT_MODE_LABELS[contentMode]}</p>
                     </div>
                     <div className="space-y-0.5">
                       <span className="text-xs text-muted-foreground">配音发音人</span>
                       <p className="font-medium text-foreground truncate">{voiceDisplayName}</p>
                     </div>
-                    <div className="space-y-0.5">
-                      <span className="text-xs text-muted-foreground">视觉风格</span>
-                      <p className="font-medium text-foreground truncate">{selectedStyle?.label || "火柴人"}</p>
-                    </div>
+                    {usesAiVisualStyle && (
+                      <div className="space-y-0.5">
+                        <span className="text-xs text-muted-foreground">视觉风格</span>
+                        <p className="font-medium text-foreground truncate">{selectedStyle?.label || "火柴人"}</p>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -660,22 +663,31 @@ export function CreateTaskDialog({
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div className="space-y-1.5">
                       <label htmlFor="studio-content-mode" className="text-sm font-medium text-foreground">
-                        画面生成模式
+                        画面来源
                       </label>
                       <Select
                         id="studio-content-mode"
                         value={contentMode}
+                        aria-describedby="studio-content-mode-description"
                         onChange={(e) => {
                           const next = e.target.value as ContentMode;
                           setContentMode(next);
                         }}
                         className="h-9 text-sm"
                       >
-                        <option value="generated_image">AI 生成图片</option>
-                        <option value="generated_video">AI 生成视频</option>
-                        <option value="static">纯文字排版</option>
-                        <option value="uploaded_asset">绑定自选素材</option>
+                        {CONTENT_MODE_GROUPS.map((group) => (
+                          <optgroup key={group.value} label={group.label}>
+                            {group.modes.map((mode) => (
+                              <option key={mode} value={mode}>
+                                {CONTENT_MODE_SPECS[mode].label}
+                              </option>
+                            ))}
+                          </optgroup>
+                        ))}
                       </Select>
+                      <p id="studio-content-mode-description" className="text-xs text-muted-foreground">
+                        {CONTENT_MODE_SPECS[contentMode].selectionHint}
+                      </p>
                     </div>
 
                     <div className="space-y-1.5">
@@ -752,7 +764,7 @@ export function CreateTaskDialog({
 
                   {availableTemplates.length === 0 && (
                     <p className="text-xs text-amber-500/90 dark:text-amber-400/90 bg-amber-500/10 border border-amber-500/20 rounded-md p-2">
-                      当前项目画幅（{projectAspect}）下未找到匹配“{CONTENT_MODE_LABELS[contentMode]}”模式的排版模板，请切换画面生成模式或联系管理员添加模板。
+                      当前项目画幅（{projectAspect}）下未找到匹配“{CONTENT_MODE_LABELS[contentMode]}”模式的排版模板，请切换画面来源或联系管理员添加模板。
                     </p>
                   )}
 
@@ -760,7 +772,7 @@ export function CreateTaskDialog({
                   {contentMode === "uploaded_asset" && (
                     <div className="space-y-1.5">
                       <label htmlFor="studio-source-asset" className="text-sm font-medium text-foreground">
-                        绑定项目素材 <span className="text-destructive">*</span>
+                        默认绑定我的素材 <span className="text-destructive">*</span>
                       </label>
                       <Select
                         id="studio-source-asset"

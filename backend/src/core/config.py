@@ -66,6 +66,58 @@ class Settings(BaseSettings):
     schedule_misfire_grace_seconds: float = Field(default=60.0, validation_alias=AliasChoices("SCHEDULE_MISFIRE_GRACE_SECONDS", "TRENDLUME_SCHEDULE_MISFIRE_GRACE_SECONDS"))
     max_job_retries: int = Field(default=3, ge=0, le=20, validation_alias=AliasChoices("MAX_JOB_RETRIES", "TRENDLUME_MAX_JOB_RETRIES"))
 
+    # Project trend subscription scheduler.  Trend collection has its own
+    # durable tables because it is not a Task and must never enter workflow_jobs.
+    trend_scheduler_poll_interval_seconds: float = Field(
+        default=30.0,
+        ge=1.0,
+        le=3600.0,
+        validation_alias=AliasChoices(
+            "TREND_SCHEDULER_POLL_INTERVAL_SECONDS",
+            "TRENDLUME_TREND_SCHEDULER_POLL_INTERVAL_SECONDS",
+        ),
+    )
+    trend_scheduler_source_timeout_seconds: float = Field(
+        default=60.0,
+        ge=1.0,
+        le=3600.0,
+        validation_alias=AliasChoices(
+            "TREND_SCHEDULER_SOURCE_TIMEOUT_SECONDS",
+            "TRENDLUME_TREND_SCHEDULER_SOURCE_TIMEOUT_SECONDS",
+        ),
+    )
+    trend_source_primary_url: str = Field(
+        default="https://60s.viki.moe",
+        validation_alias=AliasChoices(
+            "TREND_SOURCE_PRIMARY_URL",
+            "TRENDLUME_TREND_SOURCE_PRIMARY_URL",
+        ),
+    )
+    trend_source_fallback_url: str = Field(
+        default="https://v2.xxapi.cn",
+        validation_alias=AliasChoices(
+            "TREND_SOURCE_FALLBACK_URL",
+            "TRENDLUME_TREND_SOURCE_FALLBACK_URL",
+        ),
+    )
+    trend_source_request_timeout_seconds: float = Field(
+        default=15.0,
+        ge=1.0,
+        le=120.0,
+        validation_alias=AliasChoices(
+            "TREND_SOURCE_REQUEST_TIMEOUT_SECONDS",
+            "TRENDLUME_TREND_SOURCE_REQUEST_TIMEOUT_SECONDS",
+        ),
+    )
+    trend_source_max_items: int = Field(
+        default=50,
+        ge=1,
+        le=200,
+        validation_alias=AliasChoices(
+            "TREND_SOURCE_MAX_ITEMS",
+            "TRENDLUME_TREND_SOURCE_MAX_ITEMS",
+        ),
+    )
     # Security & Encryption Root Secret (Never stored in SQLite)
     encryption_key: str | None = Field(
         default=None,

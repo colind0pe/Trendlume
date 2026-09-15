@@ -14,7 +14,8 @@ from src.models import Base
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 BACKEND_DIR = ROOT_DIR / "backend"
-RELEASE_REVISION = "001_release_baseline"
+BASELINE_REVISION = "001_release_baseline"
+RELEASE_REVISION = "002_trend_center"
 
 
 def _migration_database(tmp_path: Path, filename: str) -> tuple[Path, str]:
@@ -22,13 +23,13 @@ def _migration_database(tmp_path: Path, filename: str) -> tuple[Path, str]:
     return database_file, f"sqlite+aiosqlite:///{database_file.as_posix()}"
 
 
-def _run_migration(database_url: str, revision: str) -> None:
+def _run_migration(database_url: str, revision: str, *, downgrade: bool = False) -> None:
     original_database_url = settings.database_url
     try:
         settings.database_url = database_url
         alembic_config = Config(str(BACKEND_DIR / "alembic.ini"))
         alembic_config.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
-        command.upgrade(alembic_config, revision)
+        (command.downgrade if downgrade else command.upgrade)(alembic_config, revision)
     finally:
         settings.database_url = original_database_url
 
@@ -45,7 +46,11 @@ def _table_names(connection: sqlite3.Connection) -> set[str]:
     }
 
 
-def test_release_baseline_creates_current_schema(tmp_path: Path):
+def _migration_version(connection: sqlite3.Connection) -> str:
+    return connection.execute("SELECT version_num FROM alembic_version").fetchone()[0]
+
+
+def test_head_creates_current_schema(tmp_path: Path):
     database_file, database_url = _migration_database(tmp_path, "release.db")
 
     _run_migration(database_url, "head")
@@ -64,8 +69,38 @@ def test_release_baseline_creates_current_schema(tmp_path: Path):
             "last_test_message",
             "last_test_latency_ms",
         } <= _table_columns(connection, "provider_configs")
+        assert {
+            "content_brief",
+            "generation_options",
+        } <= _table_columns(connection, "topic_proposals")
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
+
+def test_existing_release_database_upgrades_and_downgrades_trend_center(tmp_path: Path):
+    database_file, database_url = _migration_database(tmp_path, "upgrade.db")
+
+    _run_migration(database_url, BASELINE_REVISION)
+    with sqlite3.connect(database_file) as connection:
+        assert _migration_version(connection) == BASELINE_REVISION
+        assert "trend_runs" not in _table_names(connection)
+
+    _run_migration(database_url, "head")
+    with sqlite3.connect(database_file) as connection:
+        assert _migration_version(connection) == RELEASE_REVISION
+        assert "trend_runs" in _table_names(connection)
+
+    _run_migration(database_url, BASELINE_REVISION, downgrade=True)
+    with sqlite3.connect(database_file) as connection:
+        assert _migration_version(connection) == BASELINE_REVISION
+        assert not {
+            "trend_runs",
+            "trend_source_runs",
+            "trend_items",
+            "trend_observations",
+            "trend_project_matches",
+            "topic_proposals",
+            "trend_subscriptions",
+        } & _table_names(connection)
 
 @pytest.mark.asyncio
 async def test_verify_schema_reports_missing_columns(tmp_path: Path):

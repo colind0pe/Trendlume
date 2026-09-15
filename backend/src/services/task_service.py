@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.exceptions import NotFoundException, ValidationException
+from src.domain.content_modes import is_content_mode_supported, resolve_content_mode
 from src.domain.enums import AccountStatus, AssetType, PlatformType, TaskStatus
 from src.models.asset import AssetModel
 from src.models.publishing import SocialAccountModel
@@ -118,15 +119,12 @@ class TaskService:
             raise NotFoundException("Template", requested_template_id)
 
         legacy_visual_mode = payload.get("visual_mode", data.visual_mode)
-        content_mode = payload.get("content_mode", data.content_mode)
-        if not content_mode:
-            if template["template_type"] == "static":
-                content_mode = "static"
-            elif template["template_type"] == "asset":
-                content_mode = "uploaded_asset"
-            else:
-                content_mode = "generated_video" if legacy_visual_mode == "video" else "generated_image"
-        if content_mode not in template["supported_content_modes"]:
+        content_mode = resolve_content_mode(
+            payload.get("content_mode", data.content_mode),
+            template_type=template["template_type"],
+            visual_mode=legacy_visual_mode,
+        )
+        if not is_content_mode_supported(content_mode, template["template_type"]):
             raise ValidationException(
                 f"模板 {requested_template_id} 不支持内容模式 {content_mode}"
             )
@@ -416,10 +414,12 @@ class TaskService:
         item = template_catalog.get(selected_id)
         if not item:
             raise NotFoundException("Template", selected_id)
-        content_mode = payload.get("content_mode") or (
-            "generated_video" if payload.get("visual_mode") == "video" else "generated_image"
+        content_mode = resolve_content_mode(
+            payload.get("content_mode"),
+            template_type=item["template_type"],
+            visual_mode=payload.get("visual_mode"),
         )
-        if content_mode not in item["supported_content_modes"]:
+        if not is_content_mode_supported(content_mode, item["template_type"]):
             raise ValidationException(f"模板 {selected_id} 不支持内容模式 {content_mode}")
         project = await self.project_repo.get_by_id(task.project_id)
         project_aspect = (project.aspect_ratio if project else None) or "9:16"

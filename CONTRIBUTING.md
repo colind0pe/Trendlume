@@ -26,6 +26,14 @@ Trendlume 定位是一个轻量、自闭环、开箱即用的个人与工作室�
 4. **统一的文件与产物管理**：
    - 业务代码严禁在本地随意使用 `open()` 或裸 `Path()` 写入或读取文件，必须通过 `StorageService` 统一管理生命周期与路径。
 
+5. **热点采集与视频流水线物理隔离**：
+   - 热点数据采集与订阅调度使用独立数据表（`trend_runs`、`trend_subscriptions` 等）与 `TrendScheduler`，严禁将其作为普通 Task 压入 `workflow_jobs` 队列。
+   - 热点转化为视频创作时，严格遵循 `Trend → Proposal → Task` 的单向流转。通过提案阶段沉淀切入点后，再生成标准 Task，保持下游故事板与渲染逻辑幂等且不被热点轮询污染。
+
+6. **遵守画面来源模式（Content Modes）契约**：
+   - 所有视觉素材流转必须遵守 `backend/src/domain/content_modes.py` 定义的契约（`generated_image`、`generated_video`、`online_asset`、`uploaded_asset`、`static`）。
+   - 新增模板或扩展视觉生成能力时，必须在 `supported_content_modes` 中显式声明支持的模式，不得使用未受约束的自定义字符串。
+
 ---
 
 ## 🛠️ 本地开发环境准备
@@ -102,6 +110,18 @@ npm run dev
    在 `src/providers/registry.py` 中注册新 Provider，并确保前端「设置」页面可以通过设置中心传入该 Provider 的配置项（密钥将通过后端对称加密安全保存）。
 4. **补充单元测试**：
    在 `tests/` 下添加对应测试，使用 Mock 对象模拟网络返回，严禁在 CI/单元测试中直接调用外部真实付费 API。
+
+---
+
+## 🌐 如何扩展热点平台来源 (Trend Sources)
+
+系统通过 `TrendSourceAdapter` 协议抽象多平台公开热榜数据源，相关实现位于 `backend/src/services/trend_sources.py`。
+
+### 接入新热点来源的原则：
+1. **使用公开稳定的规范化接口**：优先使用公开 JSON Feed 或公益 API，并配置主源（如 60s）与备用源（如 xxapi）以实现自动降级。
+2. **不编写针对平台 Web 页面的爬虫**：主流平台前端页面存在严格的登录校验与风控机制，直接抓取容易导致服务中断和账号封禁。
+3. **保留原始指标，不做跨平台数学比对**：通过 `TrendSourceItem` 分别保存各平台的原始热度数值（`raw_metric`）与度量单位（`metric_unit`），不得在跨平台场景下直接对不同算法产出的热度值进行大小比较。
+4. **测试要求**：在 `tests/test_trend_sources.py` 中补充针对该数据源的数据解析与错误降级单元测试（使用本地静态 payload 模拟）。
 
 ---
 

@@ -3,6 +3,7 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 import { X } from "lucide-react";
+import { useModalFocus } from "./modal-focus";
 
 interface DialogContextValue {
   titleId: string;
@@ -20,71 +21,16 @@ export interface DialogProps {
 }
 
 export function Dialog({ open, onOpenChange, onClose, className, children }: DialogProps) {
-  const contentRef = React.useRef<HTMLDivElement>(null);
-  const previousActiveElement = React.useRef<HTMLElement | null>(null);
   const titleId = React.useId();
   const descriptionId = React.useId();
-
-  React.useEffect(() => {
-    if (!open) return;
-
-    previousActiveElement.current = document.activeElement as HTMLElement | null;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-
-    const focusFirstElement = () => {
-      const firstFocusable = contentRef.current?.querySelector<HTMLElement>(
-        'input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
-      );
-      (firstFocusable || contentRef.current)?.focus();
-    };
-    const frame = window.requestAnimationFrame(focusFirstElement);
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        handleClose();
-      }
-    };
-    document.addEventListener("keydown", handleEscape);
-
-    return () => {
-      window.cancelAnimationFrame(frame);
-      document.removeEventListener("keydown", handleEscape);
-      document.body.style.overflow = previousOverflow;
-      previousActiveElement.current?.focus();
-    };
-  }, [open]);
-
-  if (!open) return null;
 
   const handleClose = () => {
     onClose?.();
     onOpenChange?.(false);
   };
+  const { contentRef, handleContentKeyDown } = useModalFocus(open, handleClose);
 
-  const handleContentKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== "Tab") return;
-
-    const focusable = Array.from(
-      event.currentTarget.querySelectorAll<HTMLElement>(
-        'input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
-      )
-    );
-    if (focusable.length === 0) {
-      event.preventDefault();
-      return;
-    }
-
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
-    }
-  };
+  if (!open) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 overflow-hidden">
