@@ -32,6 +32,189 @@ export type VisualMode = "image" | "video";
 export type ContentMode = "generated_image" | "generated_video" | "online_asset" | "static" | "uploaded_asset";
 export type TemplateType = "image" | "video" | "static" | "asset";
 
+/** Persisted trend feed contract; source ingestion remains an explicit adapter boundary. */
+export type TrendFreshness = "15m" | "1h" | "6h" | "24h" | "all";
+export type TrendRelation = "high" | "medium" | "low" | "unknown";
+export type TrendSourceStatus = "fresh" | "stale" | "failed" | "unavailable";
+
+export interface TrendSourceRun {
+  id: string;
+  source_key: string;
+  adapter_name: string;
+  platform: string;
+  status: TrendSourceStatus;
+  item_count: number;
+  fetched_at?: string | null;
+  source_updated_at?: string | null;
+  error_message?: string | null;
+}
+
+export interface TrendRun {
+  id: string;
+  status: string;
+  requested_platforms: string[];
+  source_count: number;
+  success_count: number;
+  stale_count: number;
+  error_count: number;
+  error_summary?: string | null;
+  fetched_at?: string | null;
+  started_at: string;
+  completed_at?: string | null;
+  subscription_id?: string | null;
+  trigger_key?: string | null;
+  sources: TrendSourceRun[];
+}
+
+export interface TrendSourceCatalog {
+  source_key: string;
+  adapter_name: string;
+  platform: string;
+  platform_label: string;
+  primary_available: boolean;
+  fallback_available: boolean;
+}
+
+export interface TrendSourceHealth {
+  source_key: string;
+  platform: string;
+  status: TrendSourceRun["status"];
+  item_count: number;
+  fetched_at?: string | null;
+  error_message?: string | null;
+}
+
+export interface TrendItem {
+  id: string;
+  title: string;
+  platform: string;
+  platform_label?: string | null;
+  rank: number;
+  raw_metric?: string | number | null;
+  metric_unit?: string | null;
+  fetched_at?: string | null;
+  source_url?: string | null;
+  project_relevance?: TrendRelation;
+  source_status?: TrendSourceStatus;
+  risk_note?: string | null;
+  summary?: string | null;
+}
+
+export interface TrendFeedResponse {
+  items: TrendItem[];
+  status: "ready" | "stale" | "unavailable";
+  fetched_at?: string | null;
+  source_message?: string | null;
+}
+
+export interface TrendPreferences {
+  project_id: string;
+  include_keywords: string[];
+  exclude_keywords: string[];
+  platforms: string[];
+}
+
+export type TrendSubscriptionStatus = "active" | "paused" | "running" | "stale" | "failed" | "unavailable";
+export type TrendFrequency = "15m" | "1h" | "6h" | "24h";
+
+export interface TrendPreferencesUpdateRequest {
+  include_keywords?: string[];
+  exclude_keywords?: string[];
+  platforms?: string[];
+}
+
+export interface TrendSubscriptionRequest {
+  enabled?: boolean;
+  platforms?: string[];
+  source_keys?: string[];
+  frequency?: TrendFrequency;
+  timezone?: string;
+}
+
+export interface TrendSubscriptionCreateRequest extends TrendSubscriptionRequest {
+  project_id: string;
+}
+
+export interface TrendProposalCreateRequest {
+  project_id: string;
+  trend_item_id: string;
+  angle?: string;
+  content_brief?: Record<string, any>;
+  generation_options?: Record<string, any>;
+}
+
+export interface TrendProposalUpdateRequest {
+  expected_revision: number;
+  title?: string;
+  angle?: string;
+  content_brief?: Record<string, any>;
+  generation_options?: Record<string, any>;
+}
+
+export interface TrendSubscription {
+  id: string;
+  project_id: string;
+  enabled: boolean;
+  platforms: string[];
+  source_keys: string[];
+  frequency: TrendFrequency;
+  timezone: string;
+  status: TrendSubscriptionStatus;
+  retry_count: number;
+  last_run_id?: string | null;
+  last_started_at?: string | null;
+  last_success_at?: string | null;
+  next_run_at?: string | null;
+  last_error?: string | null;
+  recent_runs: TrendRun[];
+  source_health: TrendSourceHealth[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ContentBrief {
+  audience?: string | null;
+  goal?: string | null;
+  angle?: string | null;
+  tone?: string | null;
+  language?: string | null;
+  key_points: string[];
+  claims: string[];
+  uncertainty?: string | null;
+  source_refs: string[];
+  production_constraints: string[];
+}
+
+export type TrendProposalStatus = "draft" | "approving" | "task_created" | "queue_failed" | "rejected";
+
+export interface TrendProposal {
+  id: string;
+  project_id: string;
+  trend_item_id: string;
+  trend_run_id?: string | null;
+  trend_observation_id?: string | null;
+  task_id?: string | null;
+  revision: number;
+  status: TrendProposalStatus;
+  title: string;
+  angle: string;
+  match_reason: string;
+  matched_keywords: string[];
+  trend_snapshot: Record<string, any>;
+  content_brief: ContentBrief;
+  generation_options: Record<string, any>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TrendProposalActionResponse {
+  proposal: TrendProposal;
+  task?: Task | null;
+  job?: WorkflowJob | Record<string, any> | null;
+  queue_status: "not_requested" | "queued" | "failed";
+  queue_error?: string | null;
+}
+
 export interface ScheduledPublishConfig {
   account_id: string;
   scheduled_at: string;

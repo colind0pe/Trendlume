@@ -63,6 +63,13 @@ _REQUIRED_TABLES = {
     "publishing_jobs",
     "provider_configs",
     "prompt_call_observations",
+    "trend_runs",
+    "trend_source_runs",
+    "trend_items",
+    "trend_observations",
+    "trend_project_matches",
+    "topic_proposals",
+    "trend_subscriptions",
 }
 
 _REQUIRED_COLUMNS = {

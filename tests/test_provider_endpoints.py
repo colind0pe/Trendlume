@@ -80,7 +80,7 @@ async def test_image_generation_test_returns_preview_and_persists_status(
         assert prompt == DEFAULT_IMAGE_TEST_PROMPT
         assert aspect_ratio == "16:9"
         assert style_preset == "cinematic_real"
-        assert workflow == "image/image_flux.json"
+        assert workflow is None
         return ImageResult(image_bytes=b"image-fixture", width=1280, height=720)
 
     monkeypatch.setattr(ComfyUIImageProvider, "generate_image", fake_generate)
@@ -101,9 +101,7 @@ async def test_image_generation_test_returns_preview_and_persists_status(
     assert data["height"] == 720
 
     provider = await _provider_summary(client, "prov_image_comfyui")
-    # The bootstrap may intentionally leave the local workflow unset; test
-    # evidence is still retained without claiming the incomplete config is ready.
-    assert provider["connection_status"] == "not_configured"
+    assert provider["connection_status"] == "ready"
     assert provider["last_test"]["connected"] is True
 
 

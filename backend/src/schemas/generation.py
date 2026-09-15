@@ -4,6 +4,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from src.domain.content_modes import ContentMode
+
 RESEARCH_CONTEXT_MAX_CHARS = 7000
 PLATFORM_DECLARATIONS = frozenset(
     {"内容由AI生成", "内容取材网络", "个人观点，仅供参考"}
@@ -294,9 +296,7 @@ class ScriptGenerateRequest(BaseModel):
     research_context: str | None = Field(default=None, max_length=RESEARCH_CONTEXT_MAX_CHARS)
     target_scene_count: int = Field(default=8, ge=8, le=20, description="期望分镜数量")
     content_brief: ContentBrief | None = None
-    content_mode: Literal[
-        "generated_image", "generated_video", "online_asset", "static", "uploaded_asset"
-    ] | None = None
+    content_mode: ContentMode | None = None
     aspect_ratio: Literal["9:16", "16:9", "1:1"] = "9:16"
     language: str | None = Field(default=None, max_length=100)
     prompt_versions: dict[str, str] | None = None

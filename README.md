@@ -2,7 +2,7 @@
 
 > Trendlume 是一个专为创作者设计的 AI 短视频制作与发布工作台。
 
-不管你手里只有一个模糊的主题想法，还是已经写好了现成的文案，都可以用它一站式完成资料检索、脚本策划、画面生成、配音字幕与成片渲染，最后直接推送到抖音发布。每个镜头都可以在故事板中单独调整，修改局部不需要全盘重新渲染。
+你可以从全网热点捕获灵感并生成选题提案，也可以直接输入主题让 AI 联网调研，或者粘贴现成文案快速成片。每个镜头都可以在故事板中单独调整，修改局部不需要全盘重新渲染，最后直接推送到抖音发布。
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=flat-square)](LICENSE) [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/) [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/) [![Next.js 14](https://img.shields.io/badge/Next.js-14-black?style=flat-square&logo=next.js&logoColor=white)](https://nextjs.org/) [![React 18](https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react&logoColor=black)](https://react.dev/) [![SQLite](https://img.shields.io/badge/SQLite-3-003B57?style=flat-square&logo=sqlite&logoColor=white)](https://www.sqlite.org/) [![FFmpeg](https://img.shields.io/badge/FFmpeg-6.0+-007808?style=flat-square&logo=ffmpeg&logoColor=white)](https://ffmpeg.org/)
 
@@ -16,9 +16,9 @@
 
 ## ✨ 它能为你做什么
 
-- **双起点创作**：输入一个主题，让 AI 联网查资料并扩写分镜；或者直接粘贴已有文案，跳过生成步骤直接进入故事板。
+- **三维创作起点**：支持全网热点发现（聚合 7 大平台公开热榜并生成选题提案）、主题定向扩写（联网查资料并规划分镜）、已有文案导入（直接拆解分镜），按你的习惯进入创作。
 - **镜头级可视化微调**：生成的视频不是黑盒。在故事板中，你可以逐个镜头预览画面、调整时长或修改台词。换一张图或重写一句话，不会打乱其他镜头的节奏。
-- **多样化的画面形式**：支持 AI 生图、AI 视频、Pexels 免版税素材库、纯文字排版卡片，也支持直接上传你自己的实拍视频或照片。
+- **按来源选择画面**：支持 AI 生图、AI 视频、Pexels 素材库视频、纯文字排版卡片，也支持直接绑定自己的图片或视频。
 - **音画字幕自动对齐**：内置免费的 Edge-TTS，也可以接入火山引擎豆包语音。系统会根据音频时长自动排布画面，并生成双语或单语字幕，支持 9:16 竖屏、16:9 横屏和 1:1 方形画幅（内置 19 种排版模板）。
 - **随时暂停与局部重试**：每一步骤自动存盘。网络抖动或渲染中断后随时继续；修改第 3 个镜头的素材，不需要重新合成前面已经满意的场景。
 - **直连抖音发布**：手机扫码即可授权绑定抖音创作者中心，在后台直接填写标题、话题标签、挑选封面，支持即时发布与定时排期。
@@ -26,13 +26,18 @@
 ## 创作工作流
 
 ```text
-输入主题或脚本 ──> 资料调研与策划 ──> 分镜脚本 ──> 故事板精修（换图/调词）
-                                                       │
-成片导出 / 抖音发布 <── 视频渲染合成 <── 配音与字幕生成 <──────┘
+全网热点 ──> 选题提案 ──┐
+                         ├──> 分镜脚本 ──> 故事板精修（换图/调词）
+输入主题 ──> 资料调研 ──┤                          │
+                         │                          │
+粘贴已有文案 ────────────┘                          │
+                                                    │
+成片导出 / 抖音发布 <── 视频渲染合成 <── 配音与字幕生成 <───┘
 ```
 
+- **全网热点**：通过公开接口获取 7 大平台实时热榜，由大模型匹配项目偏好生成切入点与大纲，确认后一键转为标准视频任务。
 - **自带文案**：如果选择固定脚本模式，系统会自动跳过前期的联网调研和主题策划环节。
-- **在线素材**：如果选用 Pexels 素材模式，系统会根据旁白关键词自动检索匹配的视频素材，免去等待画面生成的时间。
+- **真实素材优先**：普通任务可以选择 Pexels 素材库视频，系统会根据旁白关键词自动检索并下载到任务资产；也可以直接绑定自己的图片或视频。
 
 ## 🖼️ 界面预览
 
@@ -62,10 +67,11 @@
 
 | 类型       | 支持服务                                                              | 推荐组合说明                                       |
 | ---------- | --------------------------------------------------------------------- | -------------------------------------------------- |
+| 全网热点   | 公开热榜                                | 覆盖微博、抖音、知乎、头条、小红书、B 站、百度，免爬虫与登录 |
 | 大语言模型 | DeepSeek、OpenAI 兼容接口、Claude、Cloudflare Workers AI、本地 Ollama | 日常推荐 DeepSeek 或本地 Ollama，性价比高          |
 | 选题研究   | Tavily                                                                | 用于联网检索实时信息与参考资料                     |
-| 图像与视频 | 本地 ComfyUI、火山引擎 Seedream / Seedance                            | 本地有显卡可用 ComfyUI，追求省心可用火山引擎       |
-| 在线素材   | Pexels                                                                | 免费的高清实拍与视频素材库                         |
+| 图像与视频 | 本地 ComfyUI、火山引擎 Seedream / Seedance                            | 本地有显卡可用 ComfyUI，追求省心可用火山引擎 |
+| 素材库视频 | Pexels                                                                | 免费的高清实拍与视频素材库                         |
 | 语音合成   | Edge-TTS（内置免费）、火山引擎豆包 TTS                                | 快速上手直接用 Edge-TTS，无需 Key 即可生成自然旁白 |
 | 发布渠道   | 抖音创作者中心                                                        | 网页扫码授权，支持即时与定时发布                   |
 
@@ -182,7 +188,7 @@ npm run dev
 
 ## 🗺️ 后续开发计划
 
-- [ ] **全网热点 Dashboard**：实时聚合主流平台热搜榜单与爆款话题，一键捕获流量灵感并直接发起视频创作。
+- [x] **全网热点 Dashboard**：采集公开平台热榜，保留原始热度与来源状态，筛选选题后直接发起视频创作。
 - [ ] **适配更多 Provider**：
   - 大语言模型：接入 MiniMax、智谱 GLM、Kimi 等主流大模型及更多中转站
   - 画面生成：拓展 Midjourney、可灵 AI等更多视频与图像生成服务
@@ -195,36 +201,36 @@ npm run dev
 ```text
 Trendlume/
 ├── backend/                          # 后端核心服务（Python 3.11+ / FastAPI）
-│   ├── alembic/                      # 数据库迁移脚本与版本管理
+│   ├── alembic/                      # 数据库迁移脚本
 │   ├── templates/                    # HTML/CSS 动态视频排版模板（9:16 / 16:9 / 1:1）
 │   ├── workflows/                    # ComfyUI 图像与视频工作流模板 (JSON)
 │   └── src/                          # 后端核心源码
-│       ├── api/                      # RESTful 接口层
+│       ├── api/                      # RESTful 接口层（任务、分镜、生成、热点中心、发布等）
 │       ├── core/                     # 基础设施（配置读取、密钥加密、自定义异常、统一日志）
-│       ├── domain/                   # 领域模型定义与流水线阶段枚举（Workflow Stages）
-│       ├── models/                   # SQLAlchemy ORM 数据库实体（任务、分镜、产物、发布记录等）
+│       ├── domain/                   # 领域契约（流水线阶段、画面来源模式）
+│       ├── models/                   # SQLAlchemy ORM 数据实体（任务、分镜、热点与提案、产物等）
 │       ├── providers/                # 外部模型与服务适配层（严格遵循 Protocol 协议规范）
 │       ├── repositories/             # 数据访问层（CRUD 数据库操作封装）
 │       ├── schemas/                  # Pydantic 请求与响应数据传输对象 (DTO)
-│       ├── services/                 # 核心业务逻辑
+│       ├── services/                 # 核心业务逻辑（流水线、渲染、热点采集与调度、提案服务等）
 │       ├── storage/                  # 统一文件存储抽象（本地持久化目录、产物检索与管理）
 │       └── tasks/                    # 异步任务系统（单机 asyncio 调度器、Worker 与 SSE 事件广播）
 ├── frontend/                         # 前端工作台（Next.js 14 App Router / React 18 / TailwindCSS）
 │   └── src/
-│       ├── app/                      # 页面路由与布局
-│       ├── components/               # UI 组件库
-│       └── lib/                      # 前端核心工具库
+│       ├── app/                      # 页面路由（工作台、热点中心 /trends、故事板、设置等）
+│       ├── components/               # UI 组件库（分镜编辑、热点提案、工作流状态等）
+│       └── lib/                      # 前端核心工具库（API 客户端、状态契约与类型定义）
 ├── data/                             # 运行时本地数据目录（自动创建，已忽略不提交 Git）
-│   ├── trendlume.db                  # SQLite 数据库文件（WAL 模式持久化任务与配置）
+│   ├── trendlume.db                  # SQLite 数据库文件（WAL 模式持久化任务、配置与热点数据）
 │   └── storage/                      # 生成的视频、音频、字幕、分镜快照与临时渲染产物
-└── tests/                            # 自动化测试套件
+└── tests/                            # 自动化测试套件（单元测试、热点调度与集成回归）
 ```
 
 ## ℹ️ 常见说明
 
-- **API 凭据**：除了内置的 Edge-TTS 免费可用（只需联网），大模型、生图与搜索等服务需自行提供相应平台的 API Key。
+- **API 凭据**：除了内置的 Edge-TTS 免费可用（只需联网），大模型、生图与搜索等服务需自行提供相应平台的 API Key。热点中心默认通过公开公益接口获取，无需配置平台账号或 Cookie。
 - **抖音发布**：采用官方创作者中心网页扫码授权。如果账号触发异地登录或短信二次核验，需要在手机上配合确认。
-- **外部素材版权**：使用 Pexels 在线素材库时，请留意并遵守素材对应的免版税开源使用规范。
+- **外部素材版权**：使用 Pexels 素材库视频时，请留意并遵守素材对应的免版税开源使用规范。
 - **渲染环境**：本地源码运行时，系统依赖系统的 FFmpeg 以及 Playwright Chromium。如果生成报错提示缺少浏览器，请确认已运行 `uv run playwright install chromium`。
 
 ## 🤝 参与开发

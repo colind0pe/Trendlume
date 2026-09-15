@@ -73,6 +73,8 @@ export function Header() {
       }
     } else if (segments[0] === "tasks") {
       crumbs.push({ name: "任务中心", href: "/tasks" });
+    } else if (segments[0] === "trends") {
+      crumbs.push({ name: "热点中心", href: "/trends" });
     } else if (segments[0] === "assets") {
       crumbs.push({ name: "素材库", href: "/assets" });
     } else if (segments[0] === "publishing") {

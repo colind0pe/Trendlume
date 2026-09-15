@@ -15,6 +15,7 @@ import {
   Volume2,
   Check,
   RefreshCw,
+  Flame,
 } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { useTaskEvents, type TaskEvent } from "@/lib/use-task-events";
@@ -284,10 +285,16 @@ export default function ProjectDetailPage() {
         )}
         description={project.description || "短视频创作项目空间"}
         actions={(
-          <Button onClick={() => setIsCreateTaskOpen(true)} className="gap-1.5 h-9 px-3.5 text-sm shadow-xs">
-            <Plus aria-hidden="true" className="h-4 w-4" />
-            新建视频任务
-          </Button>
+          <>
+            <Button variant="outline" onClick={() => router.push(`/trends?project=${encodeURIComponent(project.id)}`)} className="gap-1.5 h-9 px-3.5 text-sm">
+              <Flame aria-hidden="true" className="h-4 w-4" />
+              查看热点
+            </Button>
+            <Button onClick={() => setIsCreateTaskOpen(true)} className="gap-1.5 h-9 px-3.5 text-sm shadow-xs">
+              <Plus aria-hidden="true" className="h-4 w-4" />
+              新建视频任务
+            </Button>
+          </>
         )}
       />
       {/* Workspace Tabs */}

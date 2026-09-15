@@ -7,10 +7,12 @@ import json
 from datetime import UTC, datetime
 from uuid import uuid4
 
+from loguru import logger
 from pydantic import Field
 from sqlalchemy import select
 
 from src.core.exceptions import ValidationException
+from src.domain.content_modes import resolve_content_mode
 from src.models.asset import AssetModel
 from src.models.workflow import WorkflowJobModel, WorkflowStepRunModel
 from src.repositories.project_repository import ProjectRepository
@@ -23,7 +25,10 @@ from src.services.prompt_registry import prompt_selection_snapshot, prompt_versi
 from src.services.provider_manager import ProviderManager
 from src.services.rendering_service import RenderingService
 from src.services.template_catalog import template_catalog
-from src.services.workflow_execution import WorkflowExecutionContext, assert_task_editable
+from src.services.workflow_execution import (
+    WorkflowExecutionContext,
+    assert_task_editable,
+)
 from src.services.workflow_runtime import (
     STEP_KEYS,
     ArtifactSpec,
@@ -334,14 +339,37 @@ class DurableVideoPipeline:
             payload['content_mode'] = 'generated_' + self.params['media_kind']
         if single == 'assets' and self.params.get('content_mode_override'):
             payload['content_mode'] = self.params['content_mode_override']
-        mode = payload.get('content_mode') or (
-            'generated_video' if payload.get('visual_mode') == 'video' else 'generated_image'
+        template_id = payload.get('template_id') or 'default_portrait'
+        template_item = template_catalog.get(template_id)
+        mode = resolve_content_mode(
+            payload.get('content_mode'),
+            template_type=(template_item or {}).get('template_type'),
+            visual_mode=payload.get('visual_mode'),
         )
+        if payload.get('content_mode') != mode:
+            payload['content_mode'] = mode
+            task.input_payload = {**(task.input_payload or {}), 'content_mode': payload['content_mode']}
+            await self.save()
         scenes = await SceneRepository(self.db).list_by_task_id(task.id)
         prior_script = await self.db.scalar(select(WorkflowStepRunModel).where(WorkflowStepRunModel.task_id == task.id, WorkflowStepRunModel.step_key == 'script').limit(1))
-        manual = bool(payload.get('manual_storyboard_version'))
-        legacy = bool(scenes and prior_script is None)
-        adopted_script = legacy or bool(prior_script and (prior_script.output_payload or {}).get('adopted'))
+        has_storyboard = bool(scenes)
+        manual_marker = bool(payload.get('manual_storyboard_version'))
+        if manual_marker and not has_storyboard:
+            # A manual marker without scenes can be left behind when a user
+            # clears a storyboard or an earlier replacement is interrupted.
+            # An empty storyboard is not an authoritative user input: allow a
+            # normal retry to regenerate it instead of reusing an empty step.
+            logger.warning(
+                'Manual storyboard marker found without scenes for task {}; '
+                'rebuilding storyboard from script',
+                task_id,
+            )
+        manual = manual_marker and has_storyboard
+        legacy = has_storyboard and prior_script is None
+        adopted_script = legacy or (
+            has_storyboard
+            and bool(prior_script and (prior_script.output_payload or {}).get('adopted'))
+        )
         if single == 'research':
             research_inputs = {k: payload.get(k) for k in ('enable_research', 'search_provider_id', 'research_max_queries', 'research_max_results')}
             research_inputs['prompt_selection'] = prompt_selection
@@ -412,6 +440,10 @@ class DurableVideoPipeline:
 
             research_run, research_artifacts = await self.stage('research', research_inputs, research_action)
             research = ResearchResponse.model_validate(research_run.output_payload)
+            # ``research_task`` persists into the database, but this local
+            # snapshot predates that stage. Carry the durable result forward
+            # so the following script stage uses the same-run research.
+            payload['research'] = research.model_dump()
             resolved_script_inputs = build_script_generation_inputs(payload, topic=topic, project=project)
             resolved_script_inputs['research_source_ids'] = [
                 hashlib.sha256(
@@ -489,7 +521,6 @@ class DurableVideoPipeline:
             scenes = [s for s in scenes if s.id == self.params.get('single_unit')]
         if not scenes:
             raise ValidationException('任务没有分镜，无法生产视频。')
-        template_id = payload.get('template_id', 'default_portrait')
         template_path = template_catalog.resolve_path(template_id)
         template_hash = await sha256_file(template_path)
         workflow_hashes = {}
@@ -505,7 +536,7 @@ class DurableVideoPipeline:
             execution_context=self.context,
         ) if mode == 'online_asset' else None
         online_external_ids: set[str] = set()
-        if mode == 'online_asset' and single == 'assets':
+        if mode == 'online_asset':
             for bound_scene in all_scenes:
                 if not bound_scene.media_asset_id:
                     continue
@@ -514,6 +545,7 @@ class DurableVideoPipeline:
                 external_id = bound_metadata.get('external_id')
                 if bound_metadata.get('source_kind') == 'online_asset' and external_id:
                     online_external_ids.add(str(external_id))
+
         for scene in scenes if single != 'voice' else []:
             scene_id = scene.id
             # Uploaded and manual assets are authoritative. Generated pointers are outputs, not inputs.
@@ -521,8 +553,8 @@ class DurableVideoPipeline:
             media_source = layout_params.get('media_source')
             user_media = mode == 'uploaded_asset' or media_source in {'manual', 'uploaded'}
             # A generated override is authoritative only while the task remains
-            # in online_asset mode; ordinary generated tasks keep their existing
-            # regeneration/reuse policy.
+            # in its external-material mode; ordinary generated tasks keep their
+            # existing regeneration/reuse policy.
             force_online_refresh = single == 'assets' and self.params.get('content_mode_override') == 'online_asset'
             generated_media = (
                 mode == 'online_asset'
@@ -578,7 +610,14 @@ class DurableVideoPipeline:
                         if user_media or render_only:
                             raise
                 if adopted is not None:
-                    asset, source = adopted, 'uploaded' if user_media else ('generated' if generated_media else 'legacy')
+                    asset = adopted
+                    source = (
+                        'uploaded'
+                        if user_media
+                        else 'generated'
+                        if generated_media
+                        else 'legacy'
+                    )
                 elif mode == 'online_asset':
                     if material_service is None:
                         raise ValidationException('在线素材服务未初始化。')
@@ -607,7 +646,9 @@ class DurableVideoPipeline:
                     await self.save()
                     asset, _ = await self.asset(current_scene.media_asset_id)
                     source = 'generated'
-                return [ArtifactSpec(self.storage.get_path(asset.file_path), 'visual', asset.id, source)], {'asset_id': asset.id}, None, False
+                return [ArtifactSpec(self.storage.get_path(asset.file_path), 'visual', asset.id, source)], {
+                    'asset_id': asset.id,
+                }, None, False
             _, visuals[scene_id] = await self.stage('assets', inputs, visual_action, scene_id, force=single == 'assets')
             scene = await SceneRepository(self.db).get_by_id(scene_id)
             await self.bind(scene, 'media_asset_id', visuals[scene.id])

@@ -107,7 +107,6 @@ class EdgeTTSProvider:
                 mime_type="audio/mpeg",
             )
         except Exception as e:
-            logger.error(f"EdgeTTS 语音合成失败: {e}")
             raise ProviderException(self.name, f"EdgeTTS 语音合成失败: {e}") from e
 
     async def list_voices(self) -> list[VoiceInfo]:

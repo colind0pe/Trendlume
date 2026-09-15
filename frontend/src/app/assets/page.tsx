@@ -431,7 +431,7 @@ export default function AssetsPage() {
                 </Badge>
                 {asset.metadata_json?.source_kind === "online_asset" && (
                   <Badge variant="secondary" className="absolute right-2 top-2 bg-background/80 text-xs px-2 py-0.5">
-                    在线素材 · Pexels
+                    素材库视频 · Pexels
                   </Badge>
                 )}
                 {asset.project_id !== null || asset.metadata_json?.scope !== "system" ? (

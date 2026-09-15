@@ -2,7 +2,10 @@ from loguru import logger
 
 from src.core.config import settings
 from src.core.exceptions import ValidationException
-from src.providers.image.comfyui_image import ComfyUIImageProvider
+from src.providers.image.comfyui_image import (
+    DEFAULT_COMFYUI_IMAGE_WORKFLOW,
+    ComfyUIImageProvider,
+)
 from src.providers.image.protocol import ImageProvider
 from src.providers.llm.defaults import DEFAULT_OPENAI_MODEL
 from src.providers.llm.openai_client import OpenAICompatibleLLMProvider, infer_provider_name
@@ -117,8 +120,10 @@ class ProviderRegistry:
                 getattr(self._image_provider, "api_key", None) if isinstance(self._image_provider, ComfyUIImageProvider) else None
             )
 
-        comfy_img_wf = comfyui_image_workflow or getattr(
-            settings, "comfyui_image_workflow", "image/image_flux.json"
+        comfy_img_wf = (
+            comfyui_image_workflow
+            or getattr(settings, "comfyui_image_workflow", None)
+            or DEFAULT_COMFYUI_IMAGE_WORKFLOW
         )
         comfy_vid_wf = comfyui_video_workflow or getattr(
             settings, "comfyui_video_workflow", "video/video_wan2.1_fusionx.json"

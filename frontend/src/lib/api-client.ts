@@ -32,6 +32,19 @@ import {
   VisualMode,
   QRStartResponse,
   QRStatusResponse,
+  TrendFeedResponse,
+  TrendFreshness,
+  TrendPreferences,
+  TrendProposal,
+  TrendProposalCreateRequest,
+  TrendProposalActionResponse,
+  TrendProposalUpdateRequest,
+  TrendPreferencesUpdateRequest,
+  TrendRun,
+  TrendSourceCatalog,
+  TrendSubscription,
+  TrendSubscriptionCreateRequest,
+  TrendSubscriptionRequest,
 } from "./types";
 
 const BASE_URL = "/api/v1";
@@ -83,6 +96,100 @@ export const api = {
   // Projects
   listProjects: (limit = 50, offset = 0) =>
     request<Project[]>(`/projects?limit=${limit}&offset=${offset}`),
+
+  // Trend discovery feed and real public-source collection.
+  listTrends: (filters: {
+    projectId?: string;
+    platform?: string;
+    freshness?: TrendFreshness;
+  } = {}) => {
+    const params = new URLSearchParams();
+    if (filters.projectId) params.set("project_id", filters.projectId);
+    if (filters.platform && filters.platform !== "all") params.set("platform", filters.platform);
+    if (filters.freshness && filters.freshness !== "all") params.set("freshness", filters.freshness);
+    const query = params.toString();
+    return request<TrendFeedResponse>(`/trends${query ? `?${query}` : ""}`);
+  },
+
+  listTrendSources: () => request<TrendSourceCatalog[]>("/trends/sources"),
+
+  listTrendRuns: (limit = 10) =>
+    request<TrendRun[]>(`/trends/runs?limit=${Math.max(1, Math.min(100, limit))}`),
+
+  refreshTrends: (data: { platforms?: string[]; source_keys?: string[] } = {}) =>
+    request<TrendRun>("/trends/refresh", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  getTrendPreferences: (projectId: string) =>
+    request<TrendPreferences>(`/trends/projects/${encodeURIComponent(projectId)}/preferences`),
+
+  updateTrendPreferences: (
+    projectId: string,
+    data: TrendPreferencesUpdateRequest,
+  ) =>
+    request<TrendPreferences>(`/trends/projects/${encodeURIComponent(projectId)}/preferences`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  listTrendSubscriptions: (projectId?: string) =>
+    request<TrendSubscription[]>(`/trends/subscriptions${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""}`),
+
+  createTrendSubscription: (data: TrendSubscriptionCreateRequest) =>
+    request<TrendSubscription>("/trends/subscriptions", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  updateTrendSubscription: (subscriptionId: string, data: TrendSubscriptionRequest) =>
+    request<TrendSubscription>(`/trends/subscriptions/${encodeURIComponent(subscriptionId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  runTrendSubscription: (subscriptionId: string) =>
+    request<TrendSubscription>(`/trends/subscriptions/${encodeURIComponent(subscriptionId)}/run`, { method: "POST" }),
+
+  createTrendProposal: (data: TrendProposalCreateRequest) =>
+    request<TrendProposal>("/trends/proposals", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  updateTrendProposal: (
+    proposalId: string,
+    data: TrendProposalUpdateRequest,
+  ) =>
+    request<TrendProposal>(`/trends/proposals/${encodeURIComponent(proposalId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  rejectTrendProposal: (proposalId: string, expectedRevision: number) =>
+    request<TrendProposal>(`/trends/proposals/${encodeURIComponent(proposalId)}/reject`, {
+      method: "POST",
+      body: JSON.stringify({ expected_revision: expectedRevision }),
+    }),
+
+  approveTrendProposal: (
+    proposalId: string,
+    expectedRevision: number,
+  ) =>
+    request<TrendProposalActionResponse>(`/trends/proposals/${encodeURIComponent(proposalId)}/approve-and-create-task`, {
+      method: "POST",
+      body: JSON.stringify({ expected_revision: expectedRevision }),
+    }),
+
+  approveAndRunTrendProposal: (
+    proposalId: string,
+    expectedRevision: number,
+  ) =>
+    request<TrendProposalActionResponse>(`/trends/proposals/${encodeURIComponent(proposalId)}/approve-and-run`, {
+      method: "POST",
+      body: JSON.stringify({ expected_revision: expectedRevision }),
+    }),
 
   getProject: (id: string) => request<ProjectDetail>(`/projects/${id}`),
 

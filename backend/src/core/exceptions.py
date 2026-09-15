@@ -48,6 +48,13 @@ class ValidationException(TrendlumeException):
         super().__init__(message, code="VALIDATION_ERROR", status_code=422)
 
 
+class ConflictException(TrendlumeException):
+    """The client acted on a stale revision or an already-changing resource."""
+
+    def __init__(self, message: str):
+        super().__init__(message, code="CONFLICT", status_code=409)
+
+
 class StorageException(TrendlumeException):
     """File storage operations error"""
 

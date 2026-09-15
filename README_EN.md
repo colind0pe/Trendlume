@@ -1,8 +1,8 @@
 # 🎬 Trendlume
 
-> Trendlume is an automated AI short-video creation and publishing workbench tailored for creators.
+> Trendlume is an AI short-video creation and publishing workbench tailored for creators.
 
-Whether you start with a rough topic idea or an existing script, Trendlume helps you streamline web research, script planning, visual asset generation, voiceover synthesis, subtitle alignment, template composition, and direct publishing to Douyin. Every scene can be fine-tuned individually in the visual storyboard without re-rendering the entire video.
+Turn a topic idea, an existing script, or trending topics into an editable short video. Every scene remains inspectable in the storyboard editor: swap visuals, tweak narration, adjust durations, or retry individual scenes without re-rendering the entire video, then publish directly to Douyin.
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=flat-square)](LICENSE) [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/) [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/) [![Next.js 14](https://img.shields.io/badge/Next.js-14-black?style=flat-square&logo=next.js&logoColor=white)](https://nextjs.org/) [![React 18](https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react&logoColor=black)](https://react.dev/) [![SQLite](https://img.shields.io/badge/SQLite-3-003B57?style=flat-square&logo=sqlite&logoColor=white)](https://www.sqlite.org/) [![FFmpeg](https://img.shields.io/badge/FFmpeg-6.0+-007808?style=flat-square&logo=ffmpeg&logoColor=white)](https://ffmpeg.org/)
 
@@ -17,23 +17,28 @@ Whether you start with a rough topic idea or an existing script, Trendlume helps
 
 ## ✨ What It Can Do For You
 
-- **Dual Creation Workflows**: Provide a topic prompt to let AI autonomously research and expand into storyboards, or paste an existing script to jump straight into visual production.
+- **Three Creative Entry Points**: Discover trending topics from 7 public feeds and generate structured proposals, expand a rough topic idea with web research, or paste an existing script to jump straight into storyboard production.
 - **Scene-Level Visual Fine-Tuning**: Videos are not black boxes. In the storyboard editor, preview each scene, adjust durations, tweak narration, regenerate visuals, or swap in Pexels stock footage without altering the flow of other scenes.
-- **Diverse Visual Formats**: Supports AI image generation, AI video generation, Pexels royalty-free media search, kinetic typography cards, and custom user uploads.
+- **Choose Visual Sources**: Supports AI image generation, AI video generation, Pexels stock video, kinetic typography cards, and custom user uploads.
 - **Audio-Visual-Subtitle Auto-Alignment**: Free built-in Edge-TTS or Volcengine Doubao TTS. The system auto-calculates scene durations based on speech audio and aligns subtitles across 9:16 (vertical), 16:9 (horizontal), and 1:1 (square) templates (19 built-in layout templates).
-- **Pause Anywhere & Partial Retry**: Each stage state is persisted automatically. Resume seamlessly after network drops or crashes. Changing the 3rd scene's image does not require re-rendering previously finished scenes.
+- **Pause Anywhere & Partial Retry**: Each stage state is persisted automatically. Resume after network drops or crashes. Changing the 3rd scene's image does not require re-rendering previously finished scenes.
 - **Direct Douyin Publishing**: Authorize via QR code scanning, fill in title, hashtags, select a cover frame, and publish immediately or schedule for later.
 
 ## Creation Workflow
 
 ```text
-Input Topic or Script ──> Research & Planning ──> Storyboard Generation ──> Visual Fine-tuning
-                                                                                    │
-Video Export / Publishing <── Composition & Rendering <── Voiceover & Subtitles <───┘
+Trending Topics ──> Topic Proposal ──┐
+                                     ├──> Storyboard Script ──> Visual Fine-tuning
+Input Topic ─────> Web Research ────┤                              │
+                                     │                              │
+Paste Custom Script ─────────────────┘                              │
+                                                                    │
+Video Export / Douyin Publishing <── Video Rendering <── Voiceover & Subtitles <───┘
 ```
 
+- **Trending Topics**: Fetch live hotlists from 7 platforms via public feeds, match project keywords with LLMs to generate creative angles, and convert approved proposals directly into standard video tasks.
 - **Custom Script**: If you choose fixed script mode, web research and topic planning stages are skipped automatically.
-- **Stock Media**: In Pexels stock mode, the system searches matching footage based on scene narration keywords, eliminating slow image generation wait times.
+- **Stock Media When Needed**: Ordinary tasks can use Pexels stock video searched and downloaded by scene narration keywords, or bind custom images and footage directly.
 
 ## 🖼️ Interface Preview
 
@@ -63,10 +68,11 @@ Configure and test all providers directly from the Web Settings UI. API keys are
 
 | Category | Supported Providers | Recommended Combination |
 | --- | --- | --- |
+| Hotspot Center | Public hotlists | Covers Weibo, Douyin, Zhihu, Toutiao, Xiaohongshu, Bilibili, and Baidu without scraping |
 | Large Language Model | DeepSeek, OpenAI-compatible APIs, Claude, Cloudflare Workers AI, local Ollama | DeepSeek or local Ollama for cost efficiency |
 | Web Research | Tavily | Live information and factual context gathering |
 | Image & Video | Local ComfyUI, Volcengine Seedream / Seedance | ComfyUI if you have a local GPU; Volcengine for cloud convenience |
-| Stock Media | Pexels | Free high-definition photos and footage library |
+| Stock Media | Pexels | Free high-definition footage library |
 | Text-to-Speech | Edge-TTS (Free built-in), Volcengine Doubao TTS | Edge-TTS for instant free zero-key setup |
 | Publishing | Douyin Creator Center | Web QR code authorization, instant & scheduled release |
 
@@ -183,7 +189,7 @@ After video generation completes, you can inspect or download the following arti
 
 ## 🗺️ Upcoming Roadmap
 
-- [ ] **Trending Topics Dashboard**: Real-time aggregation of trending topics across major platforms to inspire one-click video creation.
+- [x] **Trending Topics Dashboard**: Collect public platform hotlists with source health and raw metrics, then turn a selected topic into a video task.
 - [ ] **Additional Provider Integrations**:
   - LLM: MiniMax, Zhipu GLM, Kimi, and popular API relays
   - Visuals: Midjourney, Kling AI, and additional video/image generation APIs
@@ -196,39 +202,39 @@ After video generation completes, you can inspect or download the following arti
 ```text
 Trendlume/
 ├── backend/                          # Backend core services (Python 3.11+ / FastAPI)
-│   ├── alembic/                      # Database migrations & revision history
+│   ├── alembic/                      # Database migrations
 │   ├── templates/                    # Dynamic HTML/CSS video templates (9:16 / 16:9 / 1:1)
 │   ├── workflows/                    # ComfyUI image & video generation workflows (JSON)
 │   └── src/                          # Backend source code
-│       ├── api/                      # RESTful API layer
-│       │   ├── routes/               # Business routes (tasks, projects, generation, scenes, publishing, etc.)
+│       ├── api/                      # RESTful API layer (tasks, scenes, trends, publishing, etc.)
+│       │   ├── routes/               # Business routes (tasks, trends, generation, providers, etc.)
 │       │   ├── dependencies.py       # Dependency injection (DB session, services)
 │       │   └── app.py                # FastAPI instance & middleware configuration
 │       ├── core/                     # Infrastructure (config, cipher encryption, exceptions, logging)
-│       ├── domain/                   # Domain models & workflow stage definitions
-│       ├── models/                   # SQLAlchemy ORM database models (tasks, scenes, artifacts, publishers)
+│       ├── domain/                   # Domain contracts (workflow stages, content modes)
+│       ├── models/                   # SQLAlchemy ORM database models (tasks, trends, proposals, artifacts)
 │       ├── providers/                # External provider integrations (strictly adhering to Protocol contracts)
 │       ├── repositories/             # Data access layer (CRUD database abstractions)
 │       ├── schemas/                  # Pydantic request & response schemas (DTOs)
-│       ├── services/                 # Core business services (durable pipeline, rendering, publishing)
+│       ├── services/                 # Core business services (pipeline, rendering, trend scheduler, proposals)
 │       ├── storage/                  # Unified storage service (local persistent data & asset paths)
 │       └── tasks/                    # Async task system (asyncio scheduler, workers, SSE broadcaster)
 ├── frontend/                         # Frontend workbench (Next.js 14 App Router / React 18 / TailwindCSS)
 │   └── src/
-│       ├── app/                      # Page routes & layouts (projects, tasks storyboard, publishing, settings)
-│       ├── components/               # UI components & workflow stage visualization
-│       └── lib/                      # API client, SSE event listener hooks, and TypeScript contracts
+│       ├── app/                      # Page routes (workbench, /trends, projects, tasks storyboard, settings)
+│       ├── components/               # UI components (scene editor, trend proposal sheets, workflow stages)
+│       └── lib/                      # API client, SSE hooks, and TypeScript contracts
 ├── data/                             # Local persistent data directory (auto-generated, gitignored)
-│   ├── trendlume.db                  # SQLite database (WAL mode task & config persistence)
+│   ├── trendlume.db                  # SQLite database (WAL mode task, config & trend persistence)
 │   └── storage/                      # Rendered video, audio, subtitles, snapshots, and cache
-└── tests/                            # Automated test suite (fixtures, offline mocks, E2E tests)
+└── tests/                            # Automated test suite (unit tests, trend scheduler & regression tests)
 ```
 
 ## ℹ️ General Notes
 
-- **API Credentials**: Except for the built-in free Edge-TTS (internet connection required), external LLM, image generation, and search services require your own API keys.
+- **API Credentials**: Except for the built-in free Edge-TTS (internet connection required), external LLM, image generation, and search services require your own API keys. The Trend Center uses public feeds by default without requiring platform login or cookies.
 - **Douyin Publishing**: Uses official web creator center QR code authorization. If prompted with secondary SMS verification, confirm via your mobile device.
-- **Stock Media Licenses**: When using Pexels, ensure compliance with their royalty-free license and terms of use.
+- **Stock Media Licenses**: When using Pexels stock video, ensure compliance with their royalty-free license and terms of use.
 - **Rendering Dependencies**: When running from source, the system requires local FFmpeg and Playwright Chromium. If an error indicates a missing browser, run `uv run playwright install chromium`.
 
 ## 🤝 Contributing

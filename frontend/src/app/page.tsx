@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
-import { ArrowRight, Clapperboard, Film, FolderKanban, Loader2, Play, Plus, ExternalLink, Download, Sparkles } from "lucide-react";
+import { ArrowRight, Clapperboard, Film, Flame, FolderKanban, Loader2, Play, Plus, ExternalLink, Download, Sparkles } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -41,12 +41,21 @@ export default function DashboardPage() {
         title="工作台"
         description="短视频创作流水线概览、运行中任务与最新成片。"
         actions={(
-          <Link href="/projects">
-            <Button variant="default" className="gap-1.5 h-9 px-3.5 text-sm">
-              <Plus aria-hidden="true" className="h-4 w-4" />
-              新建项目
-            </Button>
-          </Link>
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              href="/trends"
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border/80 bg-card/50 px-3.5 text-sm font-medium text-foreground backdrop-blur-sm transition-all duration-150 hover:border-foreground/20 hover:bg-secondary/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+            >
+              <Flame aria-hidden="true" className="h-4 w-4" />
+              查看热点
+            </Link>
+            <Link href="/projects">
+              <Button variant="default" className="gap-1.5 h-9 px-3.5 text-sm">
+                <Plus aria-hidden="true" className="h-4 w-4" />
+                新建项目
+              </Button>
+            </Link>
+          </div>
         )}
       />
 

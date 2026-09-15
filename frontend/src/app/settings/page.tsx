@@ -250,9 +250,9 @@ const PRESET_OPTIONS: Record<string, PresetOption[]> = {
     {
       type: "material",
       name: "pexels",
-      display: "Pexels 在线素材",
+      display: "Pexels 素材库视频",
       keyUrl: "https://www.pexels.com/api/",
-      hint: "按分镜检索词获取可商用在线视频素材，并在导入后保留作者与来源署名。",
+      hint: "按分镜检索词获取可商用实拍视频，并在导入后保留作者与来源署名。",
       hasBaseUrl: false,
       hasModel: false,
       hasApiKey: true,
@@ -412,12 +412,12 @@ const SETTING_CATEGORIES: CategoryMeta[] = [
   },
   {
     key: "material",
-    title: "在线素材",
-    shortTitle: "在线素材",
-    subtitle: "按分镜检索词检索与获取可商用在线素材",
+    title: "素材库视频",
+    shortTitle: "素材库视频",
+    subtitle: "按分镜检索词检索与获取可商用实拍视频",
     group: "engine",
     icon: VideoIcon,
-    impactText: "未配置在线素材 Provider 时，仍可使用 AI 生图、视频生成或本地上传素材。",
+    impactText: "未配置素材库 Provider 时，仍可使用 AI 生图、视频生成或我的素材。",
   },
   {
     key: "tts",
@@ -608,7 +608,7 @@ export default function SettingsPage() {
             系统设置
           </h1>
           <p className="max-w-3xl text-sm leading-normal text-muted-foreground">
-            管理语言模型、图像与视频生成、语音合成、在线素材等 Provider 及平台发布凭据。
+            管理语言模型、图像与视频生成、语音合成、素材库视频等 Provider 及平台发布凭据。
           </p>
         </div>
 
@@ -1475,12 +1475,7 @@ function ProviderWorkspace({
                   {categoryWorkflows.length > 0 ? (
                     <Select
                       id={`workflow-${categoryKey}`}
-                      value={
-                        workflow ||
-                        (categoryKey === "image"
-                          ? "image/image_flux.json"
-                          : "video/video_wan2.1_fusionx.json")
-                      }
+                      value={workflow || currentPreset?.defaultWorkflow || ""}
                       onChange={(e) => {
                         setWorkflow(e.target.value);
                         markDirty();
@@ -1501,11 +1496,7 @@ function ProviderWorkspace({
                       id={`workflow-${categoryKey}`}
                       value={workflow}
                       onChange={(e) => setWorkflow(e.target.value)}
-                      placeholder={
-                        categoryKey === "image"
-                          ? "image/image_flux.json"
-                          : "video/video_wan2.1_fusionx.json"
-                      }
+                      placeholder={currentPreset?.defaultWorkflow || "请输入工作流路径"}
                       className="font-mono"
                     />
                   )}

@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.config import settings
 from src.core.security import secret_cipher
 from src.models.provider_config import ProviderConfigModel
+from src.providers.image.comfyui_image import DEFAULT_COMFYUI_IMAGE_WORKFLOW
 from src.providers.llm.defaults import default_llm_model
 
 
@@ -221,7 +222,7 @@ async def bootstrap_default_providers(session: AsyncSession) -> bool:
     comfy_url = getattr(settings, "comfyui_base_url", None) or "http://127.0.0.1:8188"
     comfy_key = getattr(settings, "comfyui_api_key", None)
     comfy_creds = {"api_key": comfy_key} if comfy_key else {}
-    comfy_img_wf = getattr(settings, "comfyui_image_workflow", "image/image_flux.json")
+    comfy_img_wf = getattr(settings, "comfyui_image_workflow", None) or DEFAULT_COMFYUI_IMAGE_WORKFLOW
     session.add(
         ProviderConfigModel(
             id="prov_image_comfyui",

@@ -9,6 +9,7 @@ import {
   Loader2,
   RotateCcw,
   Download,
+  FileText,
   SlidersHorizontal,
   ShieldCheck,
   Volume2,
@@ -17,7 +18,8 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { api } from "@/lib/api-client";
-import { resolveSceneAssetRefreshAction } from "@/lib/task-generation-state";
+import { isSourceMaterialMode, resolveSceneAssetRefreshAction } from "@/lib/task-generation-state";
+import { getContentModeSpec } from "@/lib/ui-constants";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -600,6 +602,7 @@ export function ScenePipelineStatus({
   contentMode = "generated_image",
   hasAudio = false,
   hasVisual = false,
+  hasVideo = false,
   canGenerateVoice = true,
   canGenerateVisual = true,
   measuredDuration,
@@ -659,6 +662,14 @@ export function ScenePipelineStatus({
     Boolean(onRetryUnit),
     Boolean(sceneId),
   );
+  const sourceMaterialMode = isSourceMaterialMode(contentMode);
+  const contentModeSpec = getContentModeSpec(contentMode);
+  const isStaticMode = contentModeSpec?.sourceKind === "text";
+  const isUploadedMode = contentModeSpec?.requiresSourceAsset === true;
+  const isGeneratedVideoMode = contentModeSpec?.visualKind === "video" && contentModeSpec?.sourceKind === "ai";
+  const canRegenerate = contentModeSpec?.supportsSceneRetry === true && contentModeSpec?.sourceKind === "ai";
+  const canRefreshVisual = canRegenerate || sourceMaterialMode;
+  const sourceMaterialLabel = contentModeSpec?.label || "素材";
   const refreshAsset = () => {
     if (assetRefreshAction === "online_material") {
       onGenerateOnlineMaterial?.();
@@ -668,7 +679,11 @@ export function ScenePipelineStatus({
       onRetryUnit?.("assets", sceneId);
       return;
     }
-    onGenerateImage?.();
+    if (isGeneratedVideoMode) {
+      onGenerateVideo?.();
+      return;
+    }
+    if (contentModeSpec?.visualKind === "image") onGenerateImage?.();
   };
 
   return (
@@ -748,17 +763,22 @@ export function ScenePipelineStatus({
 
         {/* 画面状态与操作 */}
         <div className="inline-flex items-center gap-1.5">
-          {isManualAsset ? (
+          {isStaticMode ? (
+            <Badge variant="secondary" className="h-7 px-2.5 text-xs font-normal gap-1.5">
+              <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+              文字排版 · 无需素材
+            </Badge>
+          ) : isManualAsset ? (
             <Badge variant="outline" className="h-7 px-2.5 text-xs text-primary border-primary/30 font-normal gap-1.5">
               <ShieldCheck className="h-3.5 w-3.5 text-primary" />
-              已保护手工素材
+              已保护我的素材
             </Badge>
           ) : isGeneratingImage || isGeneratingVideo || isGeneratingOnlineMaterial ? (
             <span className="inline-flex items-center gap-1 text-primary text-xs font-medium">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              {contentMode === "online_asset" ? "在线素材获取中…" : "画面生成中…"}
+              {sourceMaterialMode ? `${sourceMaterialLabel}获取中…` : isGeneratedVideoMode ? "AI 视频生成中…" : "AI 图片生成中…"}
             </span>
-          ) : isAssetStale || assetsRun?.status === "failed" ? (
+          ) : (isAssetStale || assetsRun?.status === "failed") && canRefreshVisual ? (
             <Button
               type="button"
               variant="outline"
@@ -766,21 +786,28 @@ export function ScenePipelineStatus({
               disabled={busy || isUnitRetrying}
               onClick={refreshAsset}
               className="h-7 text-xs px-2.5 gap-1.5 border-warning/40 text-warning hover:bg-warning/10 font-medium"
-              title={contentMode === "online_asset" ? "在线素材不可用，重新获取" : "提示词已修改，重新生成画面"}
+              title={sourceMaterialMode ? `${sourceMaterialLabel}不可用，重新获取` : isGeneratedVideoMode ? "视频生成失败，重新生成" : "图片生成失败，重新生成"}
             >
               <RefreshCw className="h-3 w-3" />
-              {contentMode === "online_asset" ? "素材失败 · 重新获取" : "提示词已改 · 重试画面"}
+              {sourceMaterialMode ? `${sourceMaterialLabel}失败 · 重新获取` : isGeneratedVideoMode ? "AI 视频失败 · 重试" : "AI 图片失败 · 重试"}
             </Button>
           ) : visualReady ? (
             <div className="inline-flex items-center gap-1 rounded bg-secondary/70 px-2 py-1 text-xs text-foreground">
               <span className="h-1.5 w-1.5 rounded-full bg-success" />
-                {contentMode === "online_asset" ? (
-                  <Film className="h-3.5 w-3.5 text-success" />
-                ) : (
-                  <ImageIcon className="h-3.5 w-3.5 text-success" />
-                )}
-                <span className="font-medium">
-                {contentMode === "online_asset" ? "在线素材就绪" : "画面就绪"}{assetsRun?.status === "reused" && <span className="text-primary text-xs font-normal ml-0.5">(复用)</span>}
+              {isGeneratedVideoMode || hasVideo ? (
+                <Film className="h-3.5 w-3.5 text-success" />
+              ) : (
+                <ImageIcon className="h-3.5 w-3.5 text-success" />
+              )}
+              <span className="font-medium">
+                {sourceMaterialMode
+                  ? `${sourceMaterialLabel}就绪`
+                  : isGeneratedVideoMode
+                  ? "AI 视频就绪"
+                  : isUploadedMode
+                  ? "我的素材就绪"
+                  : "AI 图片就绪"}
+                {assetsRun?.status === "reused" && <span className="text-primary text-xs font-normal ml-0.5">(复用)</span>}
               </span>
               {assetArtifact && (
                 <a
@@ -792,62 +819,52 @@ export function ScenePipelineStatus({
                   <Download className="h-3 w-3" />
                 </a>
               )}
-              {sceneId && assetRefreshAction !== "none" && (
+              {sceneId && (assetRefreshAction !== "none" || canRegenerate) && (
                 <button
                   type="button"
                   onClick={refreshAsset}
                   disabled={busy || isUnitRetrying}
-                  title={contentMode === "online_asset" ? "重新获取在线素材" : "重新生成此分镜画面"}
+                  title={sourceMaterialMode ? `重新获取${sourceMaterialLabel}` : isGeneratedVideoMode ? "重新生成 AI 视频" : "重新生成 AI 图片"}
                   className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground p-0.5 ml-0.5 cursor-pointer"
                 >
                   <RefreshCw className="h-2.5 w-2.5" />
-                  {contentMode === "online_asset" && <span className="text-xs">重新获取</span>}
+                  <span className="text-xs">{sourceMaterialMode ? "重新获取" : "重新生成"}</span>
                 </button>
               )}
             </div>
+          ) : isUploadedMode ? (
+            <Badge variant="warning" className="h-7 px-2.5 text-xs font-normal gap-1.5">
+              <ShieldCheck className="h-3.5 w-3.5" />
+              请先绑定我的素材
+            </Badge>
+          ) : sourceMaterialMode ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={busy || !canGenerateVisual || assetRefreshAction === "none"}
+              onClick={refreshAsset}
+              className="h-7 text-xs px-2.5 gap-1.5"
+            >
+              <Film className="h-3.5 w-3.5 text-muted-foreground" />
+              获取素材库视频
+            </Button>
           ) : (
-            <div className="inline-flex items-center gap-1.5">
-              {contentMode === "online_asset" ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={busy || !canGenerateVisual}
-                  onClick={onGenerateOnlineMaterial}
-                  className="h-7 text-xs px-2.5 gap-1.5"
-                >
-                  <Film className="h-3.5 w-3.5 text-muted-foreground" />
-                  获取在线素材
-                </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={busy || !canGenerateVisual || (isGeneratedVideoMode ? !onGenerateVideo : !onGenerateImage)}
+              onClick={isGeneratedVideoMode ? onGenerateVideo : onGenerateImage}
+              className="h-7 text-xs px-2.5 gap-1.5"
+            >
+              {isGeneratedVideoMode ? (
+                <Film className="h-3.5 w-3.5 text-muted-foreground" />
               ) : (
-                <>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={busy || !canGenerateVisual}
-                    onClick={onGenerateImage}
-                    className="h-7 text-xs px-2.5 gap-1.5"
-                  >
-                    <ImageIcon className="h-3.5 w-3.5 text-muted-foreground" />
-                    生成画面
-                  </Button>
-                  {onGenerateVideo && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={busy || !canGenerateVisual}
-                  onClick={onGenerateVideo}
-                  className="h-7 text-xs px-2.5 gap-1.5"
-                >
-                  <Film className="h-3.5 w-3.5 text-muted-foreground" />
-                  生成视频
-                </Button>
-                  )}
-                </>
+                <ImageIcon className="h-3.5 w-3.5 text-muted-foreground" />
               )}
-            </div>
+              {isGeneratedVideoMode ? "生成 AI 视频" : "生成 AI 图片"}
+            </Button>
           )}
         </div>
 
