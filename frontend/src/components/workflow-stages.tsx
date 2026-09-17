@@ -599,7 +599,9 @@ export function ScenePipelineStatus({
   isGeneratingImage,
   isGeneratingVideo,
   isGeneratingOnlineMaterial,
+  isGeneratingStopMotion = false,
   contentMode = "generated_image",
+  animationMode = null,
   hasAudio = false,
   hasVisual = false,
   hasVideo = false,
@@ -624,7 +626,9 @@ export function ScenePipelineStatus({
   isGeneratingImage?: boolean;
   isGeneratingVideo?: boolean;
   isGeneratingOnlineMaterial?: boolean;
+  isGeneratingStopMotion?: boolean;
   contentMode?: string;
+  animationMode?: string | null;
   hasAudio?: boolean;
   hasVisual?: boolean;
   hasVideo?: boolean;
@@ -664,11 +668,12 @@ export function ScenePipelineStatus({
   );
   const sourceMaterialMode = isSourceMaterialMode(contentMode);
   const contentModeSpec = getContentModeSpec(contentMode);
+  const isEnhancedStopMotion = animationMode === "enhanced_stop_motion";
   const isStaticMode = contentModeSpec?.sourceKind === "text";
   const isUploadedMode = contentModeSpec?.requiresSourceAsset === true;
   const isGeneratedVideoMode = contentModeSpec?.visualKind === "video" && contentModeSpec?.sourceKind === "ai";
   const canRegenerate = contentModeSpec?.supportsSceneRetry === true && contentModeSpec?.sourceKind === "ai";
-  const canRefreshVisual = canRegenerate || sourceMaterialMode;
+  const canRefreshVisual = !isEnhancedStopMotion && (canRegenerate || sourceMaterialMode);
   const sourceMaterialLabel = contentModeSpec?.label || "素材";
   const refreshAsset = () => {
     if (assetRefreshAction === "online_material") {
@@ -763,7 +768,24 @@ export function ScenePipelineStatus({
 
         {/* 画面状态与操作 */}
         <div className="inline-flex items-center gap-1.5">
-          {isStaticMode ? (
+          {isEnhancedStopMotion ? (
+            isGeneratingStopMotion ? (
+              <span className="inline-flex items-center gap-1 text-primary text-xs font-medium">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                关键状态生成中…
+              </span>
+            ) : visualReady ? (
+              <Badge variant="outline" className="h-7 px-2.5 text-xs text-primary border-primary/30 font-normal gap-1.5">
+                <ImageIcon className="h-3.5 w-3.5 text-primary" />
+                动画状态已就绪
+              </Badge>
+            ) : (
+              <Badge variant="warning" className="h-7 px-2.5 text-xs font-normal gap-1.5">
+                <ImageIcon className="h-3.5 w-3.5" />
+                等待生成动画状态
+              </Badge>
+            )
+          ) : isStaticMode ? (
             <Badge variant="secondary" className="h-7 px-2.5 text-xs font-normal gap-1.5">
               <FileText className="h-3.5 w-3.5 text-muted-foreground" />
               文字排版 · 无需素材

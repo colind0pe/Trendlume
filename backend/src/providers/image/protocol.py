@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 DEFAULT_IMAGE_TEST_PROMPT = "一只橘猫坐在窗边，温暖阳光"
 
@@ -25,6 +25,8 @@ class ImageProvider(Protocol):
         workflow: str | None = None,
         width: int | None = None,
         height: int | None = None,
+        reference_image_path: str | None = None,
+        reference_image_options: dict[str, Any] | None = None,
     ) -> ImageResult:
-        """Generate high resolution visual image for a storyboard scene"""
+        """Generate a visual image, optionally conditioned on a local reference image."""
         ...

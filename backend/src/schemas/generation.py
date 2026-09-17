@@ -306,3 +306,23 @@ class SceneMediaGenerateRequest(BaseModel):
     prompt_override: str | None = None
     voice_id: str | None = None
     speed: float | None = None
+
+
+class StopMotionPlanRequest(BaseModel):
+    """Optional overrides for planning one Scene's visual states."""
+
+    style_preset: str | None = Field(default=None, max_length=64)
+    reference_asset_id: str | None = Field(default=None, max_length=64)
+    force: bool = False
+    use_llm: bool = True
+
+
+class StopMotionPoseGenerateRequest(BaseModel):
+    """Compatibility request for batch or single-state image generation."""
+
+    pose_id: str | None = Field(default=None, max_length=64)
+    style_preset: str | None = Field(default=None, max_length=64)
+    reference_asset_id: str | None = Field(default=None, max_length=64)
+    prompt_override: str | None = Field(default=None, max_length=3000)
+    force: bool = False
+    use_llm: bool = True

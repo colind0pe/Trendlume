@@ -1,5 +1,6 @@
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from src.core.exceptions import ProviderException, ValidationException
 from src.providers.llm.protocol import StructuredOutputException
 from src.schemas.generation import (
@@ -149,6 +150,22 @@ def test_generate_schema_example():
     assert "scenes" in example_str
     assert "visual_prompt" in example_str
     assert '"platform_custom_params": {}' in example_str
+
+
+def test_generate_schema_example_is_valid_for_motion_plan():
+    import json
+
+    from src.providers.llm.openai_client import _generate_schema_example
+    from src.schemas.scene import SceneMotionPlan
+
+    example = json.loads(_generate_schema_example(SceneMotionPlan))
+    plan = SceneMotionPlan.model_validate(example)
+
+    assert plan.version == 1
+    assert plan.mode == "enhanced_stop_motion"
+    assert plan.pose_fps == 10.0
+    assert plan.output_fps in {24, 30}
+    assert len(plan.states) == 3
 
 
 def test_research_context_is_bounded_and_marked_as_untrusted_data():

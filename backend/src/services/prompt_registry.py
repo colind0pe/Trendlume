@@ -103,6 +103,11 @@ _SPECS = (
         "固定文案批量画面提示词生成 | 只用中文 | 一条旁白对应一项 | 索引从 0 连续递增 | 每条描述可见且可执行的单镜头画面 | 保持风格和画幅约束",
     ),
     PromptSpec(
+        "animation.motion_plan",
+        "v2",
+        "Enhanced Stop Motion state planning | three to six ordered visual states | stable subject, elements, camera, and layers | JSON only",
+    ),
+    PromptSpec(
         "metadata.platform",
         "v1",
         "platform metadata | facts only from script | one to three sentence description | three to five tags",

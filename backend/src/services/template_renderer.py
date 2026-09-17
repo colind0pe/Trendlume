@@ -448,6 +448,10 @@ class TemplateRenderer:
                 "  background-image: none !important;"
                 "  box-shadow: none !important;"
                 "}"
+                ".image-wrapper, "
+                ".image-container {"
+                "  background: transparent !important;"
+                "}"
                 "</style>"
             )
             rendered = rendered.replace("</head>", f"{transparent_css}</head>", 1)

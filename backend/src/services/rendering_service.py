@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from loguru import logger
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.exceptions import NotFoundException, ValidationException
@@ -17,6 +18,7 @@ from src.repositories.asset_repository import AssetRepository
 from src.repositories.project_repository import ProjectRepository
 from src.repositories.scene_repository import SceneRepository
 from src.repositories.task_repository import TaskRepository
+from src.schemas.scene import SceneAnimationSpec, SceneMicroMotionSpec
 from src.services.asset_service import AssetService
 from src.services.media_probe import MediaProbeResult, media_probe_service
 from src.services.system_asset_service import is_bgm_asset, is_system_asset
@@ -31,6 +33,22 @@ class RenderingService:
     DURATION_TOLERANCE_SECONDS = 0.25
     COMPOSITION_FORMAT_VERSION = "3"
     ONLINE_SCENE_RENDER_FORMAT_VERSION = "online-layout-v1"
+    STOP_MOTION_LANDING_SECONDS = 0.22
+    STOP_MOTION_LANDING_SCALE = 0.008
+    STOP_MOTION_LANDING_X = 0.004
+    STOP_MOTION_LANDING_Y = 0.005
+    STOP_MOTION_LANDING_ROTATION_DEGREES = 0.6
+    DEFAULT_STOP_MOTION_FLOW_REGION = {
+        "x": 0.28,
+        "y": 0.08,
+        "width": 0.44,
+        "height": 0.30,
+    }
+    FLOW_SAFE_TRANSITIONS = frozenset({"blink", "mouth", "head", "expression"})
+    # Phase 4 adds an optional transition pass and richer render metadata.
+    # Bumping this invalidates old clips once, while the durable stage still
+    # reuses unchanged Scene inputs afterwards.
+    ENHANCED_STOP_MOTION_SCENE_RENDER_FORMAT_VERSION = "enhanced-stop-motion-v2"
 
     def __init__(
         self,
@@ -87,6 +105,723 @@ class RenderingService:
             logger.error(f"FFmpeg 执行超时 ({timeout}s)")
             raise ValidationException(f"FFmpeg 渲染执行超时 ({timeout}s)，请检查输入素材分辨率与时长。") from e
 
+    @staticmethod
+    def _stop_motion_spec(layout_params: dict[str, Any] | None) -> SceneAnimationSpec | None:
+        raw_animation = (layout_params or {}).get("animation")
+        if raw_animation is None:
+            return None
+        try:
+            animation = SceneAnimationSpec.model_validate(raw_animation)
+        except ValidationError as exc:
+            details = exc.errors()[0].get("msg", "参数校验失败") if exc.errors() else "参数校验失败"
+            raise ValidationException(f"enhanced_stop_motion 动画参数无效：{details}") from exc
+        if not isinstance(raw_animation, dict) or "optical_flow" in raw_animation:
+            return animation
+        if not any(
+            pose.transition in RenderingService.FLOW_SAFE_TRANSITIONS
+            for pose in animation.poses[1:]
+        ):
+            return animation
+        return SceneAnimationSpec.model_validate(
+            {
+                **animation.model_dump(exclude_none=True, by_alias=True),
+                "optical_flow": {
+                    "enabled": True,
+                    "transition_seconds": 0.18,
+                    "max_transitions": 2,
+                    "region": dict(RenderingService.DEFAULT_STOP_MOTION_FLOW_REGION),
+                },
+            }
+        )
+
+    @staticmethod
+    def _stop_motion_template_css(
+        animation: SceneAnimationSpec,
+        custom_css: str | None,
+    ) -> str | None:
+        """Keep a fixed full-body reference visible inside image-card templates."""
+        reference_frame = animation.reference_frame
+        if not reference_frame or not reference_frame.enabled or reference_frame.fit != "contain":
+            return custom_css
+        contain_css = (
+            "\n/* Enhanced Stop Motion fixed reference frame */\n"
+            "img { object-fit: contain !important; background: #e5e5e5; }\n"
+        )
+        return f"{custom_css or ''}{contain_css}"
+
+    @staticmethod
+    def _build_stop_motion_timeline(
+        animation: SceneAnimationSpec,
+        duration: float,
+    ) -> list[dict[str, Any]]:
+        """Quantize pose holds to a stepped cadence and fit the Scene duration."""
+        target_duration = max(0.1, float(duration))
+        tick = 1.0 / float(animation.pose_fps)
+        timeline = [
+            {
+                "asset_id": pose.asset_id,
+                "hold": max(tick, round(float(pose.hold) / tick) * tick),
+                **{
+                    key: value
+                    for key, value in (
+                        ("description", pose.description),
+                        ("framing", pose.framing),
+                        ("prop", pose.prop),
+                        ("expression", pose.expression),
+                        ("transition", pose.transition),
+                    )
+                    if value is not None
+                },
+            }
+            for pose in animation.poses
+        ]
+        requested_duration = sum(float(item["hold"]) for item in timeline)
+        if requested_duration <= 0:
+            raise ValidationException("enhanced_stop_motion 至少需要一个有效的姿态时长。")
+
+        if requested_duration < target_duration:
+            timeline[-1]["hold"] = float(timeline[-1]["hold"]) + target_duration - requested_duration
+        elif requested_duration > target_duration:
+            clipped: list[dict[str, Any]] = []
+            remaining = target_duration
+            for item in timeline:
+                if remaining <= 0:
+                    break
+                hold = min(float(item["hold"]), remaining)
+                clipped.append({**item, "hold": hold})
+                remaining -= hold
+            if len(clipped) < len(timeline):
+                raise ValidationException(
+                    "enhanced_stop_motion 的 Scene 时长不足以展示全部姿态图，请增加 Scene 时长。"
+                )
+            timeline = clipped
+
+        cursor = 0.0
+        for item in timeline:
+            hold = float(item["hold"])
+            item["start"] = round(cursor, 6)
+            cursor += hold
+            item["end"] = round(cursor, 6)
+            item["frame_count"] = max(1, round(hold * float(animation.output_fps)))
+
+        return timeline
+
+    async def _get_stop_motion_image_asset(
+        self,
+        asset_id: str,
+        *,
+        task,
+        label: str,
+    ) -> AssetModel:
+        asset = await self.asset_repo.get_by_id(asset_id)
+        if not asset:
+            raise ValidationException(f"{label}素材不存在：{asset_id}")
+        if asset.asset_type != AssetType.IMAGE.value:
+            raise ValidationException(f"{label}素材必须是图片：{asset.file_name}")
+        if task and asset.project_id not in {None, task.project_id}:
+            raise ValidationException(f"{label}素材不属于当前项目：{asset.file_name}")
+        asset_path = self.storage.get_path(asset.file_path)
+        if not asset_path.exists() or asset_path.stat().st_size == 0:
+            raise ValidationException(f"{label}文件不存在：{asset.file_name}")
+        return asset
+
+    @staticmethod
+    def _stop_motion_motion_filter(
+        input_index: int,
+        *,
+        output_label: str,
+        output_fps: int,
+        canvas_width: int,
+        canvas_height: int,
+        frame_count: int,
+        micro_motion: SceneMicroMotionSpec,
+        parallax_strength: float = 0.0,
+        layer_factor: float = 0.0,
+        landing_direction: float = 0.0,
+        landing_duration_seconds: float = 0.0,
+    ) -> str:
+        """Build one bounded still-to-frame stream for a pose or 2.5D layer.
+
+        The landing is a one-shot transform at the start of each state. It
+        gives generated-step changes a deliberate settle without blending two
+        incompatible full-frame images.
+        """
+        motion = micro_motion if micro_motion.enabled else SceneMicroMotionSpec()
+        frame_count = max(1, int(frame_count))
+        cycle_frames = max(1, round(output_fps * 2.4))
+        last_frame = max(1, frame_count - 1)
+        landing_frames = max(
+            1,
+            min(
+                frame_count,
+                round(output_fps * max(0.0, float(landing_duration_seconds))),
+            ),
+        )
+        landing_enabled = abs(float(landing_direction)) > 0.0 and landing_duration_seconds > 0.0
+        landing_progress = (
+            f"if(lt(on\\,{landing_frames})\\,on/{landing_frames}\\,1)"
+            if landing_enabled
+            else "1"
+        )
+        landing = f"(1-{landing_progress})"
+        rotate_landing_progress = (
+            f"if(lt(n\\,{landing_frames})\\,n/{landing_frames}\\,1)"
+            if landing_enabled
+            else "1"
+        )
+        rotate_landing = f"(1-{rotate_landing_progress})"
+        landing_zoom = (
+            f"{RenderingService.STOP_MOTION_LANDING_SCALE:.6f}*{landing}"
+            if landing_enabled
+            else "0"
+        )
+        landing_x = (
+            f"{float(landing_direction) * RenderingService.STOP_MOTION_LANDING_X:.6f}*iw*{landing}"
+            if landing_enabled
+            else "0"
+        )
+        landing_y = (
+            f"{RenderingService.STOP_MOTION_LANDING_Y:.6f}*ih*{landing}"
+            if landing_enabled
+            else "0"
+        )
+        # A small fixed headroom keeps 1–2px pan/jitter inside the source image
+        # without allowing any configured transform to become a crop jump.
+        pixel_headroom_x = 2.0 * motion.jitter / max(1, canvas_width)
+        pixel_headroom_y = 2.0 * (motion.head_bob + motion.jitter) / max(1, canvas_height)
+        parallax_headroom = abs(parallax_strength * layer_factor)
+        headroom = max(
+            0.0,
+            motion.scale,
+            motion.breathing,
+            motion.push,
+            2.0 * abs(motion.pan_x),
+            2.0 * abs(motion.pan_y),
+            pixel_headroom_x,
+            pixel_headroom_y,
+            parallax_headroom * 0.09,
+            RenderingService.STOP_MOTION_LANDING_SCALE if landing_enabled else 0.0,
+        )
+        if motion.enabled or parallax_strength:
+            headroom = max(0.01, headroom)
+        phase = f"2*PI*on/{cycle_frames}"
+        progress = f"on/{last_frame}"
+        zoom = (
+            f"1+{headroom:.6f}"
+            f"+{landing_zoom}"
+            f"+{motion.breathing:.6f}*sin({phase})"
+            f"+{motion.scale:.6f}*sin(({phase})/2)"
+            f"+{motion.push:.6f}*{progress}"
+        )
+        drift_x = f"{parallax_strength * layer_factor * 0.04:.6f}*iw*sin({phase})"
+        drift_y = f"{parallax_strength * layer_factor * 0.025:.6f}*ih*cos({phase})"
+        x_expr = (
+            f"(iw-iw/zoom)/2+{motion.pan_x:.6f}*iw*{progress}"
+            f"+{motion.jitter:.6f}*sin(({phase})*1.7)+{drift_x}"
+            f"+{landing_x}"
+        )
+        y_expr = (
+            f"(ih-ih/zoom)/2+{motion.pan_y:.6f}*ih*{progress}"
+            f"+{motion.head_bob:.6f}*sin({phase})"
+            f"+{motion.jitter:.6f}*cos(({phase})*1.3)+{drift_y}"
+            f"+{landing_y}"
+        )
+        graph = (
+            f"[{input_index}:v:0]format=rgba,"
+            f"zoompan=z='{zoom}':x='{x_expr}':y='{y_expr}':d=1:"
+            f"s={canvas_width}x{canvas_height}:fps={output_fps}"
+        )
+        if motion.rotate or landing_enabled:
+            graph += (
+                f",rotate='({motion.rotate:.6f}*PI/180)*sin(2*PI*t/2.4)+"
+                f"{float(landing_direction) * RenderingService.STOP_MOTION_LANDING_ROTATION_DEGREES:.6f}"
+                f"*PI/180*{rotate_landing}':"
+                "c=none:ow=iw:oh=ih"
+            )
+        if motion.blink:
+            interval_frames = max(1, round(motion.blink_interval_seconds * output_fps))
+            blink_frames = max(1, round(output_fps * 0.08))
+            graph += (
+                f",eq=brightness='-0.08*lt(mod(n\\,{interval_frames})\\,{blink_frames})'"
+            )
+        return f"{graph},setsar=1[{output_label}]"
+
+    @staticmethod
+    def _stop_motion_optical_flow_transitions(
+        animation: SceneAnimationSpec,
+        timeline: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Return only explicitly marked, short transitions for local flow."""
+        optical_flow = animation.optical_flow
+        if not optical_flow or not optical_flow.enabled or not optical_flow.region:
+            return []
+        if animation.parallax.enabled:
+            # The subject and layer streams have different motion fields. Keep
+            # this optional effect out of that composition and use stepped mode.
+            return []
+
+        allowed_modes = {"blink", "mouth", "head", "expression"}
+        transitions: list[dict[str, Any]] = []
+        for target_index, pose in enumerate(animation.poses[1:], start=1):
+            if pose.transition not in allowed_modes:
+                continue
+            previous_hold = float(timeline[target_index - 1]["hold"])
+            target_hold = float(timeline[target_index]["hold"])
+            transition_seconds = min(
+                float(optical_flow.transition_seconds),
+                previous_hold * 0.4,
+                target_hold * 0.4,
+            )
+            if transition_seconds < 1.0 / float(animation.output_fps):
+                continue
+            transitions.append(
+                {
+                    "from_index": target_index - 1,
+                    "to_index": target_index,
+                    "mode": pose.transition,
+                    "duration": round(transition_seconds, 6),
+                }
+            )
+            if len(transitions) >= optical_flow.max_transitions:
+                break
+        return transitions
+
+    @staticmethod
+    def _stop_motion_region_pixels(
+        region,
+        *,
+        canvas_width: int,
+        canvas_height: int,
+    ) -> tuple[int, int, int, int]:
+        """Convert a validated normalized ROI into a safe FFmpeg crop."""
+        x = max(0, min(canvas_width - 2, round(region.x * canvas_width)))
+        y = max(0, min(canvas_height - 2, round(region.y * canvas_height)))
+        width = max(2, round(region.width * canvas_width))
+        height = max(2, round(region.height * canvas_height))
+        width = min(width, canvas_width - x)
+        height = min(height, canvas_height - y)
+        return x, y, width, height
+
+    @staticmethod
+    def _stop_motion_render_command(
+        command: list[str],
+        *,
+        filter_graph: str,
+        audio_input_index: int,
+        output_fps: int,
+        duration: float,
+        output_path: Path,
+    ) -> list[str]:
+        return [
+            *command,
+            "-filter_complex",
+            filter_graph,
+            "-map",
+            "[video]",
+            "-map",
+            f"{audio_input_index}:a:0",
+            "-r",
+            str(output_fps),
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-af",
+            f"aresample=async=1:first_pts=0,apad,atrim=duration={duration:.3f}",
+            "-t",
+            f"{duration:.3f}",
+            str(output_path),
+        ]
+
+    async def _render_enhanced_stop_motion(
+        self,
+        *,
+        scene,
+        task,
+        animation: SceneAnimationSpec,
+        duration: float,
+        template_id: str,
+        template_params: dict[str, Any],
+        custom_css: str | None,
+        audio_path: Path | None,
+        output_path: Path,
+        canvas_width: int,
+        canvas_height: int,
+    ) -> tuple[MediaProbeResult | None, list[dict[str, Any]], dict[str, Any]]:
+        timeline = self._build_stop_motion_timeline(animation, duration)
+        pose_assets: list[AssetModel] = []
+        for item in timeline:
+            pose_assets.append(
+                await self._get_stop_motion_image_asset(
+                    str(item["asset_id"]), task=task, label="姿态图"
+                )
+            )
+
+        if animation.reference_asset_id:
+            await self._get_stop_motion_image_asset(
+                animation.reference_asset_id, task=task, label="角色参考图"
+            )
+
+        layer_assets: dict[str, AssetModel] = {}
+        if animation.parallax.enabled:
+            layer_ids = {
+                "background": animation.parallax.layers.background_asset_id,
+                "foreground": animation.parallax.layers.foreground_asset_id,
+            }
+            if not any(layer_ids.values()):
+                raise ValidationException("已开启视差，但没有配置前景或背景分层素材。")
+            for layer_name, asset_id in layer_ids.items():
+                if asset_id:
+                    layer_assets[layer_name] = await self._get_stop_motion_image_asset(
+                        asset_id,
+                        task=task,
+                        label=f"视差{layer_name}层",
+                    )
+
+        resolved_title = str(template_params.get("title") or "").strip()
+        if not resolved_title and task and task.title:
+            candidate = str(task.title).strip()
+            if candidate and candidate not in {"Trendlume", "未命名任务", "未命名短视频任务"}:
+                resolved_title = candidate
+
+        frame_paths: list[Path] = []
+        stop_motion_css = self._stop_motion_template_css(animation, custom_css)
+        try:
+            for index, (asset, item) in enumerate(zip(pose_assets, timeline, strict=True)):
+                pose_path = self.storage.get_path(asset.file_path)
+                frame_path = self.storage.get_path(
+                    f"cache/stop_motion_scene_{scene.id}_{uuid.uuid4().hex[:6]}_{index}.png"
+                )
+                await TemplateRenderer.render(
+                    template_id,
+                    title=resolved_title,
+                    text=scene.narration_text,
+                    image_path=pose_path,
+                    custom_params=template_params,
+                    custom_css=stop_motion_css,
+                    transparent=bool(layer_assets),
+                    output_path=frame_path,
+                )
+                if not frame_path.exists() or frame_path.stat().st_size == 0:
+                    raise ValidationException(f"模板未生成第 {index + 1} 张定格画面。")
+                frame_paths.append(frame_path)
+
+            command = ["ffmpeg", "-y"]
+            segment_inputs: list[dict[str, int | None]] = []
+            next_input_index = 0
+            for frame_path, item in zip(frame_paths, timeline, strict=True):
+                input_indexes: dict[str, int | None] = {"pose": next_input_index}
+                command.extend(
+                    [
+                        "-loop",
+                        "1",
+                        "-framerate",
+                        str(animation.output_fps),
+                        "-t",
+                        f"{float(item['hold']):.3f}",
+                        "-i",
+                        str(frame_path),
+                    ]
+                )
+                next_input_index += 1
+                for layer_name in ("background", "foreground"):
+                    layer_asset = layer_assets.get(layer_name)
+                    if not layer_asset:
+                        continue
+                    input_indexes[layer_name] = next_input_index
+                    command.extend(
+                        [
+                            "-loop",
+                            "1",
+                            "-framerate",
+                            str(animation.output_fps),
+                            "-t",
+                            f"{float(item['hold']):.3f}",
+                            "-i",
+                            str(self.storage.get_path(layer_asset.file_path)),
+                        ]
+                    )
+                    next_input_index += 1
+                segment_inputs.append(input_indexes)
+
+            optical_flow_requested = bool(
+                animation.optical_flow and animation.optical_flow.enabled
+            )
+            optical_flow_transitions = self._stop_motion_optical_flow_transitions(
+                animation, timeline
+            )
+
+            audio_input_index = next_input_index
+            if audio_path and audio_path.exists() and audio_path.stat().st_size > 0:
+                command += ["-i", str(audio_path)]
+            else:
+                command += [
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "anullsrc=channel_layout=stereo:sample_rate=44100",
+                ]
+
+            filter_parts: list[str] = []
+            for index, (item, inputs) in enumerate(zip(timeline, segment_inputs, strict=True)):
+                pose_index = int(inputs["pose"])
+                filter_parts.append(
+                    self._stop_motion_motion_filter(
+                        pose_index,
+                        output_label=f"pose_{index}",
+                        output_fps=animation.output_fps,
+                        canvas_width=canvas_width,
+                        canvas_height=canvas_height,
+                        frame_count=int(item["frame_count"]),
+                        micro_motion=animation.micro_motion,
+                        landing_direction=1.0 if index % 2 == 0 else -1.0,
+                        landing_duration_seconds=self.STOP_MOTION_LANDING_SECONDS,
+                    )
+                )
+                current_label = f"[pose_{index}]"
+                background_index = inputs.get("background")
+                if background_index is not None:
+                    filter_parts.append(
+                        self._stop_motion_motion_filter(
+                            int(background_index),
+                            output_label=f"background_{index}",
+                            output_fps=animation.output_fps,
+                            canvas_width=canvas_width,
+                            canvas_height=canvas_height,
+                            frame_count=int(item["frame_count"]),
+                            micro_motion=SceneMicroMotionSpec(),
+                            parallax_strength=animation.parallax.strength,
+                            layer_factor=-0.45,
+                        )
+                    )
+                    filter_parts.append(
+                        f"[background_{index}]{current_label}overlay=0:0:format=auto:eof_action=repeat[base_{index}]"
+                    )
+                    current_label = f"[base_{index}]"
+                foreground_index = inputs.get("foreground")
+                if foreground_index is not None:
+                    filter_parts.append(
+                        self._stop_motion_motion_filter(
+                            int(foreground_index),
+                            output_label=f"foreground_{index}",
+                            output_fps=animation.output_fps,
+                            canvas_width=canvas_width,
+                            canvas_height=canvas_height,
+                            frame_count=int(item["frame_count"]),
+                            micro_motion=SceneMicroMotionSpec(),
+                            parallax_strength=animation.parallax.strength,
+                            layer_factor=1.0,
+                        )
+                    )
+                    filter_parts.append(
+                        f"{current_label}[foreground_{index}]overlay=0:0:format=auto:eof_action=repeat[with_foreground_{index}]"
+                    )
+                    current_label = f"[with_foreground_{index}]"
+                frame_format = "rgba" if optical_flow_transitions else "yuv420p"
+                filter_parts.append(
+                    f"{current_label}format={frame_format},setsar=1,setpts=PTS-STARTPTS[v{index}]"
+                )
+            stepped_filter_parts = [*filter_parts]
+            stepped_labels: list[str] = []
+            for index in range(len(frame_paths)):
+                stepped_filter_parts.append(
+                    f"[v{index}]format=yuv420p,setsar=1,setpts=PTS-STARTPTS[stepped_{index}]"
+                )
+                stepped_labels.append(f"[stepped_{index}]")
+            stepped_filter_parts.append(
+                "".join(stepped_labels)
+                + f"concat=n={len(stepped_labels)}:v=1:a=0[video]"
+            )
+            stepped_graph = ";".join(stepped_filter_parts)
+
+            optical_flow_info: dict[str, Any] = {
+                "requested": optical_flow_requested,
+                "eligible_transition_count": len(optical_flow_transitions),
+                "applied_transition_count": 0,
+                "status": "disabled" if not optical_flow_requested else "stepped",
+                "fallback": False,
+            }
+            optical_flow_graph = None
+            if optical_flow_requested and optical_flow_transitions:
+                region = animation.optical_flow.region
+                x, y, width, height = self._stop_motion_region_pixels(
+                    region,
+                    canvas_width=canvas_width,
+                    canvas_height=canvas_height,
+                )
+                transitions_by_target = {
+                    int(item["to_index"]): item for item in optical_flow_transitions
+                }
+                transitions_by_source = {
+                    int(item["from_index"]): item for item in optical_flow_transitions
+                }
+                flow_filter_parts = [*filter_parts]
+                flow_hold_inputs: dict[int, str] = {}
+                flow_source_inputs: dict[int, str] = {}
+                flow_target_inputs: dict[int, str] = {}
+                for index, item in enumerate(timeline):
+                    incoming = transitions_by_target.get(index)
+                    incoming_duration = float(incoming["duration"]) if incoming else 0.0
+                    hold_duration = float(item["hold"]) - incoming_duration
+                    outgoing = transitions_by_source.get(index)
+                    roles: list[str] = []
+                    if hold_duration > 0.0001:
+                        roles.append("hold")
+                    if outgoing:
+                        roles.append("source")
+                    if incoming:
+                        roles.append("target")
+                    role_labels = {
+                        role: (
+                            f"[flow_{role}_input_{index}]"
+                            if len(roles) > 1
+                            else f"[v{index}]"
+                        )
+                        for role in roles
+                    }
+                    if len(roles) > 1:
+                        flow_filter_parts.append(
+                            f"[v{index}]split={len(roles)}"
+                            + "".join(role_labels[role] for role in roles)
+                        )
+                    if "hold" in role_labels:
+                        flow_hold_inputs[index] = role_labels["hold"]
+                    if "source" in role_labels:
+                        flow_source_inputs[index] = role_labels["source"]
+                    if "target" in role_labels:
+                        flow_target_inputs[index] = role_labels["target"]
+
+                flow_segments: list[str] = []
+                for index, item in enumerate(timeline):
+                    incoming = transitions_by_target.get(index)
+                    incoming_duration = float(incoming["duration"]) if incoming else 0.0
+                    hold_duration = float(item["hold"]) - incoming_duration
+                    if hold_duration > 0.0001:
+                        hold_input = flow_hold_inputs.get(index, f"[v{index}]")
+                        hold_trim = (
+                            f"trim=start={incoming_duration:.6f}:duration={hold_duration:.6f}"
+                            if incoming
+                            else f"trim=duration={hold_duration:.6f}"
+                        )
+                        flow_filter_parts.append(
+                            f"{hold_input}{hold_trim},"
+                            f"format=yuv420p,setsar=1,setpts=PTS-STARTPTS[hold_{index}]"
+                        )
+                        flow_segments.append(f"[hold_{index}]")
+
+                    outgoing = transitions_by_source.get(index)
+                    if not outgoing:
+                        continue
+                    transition_target = int(outgoing["to_index"])
+                    transition_duration = float(outgoing["duration"])
+                    source_input = flow_source_inputs[index]
+                    target_input = flow_target_inputs[transition_target]
+                    last_frame = max(0, int(item["frame_count"]) - 1)
+                    flow_filter_parts.extend(
+                        [
+                            f"{source_input}trim=start_frame={last_frame}:end_frame={last_frame + 1},"
+                            f"format=rgba,setsar=1,setpts=PTS-STARTPTS,split=2"
+                            f"[flow_base_src_{index}][flow_from_src_{index}]",
+                            f"[flow_base_src_{index}]tpad=stop_mode=clone:"
+                            f"stop_duration={transition_duration:.6f}[flow_base_{index}]",
+                            f"[flow_from_src_{index}]format=rgb24,"
+                            f"crop={width}:{height}:{x}:{y},setsar=1,setpts=PTS-STARTPTS"
+                            f"[flow_from_roi_{index}]",
+                            f"{target_input}trim=end_frame=1,format=rgb24,"
+                            f"crop={width}:{height}:{x}:{y},setsar=1,setpts=PTS-STARTPTS"
+                            f"[flow_to_roi_{index}]",
+                            f"[flow_from_roi_{index}][flow_to_roi_{index}]"
+                            "concat=n=2:v=1:a=0,settb=1/1000,"
+                            f"setpts=PTS*{animation.output_fps * transition_duration:.6f},"
+                            f"tpad=stop_mode=clone:stop_duration={transition_duration:.6f},"
+                            f"minterpolate=fps={animation.output_fps}:mi_mode=mci:"
+                            "mc_mode=aobmc:me_mode=bidir:vsbmc=1:scd=none,"
+                            f"trim=duration={transition_duration:.6f},setpts=PTS-STARTPTS"
+                            f"[flow_roi_{index}]",
+                            f"[flow_base_{index}][flow_roi_{index}]"
+                            f"overlay={x}:{y}:format=auto:eof_action=repeat:shortest=1,"
+                            f"format=yuv420p,setsar=1,setpts=PTS-STARTPTS[flow_{index}]",
+                        ]
+                    )
+                    flow_segments.append(f"[flow_{index}]")
+
+                flow_filter_parts.append(
+                    "".join(flow_segments)
+                    + f"concat=n={len(flow_segments)}:v=1:a=0[video]"
+                )
+                optical_flow_graph = ";".join(flow_filter_parts)
+
+            if optical_flow_requested and not optical_flow_transitions:
+                optical_flow_info["reason"] = (
+                    "视差层启用或没有标记小变化的 pose，保持 stepped motion。"
+                )
+
+            async def render_graph(filter_graph: str) -> MediaProbeResult | None:
+                render_command = self._stop_motion_render_command(
+                    command,
+                    filter_graph=filter_graph,
+                    audio_input_index=audio_input_index,
+                    output_fps=animation.output_fps,
+                    duration=duration,
+                    output_path=output_path,
+                )
+                result = await self._run_ffmpeg_command(
+                    render_command, output_path, timeout=120.0
+                )
+                if result is False:
+                    raise ValidationException("FFmpeg 命令未生成输出。")
+                return await self._validate_media_file(
+                    output_path,
+                    require_audio=True,
+                    expected_width=canvas_width,
+                    expected_height=canvas_height,
+                    expected_duration=duration,
+                )
+
+            if optical_flow_graph:
+                try:
+                    probe = await render_graph(optical_flow_graph)
+                    optical_flow_info.update(
+                        {
+                            "status": "applied",
+                            "applied_transition_count": len(optical_flow_transitions),
+                            "transitions": optical_flow_transitions,
+                            "region": {
+                                "x": x,
+                                "y": y,
+                                "width": width,
+                                "height": height,
+                            },
+                        }
+                    )
+                except Exception as exc:
+                    output_path.unlink(missing_ok=True)
+                    optical_flow_info.update(
+                        {
+                            "status": "fallback",
+                            "fallback": True,
+                            "fallback_reason": f"{type(exc).__name__}: stepped motion used",
+                            "transitions": optical_flow_transitions,
+                        }
+                    )
+                    logger.warning(
+                        "Selective stop-motion optical flow failed for scene {}; "
+                        "falling back to stepped motion: {}",
+                        scene.id,
+                        type(exc).__name__,
+                    )
+                    probe = await render_graph(stepped_graph)
+            else:
+                probe = await render_graph(stepped_graph)
+            return probe, timeline, optical_flow_info
+        finally:
+            for frame_path in frame_paths:
+                frame_path.unlink(missing_ok=True)
+
     async def render_scene_clip(self, scene_id: str) -> str:
         """Render a single scene into a real MP4 clip with its HTML template overlay."""
         scene = await self.scene_repo.get_by_id(scene_id)
@@ -134,8 +869,9 @@ class RenderingService:
 
         media_path = self.storage.get_path(media_asset.file_path) if media_asset else None
         audio_path = self.storage.get_path(audio_asset.file_path) if audio_asset else None
+        animation = self._stop_motion_spec(scene.layout_params)
 
-        if media_path and (not media_path.exists() or media_path.stat().st_size == 0):
+        if media_path and not animation and (not media_path.exists() or media_path.stat().st_size == 0):
             raise ValidationException(f"分镜画面文件不存在: {media_asset.file_path}")
 
         template_params = dict(input_payload.get("template_params") or {})
@@ -147,102 +883,129 @@ class RenderingService:
         if self.execution_context:
             await self.execution_context.fence(self.session)
         await self.session.commit()
+        media_is_image = False
+        media_is_video = False
+        layout_strategy = "legacy_full_canvas"
+        scene_render_format_version = None
+        stop_motion_timeline = None
+        stop_motion_render_info = None
         try:
-            # Dispatch by the actual bound asset type.  A scene created in
-            # online_asset mode may be explicitly rebound to a local image,
-            # and that image must take the frame path instead of the video
-            # overlay path.
-            media_is_image = bool(media_asset and media_asset.asset_type == AssetType.IMAGE)
-            media_is_video = bool(media_asset and media_asset.asset_type == AssetType.VIDEO)
-            if media_asset and not (media_is_image or media_is_video):
-                raise ValidationException("分镜画面素材必须是图片或视频。")
-            if not media_asset and content_mode not in {"static", "generated_image"}:
-                raise ValidationException("视频内容模式缺少视频素材。")
-            frame_media = media_path if media_is_image else None
-            resolved_title = str(template_params.get("title") or "").strip()
-            if not resolved_title and task and task.title:
-                candidate = str(task.title).strip()
-                if candidate and candidate not in {"Trendlume", "未命名任务", "未命名短视频任务"}:
-                    resolved_title = candidate
-
-            await TemplateRenderer.render(
-                template_id,
-                title=resolved_title,
-                text=scene.narration_text,
-                image_path=frame_media,
-                custom_params=template_params,
-                custom_css=(input_payload.get("custom_css") if task else None),
-                transparent=media_is_video,
-                output_path=rendered_frame,
-            )
-
-            if not media_is_video:
-                if not rendered_frame.exists():
-                    raise ValidationException("模板未生成有效画面帧。")
-                cmd = ["ffmpeg", "-y", "-loop", "1", "-i", str(rendered_frame)]
-                video_map = "0:v:0"
-                audio_input_index = 1
-            else:
-                if not media_path:
-                    raise ValidationException("视频内容模式缺少视频素材。")
-                cmd = ["ffmpeg", "-y", "-stream_loop", "-1", "-i", str(media_path), "-i", str(rendered_frame)]
-                video_map = "[v]"
-                audio_input_index = 2
-
-            if audio_path and audio_path.exists() and audio_path.stat().st_size > 0:
-                cmd += ["-i", str(audio_path)]
-            else:
-                cmd += ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"]
-
-            if video_map == "[v]":
-                is_full_canvas_frame = (
-                    frame_x == 0
-                    and frame_y == 0
-                    and frame_width == canvas_width
-                    and frame_height == canvas_height
+            if animation:
+                (
+                    rendered_probe,
+                    stop_motion_timeline,
+                    stop_motion_render_info,
+                ) = await self._render_enhanced_stop_motion(
+                    scene=scene,
+                    task=task,
+                    animation=animation,
+                    duration=duration,
+                    template_id=template_id,
+                    template_params=template_params,
+                    custom_css=(input_payload.get("custom_css") if task else None),
+                    audio_path=audio_path,
+                    output_path=output_abs_path,
+                    canvas_width=canvas_width,
+                    canvas_height=canvas_height,
                 )
-                if is_full_canvas_frame:
-                    filter_graph = (
-                        f"[0:v]scale={canvas_width}:{canvas_height}:force_original_aspect_ratio=increase,"
-                        f"crop={canvas_width}:{canvas_height},setsar=1[media];"
-                        "[media][1:v]overlay=0:0:format=auto:eof_action=repeat[v]"
-                    )
-                else:
-                    filter_graph = (
-                        "[0:v]split=2[ambient_src][main_src];"
-                        f"[ambient_src]scale={canvas_width}:{canvas_height}:"
-                        "force_original_aspect_ratio=increase,"
-                        f"crop={canvas_width}:{canvas_height},"
-                        "boxblur=luma_radius=18:luma_power=2:"
-                        "chroma_radius=10:chroma_power=2,"
-                        "eq=brightness=-0.18:saturation=0.82,setsar=1[ambient];"
-                        f"[main_src]scale={frame_width}:{frame_height}:"
-                        "force_original_aspect_ratio=increase,"
-                        f"crop={frame_width}:{frame_height},setsar=1[main];"
-                        f"[ambient][main]overlay={frame_x}:{frame_y}:format=auto:"
-                        "eof_action=repeat[media];"
-                        "[media][1:v]overlay=0:0:format=auto:eof_action=repeat[v]"
-                    )
-                cmd += ["-filter_complex", filter_graph, "-map", "[v]"]
+                layout_strategy = "enhanced_stop_motion"
+                scene_render_format_version = self.ENHANCED_STOP_MOTION_SCENE_RENDER_FORMAT_VERSION
             else:
-                cmd += ["-map", video_map]
-            cmd += [
-                "-map", f"{audio_input_index}:a:0",
-                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
-                # Keep the video at the scene duration even when the source
-                # audio is shorter.  ``apad`` supplies silence and ``atrim``
-                # gives both streams the same bounded duration.
-                "-af", f"aresample=async=1:first_pts=0,apad,atrim=duration={duration:.3f}",
-                "-t", f"{duration:.3f}", str(output_abs_path),
-            ]
-            await self._run_ffmpeg_command(cmd, output_abs_path, timeout=120.0)
-            rendered_probe = await self._validate_media_file(
-                output_abs_path,
-                require_audio=True,
-                expected_width=canvas_width,
-                expected_height=canvas_height,
-                expected_duration=duration,
-            )
+                # Dispatch by the actual bound asset type.  A scene created in
+                # online_asset mode may be explicitly rebound to a local image,
+                # and that image must take the frame path instead of the video
+                # overlay path.
+                media_is_image = bool(media_asset and media_asset.asset_type == AssetType.IMAGE)
+                media_is_video = bool(media_asset and media_asset.asset_type == AssetType.VIDEO)
+                if media_asset and not (media_is_image or media_is_video):
+                    raise ValidationException("分镜画面素材必须是图片或视频。")
+                if not media_asset and content_mode not in {"static", "generated_image"}:
+                    raise ValidationException("视频内容模式缺少视频素材。")
+                frame_media = media_path if media_is_image else None
+                resolved_title = str(template_params.get("title") or "").strip()
+                if not resolved_title and task and task.title:
+                    candidate = str(task.title).strip()
+                    if candidate and candidate not in {"Trendlume", "未命名任务", "未命名短视频任务"}:
+                        resolved_title = candidate
+
+                await TemplateRenderer.render(
+                    template_id,
+                    title=resolved_title,
+                    text=scene.narration_text,
+                    image_path=frame_media,
+                    custom_params=template_params,
+                    custom_css=(input_payload.get("custom_css") if task else None),
+                    transparent=media_is_video,
+                    output_path=rendered_frame,
+                )
+
+                if not media_is_video:
+                    if not rendered_frame.exists():
+                        raise ValidationException("模板未生成有效画面帧。")
+                    cmd = ["ffmpeg", "-y", "-loop", "1", "-i", str(rendered_frame)]
+                    video_map = "0:v:0"
+                    audio_input_index = 1
+                else:
+                    if not media_path:
+                        raise ValidationException("视频内容模式缺少视频素材。")
+                    cmd = ["ffmpeg", "-y", "-stream_loop", "-1", "-i", str(media_path), "-i", str(rendered_frame)]
+                    video_map = "[v]"
+                    audio_input_index = 2
+
+                if audio_path and audio_path.exists() and audio_path.stat().st_size > 0:
+                    cmd += ["-i", str(audio_path)]
+                else:
+                    cmd += ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"]
+
+                if video_map == "[v]":
+                    is_full_canvas_frame = (
+                        frame_x == 0
+                        and frame_y == 0
+                        and frame_width == canvas_width
+                        and frame_height == canvas_height
+                    )
+                    if is_full_canvas_frame:
+                        filter_graph = (
+                            f"[0:v]scale={canvas_width}:{canvas_height}:force_original_aspect_ratio=increase,"
+                            f"crop={canvas_width}:{canvas_height},setsar=1[media];"
+                            "[media][1:v]overlay=0:0:format=auto:eof_action=repeat[v]"
+                        )
+                    else:
+                        filter_graph = (
+                            "[0:v]split=2[ambient_src][main_src];"
+                            f"[ambient_src]scale={canvas_width}:{canvas_height}:"
+                            "force_original_aspect_ratio=increase,"
+                            f"crop={canvas_width}:{canvas_height},"
+                            "boxblur=luma_radius=18:luma_power=2:"
+                            "chroma_radius=10:chroma_power=2,"
+                            "eq=brightness=-0.18:saturation=0.82,setsar=1[ambient];"
+                            f"[main_src]scale={frame_width}:{frame_height}:"
+                            "force_original_aspect_ratio=increase,"
+                            f"crop={frame_width}:{frame_height},setsar=1[main];"
+                            f"[ambient][main]overlay={frame_x}:{frame_y}:format=auto:"
+                            "eof_action=repeat[media];"
+                            "[media][1:v]overlay=0:0:format=auto:eof_action=repeat[v]"
+                        )
+                    cmd += ["-filter_complex", filter_graph, "-map", "[v]"]
+                else:
+                    cmd += ["-map", video_map]
+                cmd += [
+                    "-map", f"{audio_input_index}:a:0",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
+                    # Keep the video at the scene duration even when the source
+                    # audio is shorter.  ``apad`` supplies silence and ``atrim``
+                    # gives both streams the same bounded duration.
+                    "-af", f"aresample=async=1:first_pts=0,apad,atrim=duration={duration:.3f}",
+                    "-t", f"{duration:.3f}", str(output_abs_path),
+                ]
+                await self._run_ffmpeg_command(cmd, output_abs_path, timeout=120.0)
+                rendered_probe = await self._validate_media_file(
+                    output_abs_path,
+                    require_audio=True,
+                    expected_width=canvas_width,
+                    expected_height=canvas_height,
+                    expected_duration=duration,
+                )
         finally:
             rendered_frame.unlink(missing_ok=True)
 
@@ -265,7 +1028,9 @@ class RenderingService:
                 "template_id": template_id,
                 "content_mode": content_mode,
                 "layout_strategy": (
-                    "online_cover_blurred_background"
+                    layout_strategy
+                    if animation
+                    else "online_cover_blurred_background"
                     if content_mode == "online_asset" and media_is_video
                     else "cover_blurred_background"
                     if media_is_video
@@ -282,8 +1047,21 @@ class RenderingService:
                     "canvas_height": canvas_height,
                 } if (external_material_mode or media_is_video) else None,
                 "scene_render_format_version": (
-                    self.ONLINE_SCENE_RENDER_FORMAT_VERSION
+                    scene_render_format_version
+                    if animation
+                    else self.ONLINE_SCENE_RENDER_FORMAT_VERSION
                     if external_material_mode
+                    else None
+                ),
+                "animation": (
+                    {
+                        **animation.model_dump(exclude_none=True, by_alias=True),
+                        # Persist the normalized timeline actually rendered,
+                        # including start/end/frame_count and pose hints.
+                        "poses": stop_motion_timeline,
+                        "optical_flow_render": stop_motion_render_info,
+                    }
+                    if animation
                     else None
                 ),
                 "actual_duration_seconds": (
@@ -403,6 +1181,9 @@ class RenderingService:
             raise ValidationException("该任务没有任何分镜片段，无法合成视频。")
 
         input_payload = (task.input_payload or {})
+        has_enhanced_stop_motion = any(
+            self._stop_motion_spec(scene.layout_params) is not None for scene in scenes
+        )
         explicit_bgm_override = bgm_asset_id is not None
         template_id = input_payload.get("template_id", "default_portrait")
         template_item = template_catalog.get(template_id)
@@ -443,6 +1224,12 @@ class RenderingService:
         total_duration = 0.0
 
         for sc in scenes:
+            scene_animation = self._stop_motion_spec(sc.layout_params)
+            scene_expected_render_version = (
+                self.ENHANCED_STOP_MOTION_SCENE_RENDER_FORMAT_VERSION
+                if scene_animation
+                else expected_scene_render_version
+            )
             existing_clip = (
                 await self.asset_repo.get_by_id(sc.rendered_segment_asset_id)
                 if sc.rendered_segment_asset_id
@@ -454,9 +1241,9 @@ class RenderingService:
                 existing_clip
                 and existing_clip_metadata.get("type") == "scene_clip"
                 and (
-                    expected_scene_render_version is None
+                    scene_expected_render_version is None
                     or existing_clip_metadata.get("scene_render_format_version")
-                    == expected_scene_render_version
+                    == scene_expected_render_version
                 )
             ):
                 clip_path = self.storage.get_path(existing_clip.file_path)
@@ -647,11 +1434,17 @@ class RenderingService:
                 "template_version": (task.input_payload or {}).get("template_version", "1"),
                 "content_mode": content_mode,
                 "layout_strategy": (
-                    "online_cover_blurred_background"
+                    "enhanced_stop_motion"
+                    if has_enhanced_stop_motion
+                    else "online_cover_blurred_background"
                     if content_mode == "online_asset"
                     else "legacy_full_canvas"
                 ),
-                "scene_render_format_version": expected_scene_render_version,
+                "scene_render_format_version": (
+                    self.ENHANCED_STOP_MOTION_SCENE_RENDER_FORMAT_VERSION
+                    if has_enhanced_stop_motion
+                    else expected_scene_render_version
+                ),
                 "bgm_enabled": bool(bgm_asset),
                 "bgm_asset_id": selected_bgm_id if bgm_asset else None,
                 "bgm_volume": round(bgm_volume, 3) if bgm_asset else 0.0,

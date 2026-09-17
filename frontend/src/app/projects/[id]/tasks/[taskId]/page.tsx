@@ -56,7 +56,17 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { StatusBadge } from "@/components/ui/status-badge";
-import { ContentMode, SceneCreate, StructuredScript, ResearchResponse, PlatformMetadata, TemplateCatalogItem } from "@/lib/types";
+import {
+  ContentMode,
+  SceneAnimationSpec,
+  SceneOpticalFlowSpec,
+  SceneCreate,
+  SceneMotionPlan,
+  StructuredScript,
+  ResearchResponse,
+  PlatformMetadata,
+  TemplateCatalogItem,
+} from "@/lib/types";
 import { generationStatus, isGenerationLifecycleEvent, isSourceMaterialMode } from "@/lib/task-generation-state";
 import { VerificationModal } from "@/components/verification-modal";
 import { useToast } from "@/components/ui/toast";
@@ -102,6 +112,195 @@ const JOB_LIFECYCLE_EVENTS = new Set([
 ]);
 const canonicalTemplateId = (id?: string | null) =>
   id === "default_portrait" ? "image_default" : id || "image_default";
+
+const DEFAULT_STOP_MOTION_OPTICAL_FLOW_REGION = {
+  x: 0.28,
+  y: 0.08,
+  width: 0.44,
+  height: 0.3,
+};
+
+const getStopMotionAnimation = (
+  layoutParams?: Record<string, any>
+): SceneAnimationSpec | null => {
+  const raw = layoutParams?.animation;
+  if (!raw || raw.mode !== "enhanced_stop_motion") return null;
+  const micro = raw.micro_motion || {};
+  const parallax = raw.parallax && typeof raw.parallax === "object" ? raw.parallax : {};
+  const opticalFlow = raw.optical_flow && typeof raw.optical_flow === "object" ? raw.optical_flow : null;
+  const opticalFlowRegion = opticalFlow?.region && typeof opticalFlow.region === "object"
+    ? opticalFlow.region
+    : null;
+  const layers = parallax.layers || raw.layers || {};
+  const numberOr = (value: any, fallback: number) =>
+    typeof value === "number" && Number.isFinite(value) ? value : fallback;
+  return {
+    mode: "enhanced_stop_motion",
+    reference_asset_id:
+      typeof raw.reference_asset_id === "string"
+        ? raw.reference_asset_id
+        : typeof raw.reference_image_asset_id === "string"
+        ? raw.reference_image_asset_id
+        : null,
+    pose_fps: Number(raw.pose_fps) || 10,
+    output_fps: Number(raw.output_fps) === 24 ? 24 : 30,
+    reference_frame:
+      raw.reference_frame && typeof raw.reference_frame === "object"
+        ? raw.reference_frame
+        : null,
+    poses: Array.isArray(raw.poses)
+      ? raw.poses
+          .filter((pose: any) => pose && typeof pose.asset_id === "string")
+          .map((pose: any) => ({
+            pose_id: typeof pose.pose_id === "string" ? pose.pose_id : null,
+            asset_id: pose.asset_id,
+            hold: Number(pose.hold) || 0.5,
+            description:
+              typeof pose.description === "string"
+                ? pose.description
+                : typeof pose.pose_description === "string"
+                ? pose.pose_description
+                : null,
+            framing:
+              typeof pose.framing === "string"
+                ? pose.framing
+                : typeof pose.framing_hint === "string"
+                ? pose.framing_hint
+                : null,
+            prop:
+              typeof pose.prop === "string"
+                ? pose.prop
+                : typeof pose.prop_hint === "string"
+                ? pose.prop_hint
+                : null,
+            expression:
+              typeof pose.expression === "string"
+                ? pose.expression
+                : typeof pose.expression_hint === "string"
+                ? pose.expression_hint
+                : null,
+            transition:
+              ["stepped", "blink", "mouth", "head", "expression"].includes(pose.transition)
+                ? pose.transition
+                : "stepped",
+          }))
+      : [],
+    micro_motion: {
+      enabled: micro.enabled === true,
+      blink: micro.blink === true,
+      blink_interval_seconds: numberOr(micro.blink_interval_seconds, 2.8),
+      head_bob: numberOr(micro.head_bob, 0),
+      breathing: numberOr(micro.breathing, 0),
+      jitter: numberOr(micro.jitter, 0),
+      scale: numberOr(micro.scale, 0),
+      rotate: numberOr(micro.rotate, 0),
+      push: numberOr(micro.push, 0),
+      pan_x: numberOr(micro.pan_x, numberOr(micro.pan?.x, 0)),
+      pan_y: numberOr(micro.pan_y, numberOr(micro.pan?.y, 0)),
+    },
+    parallax: {
+      enabled: parallax.enabled === true,
+      strength: numberOr(parallax.strength, 0.25),
+      layers: {
+        foreground_asset_id:
+          typeof layers.foreground_asset_id === "string"
+            ? layers.foreground_asset_id
+            : typeof layers.foreground === "string"
+            ? layers.foreground
+            : layers.foreground?.asset_id || null,
+        background_asset_id:
+          typeof layers.background_asset_id === "string"
+            ? layers.background_asset_id
+            : typeof layers.background === "string"
+            ? layers.background
+            : layers.background?.asset_id || null,
+      },
+    },
+    optical_flow: opticalFlow
+      ? {
+          enabled: opticalFlow.enabled === true,
+          transition_seconds: numberOr(opticalFlow.transition_seconds, 0.18),
+          max_transitions: Math.max(1, Math.min(4, Number(opticalFlow.max_transitions) || 2)),
+          region: opticalFlowRegion
+            ? {
+                x: numberOr(opticalFlowRegion.x, 0.28),
+                y: numberOr(opticalFlowRegion.y, 0.08),
+                width: numberOr(opticalFlowRegion.width, 0.44),
+                height: numberOr(opticalFlowRegion.height, 0.3),
+              }
+            : opticalFlow.enabled === true
+            ? DEFAULT_STOP_MOTION_OPTICAL_FLOW_REGION
+            : null,
+        }
+      : null,
+  };
+};
+
+const getStopMotionPlan = (
+  layoutParams?: Record<string, any>
+): SceneMotionPlan | null => {
+  const raw = layoutParams?.animation_plan;
+  if (!raw || raw.mode !== "enhanced_stop_motion" || !Array.isArray(raw.poses)) return null;
+  const planStatuses = new Set(["planned", "generating", "partial", "completed", "failed"]);
+  const poseStatuses = new Set(["pending", "generating", "completed", "failed"]);
+  return {
+    version: Number(raw.version) || 1,
+    mode: "enhanced_stop_motion",
+    source: raw.source === "llm" ? "llm" : "template",
+    status: planStatuses.has(raw.status) ? raw.status : "planned",
+    style_preset: typeof raw.style_preset === "string" ? raw.style_preset : "cinematic_real",
+    reference_asset_id: typeof raw.reference_asset_id === "string" ? raw.reference_asset_id : null,
+    pose_fps: Number(raw.pose_fps) || 10,
+    output_fps: Number(raw.output_fps) === 24 ? 24 : 30,
+    poses: raw.poses
+      .filter((pose: any) => pose && typeof pose.pose_id === "string")
+      .map((pose: any) => ({
+        pose_id: pose.pose_id,
+        pose_name: typeof pose.pose_name === "string" ? pose.pose_name : "关键状态",
+        pose_description: typeof pose.pose_description === "string" ? pose.pose_description : "",
+        expression_hint: typeof pose.expression_hint === "string" ? pose.expression_hint : "",
+        framing_hint: typeof pose.framing_hint === "string" ? pose.framing_hint : "",
+        prop_hint: typeof pose.prop_hint === "string" ? pose.prop_hint : "",
+        transition:
+          ["stepped", "blink", "mouth", "head", "expression"].includes(pose.transition)
+            ? pose.transition
+            : "stepped",
+        recommended_hold_duration: Number(pose.recommended_hold_duration) || 0.5,
+        asset_id: typeof pose.asset_id === "string" ? pose.asset_id : null,
+        status: poseStatuses.has(pose.status) ? pose.status : "pending",
+        error_message: typeof pose.error_message === "string" ? pose.error_message : null,
+      })),
+    error_message: typeof raw.error_message === "string" ? raw.error_message : null,
+  };
+};
+
+const getStopMotionStatusLabel = (status?: SceneMotionPlan["status"] | null) => {
+  switch (status) {
+    case "completed":
+      return "已就绪";
+    case "partial":
+      return "部分完成，可补齐";
+    case "failed":
+      return "生成失败，可重试";
+    case "generating":
+      return "生成中";
+    default:
+      return "等待生成";
+  }
+};
+
+const getStopMotionPoseStatusLabel = (status?: SceneMotionPlan["poses"][number]["status"] | null) => {
+  switch (status) {
+    case "completed":
+      return "已就绪";
+    case "generating":
+      return "生成中";
+    case "failed":
+      return "需重试";
+    default:
+      return "待生成";
+  }
+};
 
 const researchContextForScript = (research: ResearchResponse | null) => {
   if (!research || research.status !== "completed" || research.sources.length === 0) {
@@ -391,6 +590,8 @@ export default function TaskStoryboardPage() {
   const [generatingTTS, setGeneratingTTS] = React.useState<Record<string, boolean>>({});
   const [generatingImage, setGeneratingImage] = React.useState<Record<string, boolean>>({});
   const [generatingVideo, setGeneratingVideo] = React.useState<Record<string, boolean>>({});
+  const [generatingStopMotion, setGeneratingStopMotion] = React.useState<Record<string, boolean>>({});
+  const [renderingStopMotion, setRenderingStopMotion] = React.useState<Record<string, boolean>>({});
 
   const resetLiveState = React.useCallback(() => {
     setLiveStatus(null);
@@ -956,6 +1157,91 @@ export default function TaskStoryboardPage() {
     }
   };
 
+  const refreshStopMotionQueries = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["task-detail", taskId] }),
+      queryClient.invalidateQueries({ queryKey: ["task-project-assets", task?.project_id] }),
+      queryClient.invalidateQueries({ queryKey: ["project-assets", projectId] }),
+    ]);
+  };
+
+  const handleGenerateStopMotion = async (sceneId: string, index: number, force = false) => {
+    if (!requireSaved()) return;
+    if (!sceneId) {
+      toast("请先保存故事板，再生成关键状态。", "warning");
+      return;
+    }
+    const key = sceneId || String(index);
+    setGeneratingStopMotion((prev) => ({ ...prev, [key]: true }));
+    try {
+      const updatedScene = await api.generateSceneStopMotion(sceneId, { force });
+      await refreshStopMotionQueries();
+      const updatedAnimation = getStopMotionAnimation(updatedScene.layout_params);
+      const updatedPlan = getStopMotionPlan(updatedScene.layout_params);
+      if (updatedAnimation) {
+        toast(force ? "已重新生成该分镜的全部关键状态图。" : "关键状态图已生成或补齐。", "success");
+      } else {
+        const completedCount = updatedPlan?.poses.filter((pose) => pose.status === "completed").length || 0;
+        toast(
+          completedCount > 0
+            ? `已生成 ${completedCount}/${updatedPlan?.poses.length || 0} 个关键状态，可继续补齐。`
+            : "关键状态尚未齐全，请检查图片 Provider 配置后重试。",
+          "warning"
+        );
+      }
+    } catch (error) {
+      setMissingConfigAlert(errorMessage(error, "关键状态图生成失败，请检查图片 Provider 配置。"));
+    } finally {
+      setGeneratingStopMotion((prev) => ({ ...prev, [key]: false }));
+    }
+  };
+
+  const handleRetryStopMotionPose = async (sceneId: string, poseId: string) => {
+    if (!requireSaved()) return;
+    if (!sceneId) {
+      toast("请先保存故事板，再重新生成关键状态。", "warning");
+      return;
+    }
+    const key = `${sceneId}:${poseId}`;
+    setGeneratingStopMotion((prev) => ({ ...prev, [key]: true }));
+    try {
+      const updatedScene = await api.retrySceneStopMotionPose(sceneId, poseId);
+      await refreshStopMotionQueries();
+      toast(
+        getStopMotionAnimation(updatedScene.layout_params)
+          ? "已重新生成该关键状态并刷新分镜片段；最终成片需重新合成。"
+          : "已重新生成该关键状态，其余状态保持不变；状态齐全后可刷新分镜片段。",
+        "success"
+      );
+    } catch (error) {
+      setMissingConfigAlert(errorMessage(error, "关键状态重新生成失败，请稍后重试。"));
+    } finally {
+      setGeneratingStopMotion((prev) => ({ ...prev, [key]: false }));
+    }
+  };
+
+  const handleRenderStopMotionScene = async (sceneId: string, index: number) => {
+    if (!requireSaved()) return;
+    if (!sceneId) {
+      toast("请先保存故事板，再刷新分镜片段。", "warning");
+      return;
+    }
+    const key = sceneId || String(index);
+    setRenderingStopMotion((prev) => ({ ...prev, [key]: true }));
+    try {
+      await api.renderSceneStopMotion(sceneId);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["task-detail", taskId] }),
+        queryClient.invalidateQueries({ queryKey: ["task-workflow", taskId] }),
+      ]);
+      toast("该分镜片段已刷新，其他分镜制品保持复用；最终成片需重新合成。", "success");
+    } catch (error) {
+      setMissingConfigAlert(errorMessage(error, "分镜片段刷新失败，请检查状态图与 FFmpeg 环境。"));
+    } finally {
+      setRenderingStopMotion((prev) => ({ ...prev, [key]: false }));
+    }
+  };
+
   // Scene manipulation
   const handleAddScene = () => {
     markDirty();
@@ -1019,6 +1305,162 @@ export default function TaskStoryboardPage() {
     const updated = [...scenes];
     updated[index] = { ...updated[index], [field]: value };
     setScenes(updated);
+  };
+
+  const updateStopMotionAnimation = (
+    index: number,
+    nextAnimation: SceneAnimationSpec | null
+  ) => {
+    markDirty();
+    const updated = [...scenes];
+    const nextLayout = { ...(updated[index].layout_params || {}) };
+    if (nextAnimation) {
+      nextLayout.animation_mode = "enhanced_stop_motion";
+      nextLayout.animation = nextAnimation;
+    } else {
+      delete nextLayout.animation;
+      delete nextLayout.animation_mode;
+      delete nextLayout.animation_plan;
+      delete nextLayout.animation_reference_asset_id;
+      delete nextLayout.stop_motion_status;
+      delete nextLayout.stop_motion_error;
+    }
+    updated[index] = { ...updated[index], layout_params: nextLayout };
+    setScenes(updated);
+  };
+
+  const updateStopMotionReference = (index: number, referenceAssetId: string) => {
+    markDirty();
+    const updated = [...scenes];
+    const scene = updated[index];
+    updated[index] = {
+      ...scene,
+      layout_params: {
+        ...(scene.layout_params || {}),
+        animation_mode: "enhanced_stop_motion",
+        animation_reference_asset_id: referenceAssetId || null,
+      },
+    };
+    setScenes(updated);
+  };
+
+  const handleStopMotionModeChange = (index: number, enabled: boolean) => {
+    if (!enabled) {
+      updateStopMotionAnimation(index, null);
+      return;
+    }
+    const scene = scenes[index];
+    const current = getStopMotionAnimation(scene.layout_params);
+    if (current) {
+      updateStopMotionAnimation(index, current);
+      return;
+    }
+    markDirty();
+    const updated = [...scenes];
+    updated[index] = {
+      ...scene,
+      layout_params: {
+        ...(scene.layout_params || {}),
+        animation_mode: "enhanced_stop_motion",
+      },
+    };
+    setScenes(updated);
+  };
+
+  const updateStopMotionPose = (
+    index: number,
+    poseIndex: number,
+    field: "asset_id" | "hold" | "description" | "framing" | "prop" | "expression" | "transition",
+    value: string | number
+  ) => {
+    const current = getStopMotionAnimation(scenes[index].layout_params);
+    if (!current) return;
+    const poses = current.poses.map((pose, itemIndex) =>
+      itemIndex === poseIndex ? { ...pose, [field]: value } : pose
+    );
+    updateStopMotionAnimation(index, { ...current, poses });
+  };
+
+  const toggleStopMotionMicroMotion = (index: number, enabled: boolean) => {
+    const current = getStopMotionAnimation(scenes[index].layout_params);
+    if (!current) return;
+    const microMotion = { ...current.micro_motion, enabled };
+    if (
+      enabled &&
+      [
+        microMotion.head_bob,
+        microMotion.breathing,
+        microMotion.jitter,
+        microMotion.scale,
+        microMotion.rotate,
+        microMotion.push,
+        microMotion.pan_x,
+        microMotion.pan_y,
+      ].every((value) => value === 0)
+    ) {
+      Object.assign(microMotion, {
+        scale: 0.004,
+        push: 0.01,
+      });
+    }
+    updateStopMotionAnimation(index, { ...current, micro_motion: microMotion });
+  };
+
+  const updateStopMotionOpticalFlow = (
+    index: number,
+    nextOpticalFlow: SceneOpticalFlowSpec | null
+  ) => {
+    const current = getStopMotionAnimation(scenes[index].layout_params);
+    if (!current) return;
+    updateStopMotionAnimation(index, {
+      ...current,
+      optical_flow: nextOpticalFlow,
+    });
+  };
+
+  const updateStopMotionParallax = (
+    index: number,
+    nextParallax: SceneAnimationSpec["parallax"]
+  ) => {
+    const current = getStopMotionAnimation(scenes[index].layout_params);
+    if (!current) return;
+    updateStopMotionAnimation(index, { ...current, parallax: nextParallax });
+  };
+
+  const addStopMotionPose = (index: number) => {
+    const current = getStopMotionAnimation(scenes[index].layout_params);
+    if (!current || current.poses.length >= 6) return;
+    const fallbackAsset = poseAssets.find(
+      (asset) => !current.poses.some((pose) => pose.asset_id === asset.id)
+    );
+    if (!fallbackAsset) {
+      toast("项目中没有更多可用图片素材。", "warning");
+      return;
+    }
+    updateStopMotionAnimation(index, {
+      ...current,
+      poses: [
+        ...current.poses,
+        {
+          asset_id: fallbackAsset.id,
+          hold: Number((Number(scenes[index].duration_seconds || 4) / (current.poses.length + 1)).toFixed(2)),
+          description: "",
+          framing: "",
+          prop: "",
+          expression: "",
+          transition: "stepped",
+        },
+      ],
+    });
+  };
+
+  const removeStopMotionPose = (index: number, poseIndex: number) => {
+    const current = getStopMotionAnimation(scenes[index].layout_params);
+    if (!current || current.poses.length <= 3) return;
+    updateStopMotionAnimation(index, {
+      ...current,
+      poses: current.poses.filter((_, itemIndex) => itemIndex !== poseIndex),
+    });
   };
 
   const handleSaveAll = async () => {
@@ -1124,9 +1566,15 @@ export default function TaskStoryboardPage() {
 
   const selectedBgm = projectBgm.find((asset) => asset.id === bgmAssetId);
   const coverAssets = projectAssets.filter((asset) => asset.asset_type === "image");
+  const poseAssets = coverAssets;
   const readySceneCount = scenes.filter((_, index) => {
     const scene = task?.scenes?.[index];
-    return Boolean(scene?.audio_asset_id && (scene?.media_asset_id || taskContentMode === "static"));
+    const animation = getStopMotionAnimation(scene?.layout_params);
+    const hasStopMotionVisual = Boolean(animation && animation.poses.length >= 3);
+    return Boolean(
+      scene?.audio_asset_id &&
+        (scene?.media_asset_id || taskContentMode === "static" || hasStopMotionVisual)
+    );
   }).length;
   const nextAction = isDirty
     ? "保存未完成的编辑"
@@ -1975,6 +2423,16 @@ export default function TaskStoryboardPage() {
                 sceneMediaSource === "manual" ||
                 sceneMediaSource === "uploaded")
             );
+            const animation = getStopMotionAnimation(scene.layout_params);
+            const motionPlan = getStopMotionPlan(scene.layout_params);
+            const isStopMotion = Boolean(
+              animation ||
+                scene.layout_params?.animation_mode === "enhanced_stop_motion" ||
+                motionPlan
+            );
+            const stopMotionKey = dbScene?.id || String(index);
+            const isStopMotionGenerating = Boolean(generatingStopMotion[stopMotionKey]);
+            const isSceneClipRendering = Boolean(renderingStopMotion[stopMotionKey]);
 
             return (
               <Card
@@ -2024,12 +2482,485 @@ export default function TaskStoryboardPage() {
 
                   {/* Right Column: Scene Content & Editor */}
                   <div className="p-4 flex-1 space-y-3">
+                    <details
+                      className="rounded-md border border-border/60 bg-secondary/10"
+                      open={isStopMotion && !animation}
+                    >
+                      <summary className="flex cursor-pointer items-center justify-between gap-2 px-3 py-2.5 text-xs font-medium text-foreground">
+                        <span>分镜动画</span>
+                        <span className="rounded-full bg-background/70 px-2 py-0.5 text-[11px] font-normal text-muted-foreground">
+                          {isStopMotion ? "多状态动画" : "单画面"}
+                        </span>
+                      </summary>
+                      <div className="space-y-1.5 border-t border-border/60 px-3 pb-3 pt-2.5">
+                        <label htmlFor={`scene-${index}-animation-mode`} className="sr-only">
+                          分镜动画方式
+                        </label>
+                        <Select
+                          id={`scene-${index}-animation-mode`}
+                          value={isStopMotion ? "enhanced_stop_motion" : "standard"}
+                          className="h-9 text-sm"
+                          onChange={(event) =>
+                            handleStopMotionModeChange(index, event.target.value === "enhanced_stop_motion")
+                          }
+                        >
+                          <option value="standard">单画面</option>
+                          <option value="enhanced_stop_motion" disabled={contentMode !== "generated_image"}>
+                            多状态动画
+                          </option>
+                        </Select>
+                        <p className="text-xs leading-relaxed text-muted-foreground">
+                          {isStopMotion
+                            ? "按旁白、画面提示词和时长生成 3–6 个连续状态。"
+                            : "沿用原有单张图片、视频或文字排版流程。"}
+                        </p>
+                      </div>
+                    </details>
+
+                    {isStopMotion && !animation && (
+                      <div className="space-y-3 rounded-md border border-primary/25 bg-primary/5 p-3">
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div>
+                            <p className="text-xs font-semibold text-foreground">关键状态素材</p>
+                            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                              系统会根据旁白、画面提示词和时长规划 3–6 个连续状态，再交给现有图片 Provider 生成。
+                            </p>
+                          </div>
+                          <Badge variant="outline" className="text-xs">
+                            {motionPlan
+                              ? `${motionPlan.poses.length} 个状态 · ${getStopMotionStatusLabel(motionPlan.status)}`
+                              : "待生成"}
+                          </Badge>
+                        </div>
+                        <div className="space-y-1.5">
+                          <label htmlFor={`scene-${index}-planned-reference`} className="text-xs font-medium text-foreground">
+                            主体或画面参考图（可选）
+                          </label>
+                          <Select
+                            id={`scene-${index}-planned-reference`}
+                            value={scene.layout_params?.animation_reference_asset_id || motionPlan?.reference_asset_id || ""}
+                            className="h-9 text-xs"
+                            onChange={(event) => updateStopMotionReference(index, event.target.value)}
+                          >
+                            <option value="">不指定参考图</option>
+                            {poseAssets.map((asset) => (
+                              <option key={asset.id} value={asset.id}>{asset.file_name}</option>
+                            ))}
+                          </Select>
+                          <p className="text-[11px] leading-relaxed text-muted-foreground">
+                            用于保持主体、商品、构图、图层或视觉风格一致。
+                          </p>
+                        </div>
+                        {motionPlan && (
+                          <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                            {motionPlan.poses.map((pose) => (
+                              <div
+                                key={pose.pose_id}
+                                className="flex items-center justify-between gap-2 rounded border border-border/60 bg-card/60 px-2.5 py-2 text-xs"
+                              >
+                                <span className="min-w-0 truncate text-foreground">
+                                  {pose.pose_name}
+                                </span>
+                                <span className={pose.status === "failed" ? "text-destructive" : "text-muted-foreground"}>
+                                  {getStopMotionPoseStatusLabel(pose.status)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            className="h-8 gap-1.5 text-xs"
+                            onClick={() => handleGenerateStopMotion(dbScene?.id || "", index)}
+                            disabled={!dbScene?.id || isRunning || isStopMotionGenerating}
+                            aria-busy={isStopMotionGenerating}
+                          >
+                            {isStopMotionGenerating ? <Loader2 aria-hidden="true" className="h-3.5 w-3.5 animate-spin" /> : <Sparkles aria-hidden="true" className="h-3.5 w-3.5" />}
+                            {motionPlan ? "补齐缺失状态" : "生成关键状态"}
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-8 gap-1.5 text-xs"
+                            onClick={() => handleGenerateStopMotion(dbScene?.id || "", index, true)}
+                            disabled={!dbScene?.id || isRunning || isStopMotionGenerating}
+                            aria-busy={isStopMotionGenerating}
+                          >
+                            <RefreshCw aria-hidden="true" className="h-3.5 w-3.5" />
+                            重新生成全部
+                          </Button>
+                        </div>
+                        {motionPlan?.error_message && (
+                          <p className="rounded border border-destructive/25 bg-destructive/5 px-2.5 py-2 text-xs text-destructive">
+                            {motionPlan.error_message}
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {animation && (
+                      <details
+                        className="overflow-hidden rounded-md border border-primary/25 bg-primary/5"
+                        open={Boolean(motionPlan?.error_message)}
+                      >
+                        <summary className="flex cursor-pointer items-center justify-between gap-2 px-3 py-2.5 text-xs text-foreground">
+                          <span className="min-w-0">
+                            <span className="font-semibold">多状态动画</span>
+                            <span className="ml-2 text-muted-foreground">
+                              {animation.poses.length}/6 个状态 · {motionPlan ? getStopMotionStatusLabel(motionPlan.status) : "已配置"}
+                            </span>
+                          </span>
+                          <span className="shrink-0 text-[11px] text-muted-foreground">调整动画</span>
+                        </summary>
+                        <div className="space-y-3 border-t border-primary/25 p-3">
+                          <div className="flex flex-wrap justify-end gap-1.5">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-7 gap-1 px-2 text-[11px]"
+                              onClick={() => handleGenerateStopMotion(dbScene?.id || "", index)}
+                              disabled={!dbScene?.id || isRunning || isStopMotionGenerating}
+                              aria-busy={isStopMotionGenerating}
+                            >
+                              {isStopMotionGenerating ? <Loader2 aria-hidden="true" className="h-3 w-3 animate-spin" /> : <Sparkles aria-hidden="true" className="h-3 w-3" />}
+                              生成/补齐
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 gap-1 px-2 text-[11px]"
+                              onClick={() => handleGenerateStopMotion(dbScene?.id || "", index, true)}
+                              disabled={!dbScene?.id || isRunning || isStopMotionGenerating}
+                              aria-busy={isStopMotionGenerating}
+                            >
+                              <RefreshCw aria-hidden="true" className="h-3 w-3" />
+                              全部重生成
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 gap-1 px-2 text-[11px]"
+                              onClick={() => handleRenderStopMotionScene(dbScene?.id || "", index)}
+                              disabled={!dbScene?.id || isRunning || isStopMotionGenerating || isSceneClipRendering}
+                              aria-busy={isSceneClipRendering}
+                            >
+                              {isSceneClipRendering ? <Loader2 aria-hidden="true" className="h-3 w-3 animate-spin" /> : <Film aria-hidden="true" className="h-3 w-3" />}
+                              {isSceneClipRendering ? "渲染中" : "刷新片段"}
+                            </Button>
+                          </div>
+                          {motionPlan && motionPlan.status !== "completed" && (
+                            <p className="text-[11px] leading-relaxed text-muted-foreground">
+                              当前状态：{getStopMotionStatusLabel(motionPlan.status)}
+                            </p>
+                          )}
+
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                          <div className="space-y-1.5">
+                            <label htmlFor={`scene-${index}-reference`} className="text-xs font-medium text-foreground">
+                              主体或画面参考图（可选）
+                            </label>
+                            <Select
+                              id={`scene-${index}-reference`}
+                              value={animation.reference_asset_id || ""}
+                              className="h-9 text-xs"
+                              onChange={(event) => updateStopMotionAnimation(index, {
+                                ...animation,
+                                reference_asset_id: event.target.value || null,
+                              })}
+                            >
+                              <option value="">不指定参考图</option>
+                              {poseAssets.map((asset) => (
+                                <option key={asset.id} value={asset.id}>{asset.file_name}</option>
+                              ))}
+                            </Select>
+                            <p className="text-[11px] leading-relaxed text-muted-foreground">
+                              作为同一任务及相邻分镜的主体、元素与视觉风格一致性依据。
+                            </p>
+                          </div>
+                          <div className="flex items-end rounded border border-border/60 bg-card/60 px-2.5 py-2 text-[11px] leading-relaxed text-muted-foreground">
+                            状态说明会用于后续图片生成和渲染，不会改变单画面分镜。
+                          </div>
+                        </div>
+
+                        {animation.poses.length < 3 && (
+                          <p className="rounded border border-warning/30 bg-warning-soft px-2.5 py-2 text-xs text-warning">
+                            至少需要 3 张状态图；可直接点击“补齐缺失状态”自动生成。
+                          </p>
+                        )}
+
+                        <details className="rounded border border-border/60 bg-card/40 p-2.5">
+                          <summary className="cursor-pointer text-xs font-medium text-foreground">
+                            编辑关键状态（替换状态图、停留时间和小范围转场）
+                          </summary>
+                          <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                          {animation.poses.map((pose, poseIndex) => {
+                            const plannedPose = motionPlan?.poses.find(
+                              (item) => item.pose_id === pose.pose_id
+                            );
+                            const poseRetryKey = plannedPose
+                              ? `${stopMotionKey}:${plannedPose.pose_id}`
+                              : "";
+                            const isPoseGenerating = Boolean(
+                              poseRetryKey && generatingStopMotion[poseRetryKey]
+                            );
+                            const poseAsset = poseAssets.find((asset) => asset.id === pose.asset_id);
+                            return (
+                            <div key={pose.pose_id || pose.asset_id || `pose-${poseIndex}`} className="space-y-1.5 rounded border border-border/60 bg-card/70 p-2.5">
+                              <div className="flex items-center justify-between gap-2">
+                                <label htmlFor={`scene-${index}-pose-${poseIndex}`} className="text-xs font-medium text-foreground">
+                                  {plannedPose?.pose_name || `状态 ${poseIndex + 1}`}
+                                </label>
+                                <div className="flex items-center gap-1">
+                                  {plannedPose && pose.pose_id && (
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => handleRetryStopMotionPose(dbScene?.id || "", pose.pose_id as string)}
+                                      className="h-7 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+                                      disabled={!dbScene?.id || isRunning || isPoseGenerating}
+                                      aria-busy={isPoseGenerating}
+                                      aria-label={`重新生成${plannedPose.pose_name}`}
+                                    >
+                                      {isPoseGenerating ? <Loader2 aria-hidden="true" className="h-3 w-3 animate-spin" /> : <RotateCcw aria-hidden="true" className="h-3 w-3" />}
+                                       重新生成
+                                    </Button>
+                                  )}
+                                  {animation.poses.length > 3 && (
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => removeStopMotionPose(index, poseIndex)}
+                                      className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
+                                      aria-label={`删除第 ${poseIndex + 1} 张状态图`}
+                                    >
+                                      <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
+                                    </Button>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                {poseAsset && (
+                                  <img
+                                    src={`/api/v1/assets/${poseAsset.id}/file`}
+                                    alt={`${plannedPose?.pose_name || `状态 ${poseIndex + 1}`}预览`}
+                                    loading="lazy"
+                                    className="h-14 w-10 shrink-0 rounded border border-border/60 bg-black object-cover"
+                                  />
+                                )}
+                                <Select
+                                  id={`scene-${index}-pose-${poseIndex}`}
+                                  value={pose.asset_id}
+                                  className="h-9 min-w-0 flex-1 text-xs"
+                                  onChange={(event) => updateStopMotionPose(index, poseIndex, "asset_id", event.target.value)}
+                                >
+                                  <option value="">请选择状态图</option>
+                                  {poseAssets.map((asset) => (
+                                    <option key={asset.id} value={asset.id}>{asset.file_name}</option>
+                                  ))}
+                                </Select>
+                              </div>
+                              <div className="space-y-1">
+                                <label htmlFor={`scene-${index}-pose-${poseIndex}-transition`} className="text-[11px] text-muted-foreground">
+                                  进入此状态
+                                </label>
+                                <Select
+                                  id={`scene-${index}-pose-${poseIndex}-transition`}
+                                  value={pose.transition || "stepped"}
+                                  disabled={poseIndex === 0}
+                                  className="h-8 text-xs"
+                                  onChange={(event) => updateStopMotionPose(index, poseIndex, "transition", event.target.value)}
+                                >
+                                  <option value="stepped">直接切换</option>
+                                  <option value="expression">局部平滑（小变化）</option>
+                                  <option value="blink">局部平滑（兼容：blink）</option>
+                                  <option value="mouth">局部平滑（兼容：mouth）</option>
+                                  <option value="head">局部平滑（兼容：head）</option>
+                                </Select>
+                                {poseIndex === 0 && (
+                                  <p className="text-[10px] leading-relaxed text-muted-foreground">
+                                    第一个状态是场景起点，固定直接切换。
+                                  </p>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <label htmlFor={`scene-${index}-pose-${poseIndex}-hold`} className="shrink-0 text-xs text-muted-foreground">
+                                  停留（秒）
+                                </label>
+                                <Input
+                                  id={`scene-${index}-pose-${poseIndex}-hold`}
+                                  type="number"
+                                  min="0.1"
+                                  max="60"
+                                  step="0.1"
+                                  value={pose.hold}
+                                  onChange={(event) => updateStopMotionPose(index, poseIndex, "hold", parseFloat(event.target.value) || 0.1)}
+                                  className="h-8 text-xs"
+                                />
+                              </div>
+                              <div className="grid grid-cols-2 gap-1.5">
+                                {([
+                                  ["description", "状态说明", "主体或画面在此刻的状态"],
+                                  ["framing", "镜头", "景别、机位或构图"],
+                                  ["prop", "元素", "商品、物体、文字或图形"],
+                                  ["expression", "运动", "状态之间的变化方式"],
+                                ] as const).map(([field, label, placeholder]) => (
+                                  <label key={field} className="space-y-1 text-[11px] text-muted-foreground">
+                                    <span>{label}</span>
+                                    <Input
+                                      aria-label={`${label} ${poseIndex + 1}`}
+                                      value={pose[field] || ""}
+                                      placeholder={placeholder}
+                                      onChange={(event) => updateStopMotionPose(index, poseIndex, field, event.target.value)}
+                                      className="h-8 text-xs"
+                                    />
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                            );
+                          })}
+                          </div>
+                        </details>
+
+                        <details className="group rounded border border-border/60 bg-card/40 p-2.5">
+                          <summary className="cursor-pointer text-xs font-medium text-foreground">
+                            高级动画设置
+                          </summary>
+                          <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+                            默认值已适合大多数内容。仅在需要精确控制镜头、局部平滑或图层时调整。
+                          </p>
+                          <div className="mt-3 space-y-2">
+                        <div className="space-y-2 rounded border border-primary/25 bg-primary/5 p-2.5">
+                          <label className="flex min-h-8 items-center gap-2 text-xs font-medium text-foreground">
+                            <input
+                              type="checkbox"
+                              checked={animation.optical_flow?.enabled === true}
+                              onChange={(event) => {
+                                if (!event.target.checked) {
+                                  updateStopMotionOpticalFlow(index, null);
+                                  return;
+                                }
+                                updateStopMotionOpticalFlow(index, {
+                                  enabled: true,
+                                  transition_seconds: animation.optical_flow?.transition_seconds ?? 0.18,
+                                  max_transitions: animation.optical_flow?.max_transitions ?? 2,
+                                  region: animation.optical_flow?.region || {
+                                    ...DEFAULT_STOP_MOTION_OPTICAL_FLOW_REGION,
+                                  },
+                                });
+                              }}
+                              className="h-4 w-4 rounded border-border accent-primary"
+                            />
+                            启用局部平滑过渡
+                          </label>
+                          <p className="text-[11px] leading-relaxed text-muted-foreground">
+                            只处理明确标记的小范围变化；不做大范围形变，失败时会自动改为直接切换。
+                          </p>
+                        </div>
+
+                        <div className="space-y-2 rounded border border-border/60 bg-card/50 p-2.5">
+                          <label className="flex min-h-8 items-center gap-2 text-xs font-medium text-foreground">
+                            <input
+                              type="checkbox"
+                              checked={animation.micro_motion.enabled}
+                              onChange={(event) => toggleStopMotionMicroMotion(index, event.target.checked)}
+                              className="h-4 w-4 rounded border-border accent-primary"
+                            />
+                            启用轻微运动
+                          </label>
+                          <p className="text-[11px] leading-relaxed text-muted-foreground">
+                            在状态停留期间加入轻微镜头或元素运动。
+                          </p>
+                        </div>
+
+                        <div className="space-y-2 rounded border border-border/60 bg-card/50 p-2.5">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <label className="flex min-h-8 items-center gap-2 text-xs font-medium text-foreground">
+                              <input
+                                type="checkbox"
+                                checked={animation.parallax.enabled}
+                                onChange={(event) => updateStopMotionParallax(index, {
+                                  ...animation.parallax,
+                                  enabled: event.target.checked,
+                                })}
+                                className="h-4 w-4 rounded border-border accent-primary"
+                              />
+                              启用轻量 2.5D 视差
+                            </label>
+                          </div>
+                          <p className="text-[11px] leading-relaxed text-muted-foreground">
+                            需要已有的透明前景/背景图层；主体仍由当前状态图驱动，不自动做深度分层。
+                          </p>
+                          {animation.parallax.enabled && (
+                            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                              {([
+                                ["background_asset_id", "背景层"],
+                                ["foreground_asset_id", "前景层"],
+                              ] as const).map(([field, label]) => (
+                                <label key={field} className="space-y-1 text-[11px] text-muted-foreground">
+                                  <span className="block">{label}</span>
+                                  <Select
+                                    aria-label={`分镜 ${index + 1} ${label}`}
+                                    value={animation.parallax.layers[field] || ""}
+                                    className="h-8 text-xs"
+                                    onChange={(event) => updateStopMotionParallax(index, {
+                                      ...animation.parallax,
+                                      layers: {
+                                        ...animation.parallax.layers,
+                                        [field]: event.target.value || null,
+                                      },
+                                    })}
+                                  >
+                                    <option value="">不指定</option>
+                                    {poseAssets.map((asset) => (
+                                      <option key={asset.id} value={asset.id}>{asset.file_name}</option>
+                                    ))}
+                                  </Select>
+                                </label>
+                              ))}
+                            </div>
+                          )}
+                          </div>
+                          </div>
+                        </details>
+
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={animation.poses.length >= 6 || poseAssets.length <= animation.poses.length}
+                          onClick={() => addStopMotionPose(index)}
+                          className="h-8 gap-1.5 text-xs"
+                        >
+                          <Plus aria-hidden="true" className="h-3.5 w-3.5" />
+                          添加状态图
+                        </Button>
+                      </div>
+                      </details>
+                    )}
+
                     {/* Media Preview Strip if available */}
                     {(hasImage || hasVideo || hasAudio || contentMode === "static") && dbScene && (
                       <div className="flex flex-wrap items-center gap-3 rounded-md border border-border/60 bg-secondary/15 p-2.5">
                         {(hasImage || hasVideo || contentMode === "static") && (
                           <div className={`relative ${sceneThumbAspectClass} overflow-hidden rounded-md border border-border bg-black shrink-0`}>
-                            {contentMode === "static" ? (
+                            {isStopMotion && dbScene.rendered_segment_asset_id ? (
+                              <video
+                                src={`/api/v1/assets/${dbScene.rendered_segment_asset_id}/file`}
+                                controls
+                                preload="metadata"
+                                aria-label={`分镜 ${index + 1} 定格动画片段预览`}
+                                className="h-full w-full object-cover"
+                              />
+                            ) : contentMode === "static" ? (
                               <img
                                 src={`/api/v1/templates/previews/${encodeURIComponent(renderTemplateId)}`}
                                 alt={`分镜 ${index + 1} 模板预览`}
@@ -2121,28 +3052,35 @@ export default function TaskStoryboardPage() {
                         />
                       </div>
 
-                      <div className={`${usesVisualPrompt ? "sm:col-span-4" : "sm:col-span-8"} space-y-1.5`}>
-                        <label htmlFor={`scene-${index}-asset`} className="text-xs font-medium text-muted-foreground">
-                          {contentMode === "uploaded_asset" ? "本镜头素材" : "本镜头覆盖素材（可选）"}
-                        </label>
-                        <Select
-                          id={`scene-${index}-asset`}
-                          value={scene.media_asset_id || ""}
-                          className="text-sm h-9"
-                          onChange={(e) => {
-                            const selected = projectAssets.find((asset) => asset.id === e.target.value);
-                            const updated = [...scenes];
-                            updated[index] = {
-                              ...updated[index],
-                              media_asset_id: e.target.value || null,
-                              layout_params: {
-                                ...(updated[index].layout_params || {}),
-                                media_type: selected?.asset_type || undefined,
-                              },
-                            };
-                            markDirty();
-                            setScenes(updated);
-                          }}
+                      {isStopMotion ? (
+                        <div className={`${usesVisualPrompt ? "sm:col-span-4" : "sm:col-span-8"} flex items-end`}>
+                          <p className="w-full rounded border border-primary/20 bg-primary/5 px-2.5 py-2 text-xs leading-relaxed text-muted-foreground">
+                            当前画面由上方状态时间轴驱动，不需要再绑定单张主素材。
+                          </p>
+                        </div>
+                      ) : (
+                        <div className={`${usesVisualPrompt ? "sm:col-span-4" : "sm:col-span-8"} space-y-1.5`}>
+                          <label htmlFor={`scene-${index}-asset`} className="text-xs font-medium text-muted-foreground">
+                            {contentMode === "uploaded_asset" ? "本镜头素材" : "本镜头覆盖素材（可选）"}
+                          </label>
+                          <Select
+                            id={`scene-${index}-asset`}
+                            value={scene.media_asset_id || ""}
+                            className="text-sm h-9"
+                            onChange={(e) => {
+                              const selected = projectAssets.find((asset) => asset.id === e.target.value);
+                              const updated = [...scenes];
+                              updated[index] = {
+                                ...updated[index],
+                                media_asset_id: e.target.value || null,
+                                layout_params: {
+                                  ...(updated[index].layout_params || {}),
+                                  media_type: selected?.asset_type || undefined,
+                                },
+                              };
+                              markDirty();
+                              setScenes(updated);
+                            }}
                           >
                             <option value="">
                               {taskContentMode === "online_asset"
@@ -2155,11 +3093,12 @@ export default function TaskStoryboardPage() {
                                 ? "使用 AI 生成视频"
                                 : "使用 AI 生成图片"}
                             </option>
-                          {projectAssets.filter((asset) => asset.asset_type === "image" || asset.asset_type === "video").map((asset) => (
-                            <option key={asset.id} value={asset.id}>{asset.file_name}（{ASSET_TYPE_LABELS[asset.asset_type] || asset.asset_type}）</option>
-                          ))}
-                        </Select>
-                      </div>
+                            {projectAssets.filter((asset) => asset.asset_type === "image" || asset.asset_type === "video").map((asset) => (
+                              <option key={asset.id} value={asset.id}>{asset.file_name}（{ASSET_TYPE_LABELS[asset.asset_type] || asset.asset_type}）</option>
+                            ))}
+                          </Select>
+                        </div>
+                      )}
                     </div>
 
                     {/* 统一分镜流水线单元控制条：融合生成触发、流水线状态、失效重试、手工保护与产物下载 */}
@@ -2180,12 +3119,14 @@ export default function TaskStoryboardPage() {
                       isGeneratingTTS={generatingTTS[dbScene?.id || index]}
                       isGeneratingImage={generatingImage[dbScene?.id || index]}
                       isGeneratingVideo={generatingVideo[dbScene?.id || index]}
+                      isGeneratingStopMotion={isStopMotionGenerating}
                       contentMode={taskContentMode}
+                      animationMode={isStopMotion ? "enhanced_stop_motion" : null}
                       hasAudio={hasAudio}
-                      hasVisual={hasImage || hasVideo}
+                      hasVisual={hasImage || hasVideo || Boolean(animation && animation.poses.length >= 3)}
                       hasVideo={hasVideo}
                       canGenerateVoice={Boolean(scene.narration_text)}
-                      canGenerateVisual={Boolean(scene.visual_prompt || scene.narration_text)}
+                      canGenerateVisual={!isStopMotion && Boolean(scene.visual_prompt || scene.narration_text)}
                       measuredDuration={Number(dbScene?.layout_params?.video_actual_duration_seconds) || null}
                       errorMessage={dbScene?.layout_params?.image_error || dbScene?.layout_params?.video_error || dbScene?.layout_params?.tts_error || null}
                     />
@@ -2816,7 +3757,11 @@ export default function TaskStoryboardPage() {
         </DialogHeader>
 
         <div className="py-3">
-          <div className="bg-destructive-soft border border-destructive/20 rounded p-3 text-xs text-foreground leading-relaxed whitespace-pre-wrap">
+          <div
+            role="alert"
+            aria-live="assertive"
+            className="bg-destructive-soft border border-destructive/20 rounded p-3 text-xs text-foreground leading-relaxed whitespace-pre-wrap"
+          >
             {missingConfigAlert}
           </div>
         </div>

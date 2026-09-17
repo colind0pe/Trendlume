@@ -216,19 +216,71 @@ class AssetService:
         if (await self.session.execute(project_stmt.limit(1))).scalar_one_or_none():
             return "project_reference"
 
-        scene_stmt = select(SceneModel.id).where(
-            or_(
-                SceneModel.audio_asset_id == asset.id,
-                SceneModel.media_asset_id == asset.id,
-                SceneModel.rendered_segment_asset_id == asset.id,
-            )
+        scene_stmt = select(
+            SceneModel.id,
+            SceneModel.audio_asset_id,
+            SceneModel.media_asset_id,
+            SceneModel.rendered_segment_asset_id,
+            SceneModel.layout_params,
         )
         if project_filter is not None:
             scene_stmt = scene_stmt.join(TaskModel, SceneModel.task_id == TaskModel.id).where(
                 TaskModel.project_id == project_filter
             )
-        if (await self.session.execute(scene_stmt.limit(1))).scalar_one_or_none():
-            return "scene_reference"
+        for scene_row in (await self.session.execute(scene_stmt)).all():
+            if asset.id in {
+                scene_row.audio_asset_id,
+                scene_row.media_asset_id,
+                scene_row.rendered_segment_asset_id,
+            }:
+                return "scene_reference"
+            animation = (scene_row.layout_params or {}).get("animation") or {}
+            reference_asset_id = (
+                animation.get("reference_asset_id") or animation.get("reference_image_asset_id")
+                if isinstance(animation, dict)
+                else None
+            )
+            if reference_asset_id == asset.id:
+                return "scene_reference"
+            poses = animation.get("poses") if isinstance(animation, dict) else None
+            if any(
+                isinstance(pose, dict) and pose.get("asset_id") == asset.id
+                for pose in poses or []
+            ):
+                return "scene_reference"
+            motion_plan = (scene_row.layout_params or {}).get("animation_plan")
+            if isinstance(motion_plan, dict):
+                if motion_plan.get("reference_asset_id") == asset.id:
+                    return "scene_reference"
+                planned_poses = motion_plan.get("poses") or []
+                if any(
+                    isinstance(pose, dict) and pose.get("asset_id") == asset.id
+                    for pose in planned_poses
+                ):
+                    return "scene_reference"
+            parallax = animation.get("parallax") if isinstance(animation, dict) else None
+            layers = (
+                parallax.get("layers")
+                if isinstance(parallax, dict) and isinstance(parallax.get("layers"), dict)
+                else animation.get("layers")
+                if isinstance(animation, dict)
+                else {}
+            )
+            layer_asset_ids: set[str] = set()
+            if isinstance(layers, dict):
+                for key in (
+                    "foreground_asset_id",
+                    "background_asset_id",
+                    "foreground",
+                    "background",
+                ):
+                    value = layers.get(key)
+                    if isinstance(value, dict):
+                        value = value.get("asset_id")
+                    if isinstance(value, str):
+                        layer_asset_ids.add(value)
+            if asset.id in layer_asset_ids:
+                return "scene_reference"
 
         publishing_stmt = select(PublishingJobModel.id).where(
             or_(

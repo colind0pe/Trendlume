@@ -75,7 +75,7 @@ def build_script_generation_inputs(payload: dict, *, topic: str, project=None) -
     language = payload.get('language') or project_settings.get('language')
     keys = (
         'mode', 'raw_script', 'split_mode', 'genre', 'hook_type', 'style_preset',
-        'prompt_prefix', 'target_scene_count', 'content_mode',
+        'prompt_prefix', 'target_scene_count', 'content_mode', 'animation_mode',
     )
     result = {key: payload.get(key) for key in keys}
     result.update(
@@ -451,7 +451,7 @@ class DurableVideoPipeline:
                 ).hexdigest()
                 for source in research.sources
             ]
-            plan = {k: payload.get(k) for k in ('style_preset', 'target_scene_count', 'template_id', 'template_params', 'content_mode', 'visual_mode', 'material_provider_id', 'voice_id', 'speed')}
+            plan = {k: payload.get(k) for k in ('style_preset', 'target_scene_count', 'template_id', 'template_params', 'content_mode', 'visual_mode', 'animation_mode', 'material_provider_id', 'voice_id', 'speed')}
             plan.update(
                 content_brief=resolved_script_inputs.get('content_brief'),
                 aspect_ratio=resolved_script_inputs['aspect_ratio'],
@@ -524,7 +524,7 @@ class DurableVideoPipeline:
         template_path = template_catalog.resolve_path(template_id)
         template_hash = await sha256_file(template_path)
         workflow_hashes = {}
-        for kind in ('image', 'video'):
+        for kind in ('image', 'image_img2img', 'video'):
             reference = (payload.get(kind + '_workflow_snapshot') or {}).get('path') or payload.get(kind + '_workflow_id')
             path = workflow_service.resolve_workflow_file(reference) if reference else None
             workflow_hashes[kind] = await sha256_file(path) if path else None
@@ -550,6 +550,21 @@ class DurableVideoPipeline:
             scene_id = scene.id
             # Uploaded and manual assets are authoritative. Generated pointers are outputs, not inputs.
             layout_params = scene.layout_params or {}
+            animation = RenderingService._stop_motion_spec(layout_params)
+            animation_mode = layout_params.get('animation_mode') or payload.get('animation_mode')
+            animation_plan = layout_params.get('animation_plan')
+            stop_motion_requested = bool(
+                animation
+                or animation_mode == 'enhanced_stop_motion'
+                or isinstance(animation_plan, dict)
+            )
+            scene_render_format_version = (
+                RenderingService.ENHANCED_STOP_MOTION_SCENE_RENDER_FORMAT_VERSION
+                if stop_motion_requested
+                else RenderingService.ONLINE_SCENE_RENDER_FORMAT_VERSION
+                if mode == 'online_asset'
+                else None
+            )
             media_source = layout_params.get('media_source')
             user_media = mode == 'uploaded_asset' or media_source in {'manual', 'uploaded'}
             # A generated override is authoritative only while the task remains
@@ -579,23 +594,114 @@ class DurableVideoPipeline:
                 'provider': provider_inputs.get('material' if mode == 'online_asset' else ('video' if mode == 'generated_video' else 'image')),
                 'media_size': template_catalog.get_media_size(template_id), 'uploaded_sha256': media_digest,
                 'workflow_sha256': workflow_hashes['video' if mode == 'generated_video' else 'image'] if mode != 'online_asset' else None,
+                'img2img_workflow_sha256': workflow_hashes['image_img2img'] if stop_motion_requested else None,
                 'material_provider_id': payload.get('material_provider_id') if mode == 'online_asset' else None,
                 # Existing task bindings are runtime exclusions. Keep them out
                 # of the normal full-run fingerprint so a resumable stage can
                 # still reuse its validated artifact; forced single-scene
                 # refreshes include the current ID in their fingerprint.
                 'excluded_external_ids': sorted(online_external_ids) if mode == 'online_asset' and single == 'assets' else None,
-                'duration_seconds': scene.duration_seconds if mode in {'generated_video', 'online_asset'} else None}
+                'duration_seconds': scene.duration_seconds if mode in {'generated_video', 'online_asset'} else None,
+                'animation': animation.model_dump(exclude_none=True, by_alias=True) if animation else None,
+                'animation_mode': animation_mode,
+                'animation_plan': animation_plan,
+                'scene_render_format_version': scene_render_format_version}
             async def visual_action(
                 run,
                 scene_id=scene_id,
                 existing_id=existing_id,
                 user_media=user_media,
                 generated_media=generated_media,
+                animation=animation,
+                animation_mode=animation_mode,
+                animation_plan=animation_plan,
             ):
                 current_scene = await SceneRepository(self.db).get_by_id(scene_id)
                 if not current_scene:
                     raise ValidationException('分镜不存在，无法生成视觉素材。')
+                current_animation = animation
+                if (
+                    current_animation is None
+                    and (
+                        animation_mode == 'enhanced_stop_motion'
+                        or isinstance(animation_plan, dict)
+                    )
+                ):
+                    await gen.generate_scene_stop_motion_poses(
+                        current_scene.id,
+                        prompt_versions=payload.get('prompt_versions'),
+                    )
+                    await self.save()
+                    current_scene = await SceneRepository(self.db).get_by_id(scene_id)
+                    current_animation = RenderingService._stop_motion_spec(
+                        current_scene.layout_params or {}
+                    )
+                if current_animation:
+                    pose_artifacts = []
+
+                    async def add_animation_asset(
+                        asset_id: str,
+                        kind: str,
+                        label: str,
+                        media_info: dict | None = None,
+                    ) -> None:
+                        asset, _ = await self.asset(asset_id)
+                        if asset.asset_type != 'image':
+                            raise ValidationException(f'{label}素材必须是图片：{asset.file_name}')
+                        if asset.project_id not in {None, task.project_id}:
+                            raise ValidationException(f'{label}素材不属于当前项目：{asset.file_name}')
+                        pose_artifacts.append(
+                            ArtifactSpec(
+                                self.storage.get_path(asset.file_path),
+                                kind,
+                                asset.id,
+                                'generated'
+                                if (asset.metadata_json or {}).get('source_kind')
+                                == 'generated_stop_motion_pose'
+                                else 'manual',
+                                media_info,
+                            )
+                        )
+
+                    if current_animation.reference_asset_id:
+                        await add_animation_asset(
+                            current_animation.reference_asset_id,
+                            'visual_reference',
+                            '角色参考图',
+                            {'role': 'reference'},
+                        )
+                    if current_animation.parallax.enabled:
+                        for role, asset_id in (
+                            ('background', current_animation.parallax.layers.background_asset_id),
+                            ('foreground', current_animation.parallax.layers.foreground_asset_id),
+                        ):
+                            if asset_id:
+                                await add_animation_asset(
+                                    asset_id,
+                                    'visual_layer',
+                                    f'视差{role}层',
+                                    {'role': role},
+                                )
+                    for pose in current_animation.poses:
+                        await add_animation_asset(
+                            pose.asset_id,
+                            'visual_pose',
+                            '姿态图',
+                            {
+                                'hold': pose.hold,
+                                'description': pose.description,
+                                'framing': pose.framing,
+                                'prop': pose.prop,
+                                'expression': pose.expression,
+                                'transition': pose.transition,
+                            },
+                        )
+                    return pose_artifacts, {
+                        'mode': current_animation.mode,
+                        'reference_asset_id': current_animation.reference_asset_id,
+                        'pose_asset_ids': [pose.asset_id for pose in current_animation.poses],
+                        'parallax_layers': current_animation.parallax.layers.model_dump(exclude_none=True),
+                    }, None, False
                 if mode == 'static':
                     return [], {'mode': mode}, None, True
                 adopted = None
@@ -651,8 +757,9 @@ class DurableVideoPipeline:
                 }, None, False
             _, visuals[scene_id] = await self.stage('assets', inputs, visual_action, scene_id, force=single == 'assets')
             scene = await SceneRepository(self.db).get_by_id(scene_id)
-            await self.bind(scene, 'media_asset_id', visuals[scene.id])
-            if not visuals[scene.id]:
+            if not stop_motion_requested:
+                await self.bind(scene, 'media_asset_id', visuals[scene.id])
+            if not visuals[scene.id] and not stop_motion_requested:
                 await self.runtime.assert_lease()
                 scene.media_asset_id = None
                 await self.db.commit()
@@ -734,6 +841,8 @@ class DurableVideoPipeline:
         for scene_id in scene_ids:
             current_scene = await SceneRepository(self.db).get_by_id(scene_id)
             current_task = await TaskRepository(self.db).get_by_id(task_id)
+            current_layout = scene_snapshot(current_scene)['layout_params']
+            current_animation = RenderingService._stop_motion_spec(current_layout)
             async def clip_action(run, scene_id=scene_id):
                 current_scene = await SceneRepository(self.db).get_by_id(scene_id)
                 if not current_scene:
@@ -746,10 +855,13 @@ class DurableVideoPipeline:
                 return [ArtifactSpec(self.storage.get_path(asset.file_path), 'scene_clip', asset.id)], {'asset_id': asset.id, 'ffmpeg_commands': renderer.commands}, None, False
             _, outputs = await self.stage('composition', {'template_sha256': template_hash, 'template_id': template_id,
                 'title': current_task.title, 'text': current_scene.narration_text, 'duration': current_scene.duration_seconds,
-                'sequence_index': current_scene.sequence_index, 'layout': scene_snapshot(current_scene)['layout_params'],
+                'sequence_index': current_scene.sequence_index, 'layout': current_layout,
                 'params': payload.get('template_params'), 'custom_css': payload.get('custom_css'), 'mode': mode,
                 'scene_render_format_version': (
-                    RenderingService.ONLINE_SCENE_RENDER_FORMAT_VERSION
+                    RenderingService.ENHANCED_STOP_MOTION_SCENE_RENDER_FORMAT_VERSION
+                    if current_animation or (current_layout or {}).get('animation_mode') == 'enhanced_stop_motion'
+                    or isinstance((current_layout or {}).get('animation_plan'), dict)
+                    else RenderingService.ONLINE_SCENE_RENDER_FORMAT_VERSION
                     if mode == 'online_asset' else None
                 )},
                 clip_action, scene_id, [*visuals[scene_id], *voices[scene_id]],

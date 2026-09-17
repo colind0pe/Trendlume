@@ -10,11 +10,14 @@ from src.schemas.generation import (
     ResearchResponse,
     SceneMediaGenerateRequest,
     ScriptGenerateRequest,
+    StopMotionPlanRequest,
+    StopMotionPoseGenerateRequest,
     StructuredScript,
 )
 from src.schemas.scene import SceneResponse
 from src.schemas.task import TaskDetailResponse
 from src.services.generation_service import GenerationService
+from src.services.rendering_service import RenderingService
 from src.tasks.manager import task_manager
 
 router = APIRouter(prefix="/generation", tags=["Generation"])
@@ -204,6 +207,99 @@ async def generate_scene_online_material(
         content_mode_override="online_asset",
         prompt_override=prompt_override,
     )
+    return APIResponse(data=SceneResponse.model_validate(scene))
+
+
+@router.post("/scenes/{scene_id}/stop-motion/plan", response_model=APIResponse[SceneResponse])
+async def plan_scene_stop_motion(
+    scene_id: str,
+    payload: StopMotionPlanRequest | None = None,
+    service: GenerationService = Depends(get_generation_service),
+):
+    options = payload or StopMotionPlanRequest()
+    scene = await service.plan_scene_motion(
+        scene_id,
+        style_preset=options.style_preset,
+        reference_asset_id=options.reference_asset_id,
+        force=options.force,
+        use_llm=options.use_llm,
+    )
+    return APIResponse(data=SceneResponse.model_validate(scene))
+
+
+@router.post("/scenes/{scene_id}/stop-motion/poses", response_model=APIResponse[SceneResponse])
+async def generate_scene_stop_motion_poses(
+    scene_id: str,
+    payload: StopMotionPoseGenerateRequest | None = None,
+    service: GenerationService = Depends(get_generation_service),
+):
+    options = payload or StopMotionPoseGenerateRequest()
+    scene = await service.generate_scene_stop_motion_poses(
+        scene_id,
+        pose_id=options.pose_id,
+        style_preset=options.style_preset,
+        reference_asset_id=options.reference_asset_id,
+        prompt_override=options.prompt_override,
+        force=options.force,
+        use_llm=options.use_llm,
+    )
+    return APIResponse(data=SceneResponse.model_validate(scene))
+
+
+async def _rerender_stop_motion_scene(
+    service: GenerationService,
+    scene_id: str,
+) -> SceneResponse:
+    """Refresh one Scene clip without rerunning the task-level workflow."""
+    scene = await service.scene_repo.get_by_id(scene_id)
+    if scene is None:
+        raise HTTPException(404, "Scene not found")
+    if RenderingService._stop_motion_spec(scene.layout_params) is None:
+        raise HTTPException(422, "该分镜尚未具备完整的 Enhanced Stop Motion 姿态图。")
+
+    renderer = RenderingService(
+        service.session,
+        storage=service.storage,
+        execution_context=service.execution_context,
+    )
+    await renderer.render_scene_clip(scene_id)
+    await service.session.rollback()
+    refreshed = await service.scene_repo.get_by_id(scene_id)
+    if refreshed is None:
+        raise HTTPException(404, "Scene not found")
+    return SceneResponse.model_validate(refreshed)
+
+
+@router.post("/scenes/{scene_id}/stop-motion/render", response_model=APIResponse[SceneResponse])
+async def render_scene_stop_motion(
+    scene_id: str,
+    service: GenerationService = Depends(get_generation_service),
+):
+    return APIResponse(data=await _rerender_stop_motion_scene(service, scene_id))
+
+
+@router.post(
+    "/scenes/{scene_id}/stop-motion/poses/{pose_id}/retry",
+    response_model=APIResponse[SceneResponse],
+)
+async def retry_scene_stop_motion_pose(
+    scene_id: str,
+    pose_id: str,
+    payload: StopMotionPoseGenerateRequest | None = None,
+    service: GenerationService = Depends(get_generation_service),
+):
+    options = payload or StopMotionPoseGenerateRequest()
+    scene = await service.generate_scene_stop_motion_poses(
+        scene_id,
+        pose_id=pose_id,
+        style_preset=options.style_preset,
+        reference_asset_id=options.reference_asset_id,
+        prompt_override=options.prompt_override,
+        force=True,
+        use_llm=options.use_llm,
+    )
+    if RenderingService._stop_motion_spec(scene.layout_params) is not None:
+        return APIResponse(data=await _rerender_stop_motion_scene(service, scene_id))
     return APIResponse(data=SceneResponse.model_validate(scene))
 
 

@@ -13,6 +13,7 @@ from src.core.security import redact_sensitive_text, secret_cipher
 from src.models.provider_config import ProviderConfigModel
 from src.providers.image.comfyui_image import (
     DEFAULT_COMFYUI_IMAGE_WORKFLOW,
+    DEFAULT_COMFYUI_REFERENCE_IMAGE_WORKFLOW,
     ComfyUIImageProvider,
 )
 from src.providers.image.protocol import DEFAULT_IMAGE_TEST_PROMPT, ImageProvider
@@ -127,9 +128,20 @@ class ProviderManager:
         for category in ('image', 'video'):
             entry = self.snapshot.get(category)
             if entry and entry['provider_name'] == 'comfyui':
-                default = DEFAULT_COMFYUI_IMAGE_WORKFLOW if category == 'image' else 'video/video_wan2.1_fusionx.json'
+                default = (
+                    DEFAULT_COMFYUI_IMAGE_WORKFLOW
+                    if category == 'image'
+                    else 'video/video_wan2.1_fusionx.json'
+                )
                 path = workflow_service.resolve_workflow_file(entry['config'].get('default_workflow') or default)
                 entry['workflow_sha256'] = await sha256_file(path) if path else None
+                if category == 'image':
+                    reference_path = workflow_service.resolve_workflow_file(
+                        DEFAULT_COMFYUI_REFERENCE_IMAGE_WORKFLOW
+                    )
+                    entry['reference_workflow_sha256'] = (
+                        await sha256_file(reference_path) if reference_path else None
+                    )
         return copy.deepcopy(self.snapshot)
 
     def snapshot_fingerprint_payload(self) -> dict:

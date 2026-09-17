@@ -9,7 +9,26 @@ from src.schemas.publishing import (
     SocialAccountCreate,
     SocialAccountResponse,
 )
-from src.schemas.scene import SceneBatchUpdate, SceneCreate, SceneResponse, SceneUpdate
+from src.schemas.scene import (
+    SceneAnimationPose,
+    SceneAnimationSpec,
+    SceneAnimationState,
+    SceneBatchUpdate,
+    SceneCreate,
+    SceneFaceAlignmentSpec,
+    SceneMicroMotionSpec,
+    SceneMotionPlan,
+    SceneMotionPlanPose,
+    SceneMotionPlanState,
+    SceneNormalizedRect,
+    SceneOpticalFlowSpec,
+    SceneParallaxLayers,
+    SceneParallaxSpec,
+    SceneReferenceFrameSpec,
+    SceneResponse,
+    SceneSubjectAlignmentSpec,
+    SceneUpdate,
+)
 from src.schemas.task import TaskCreate, TaskDetailResponse, TaskResponse, TaskUpdate
 from src.schemas.template import ProjectTemplateResponse, ProjectTemplateUpdate
 
@@ -25,6 +44,20 @@ __all__ = [
     "SceneUpdate",
     "SceneResponse",
     "SceneBatchUpdate",
+    "SceneAnimationPose",
+    "SceneAnimationState",
+    "SceneAnimationSpec",
+    "SceneNormalizedRect",
+    "SceneFaceAlignmentSpec",
+    "SceneReferenceFrameSpec",
+    "SceneSubjectAlignmentSpec",
+    "SceneMotionPlan",
+    "SceneMotionPlanPose",
+    "SceneMotionPlanState",
+    "SceneOpticalFlowSpec",
+    "SceneMicroMotionSpec",
+    "SceneParallaxLayers",
+    "SceneParallaxSpec",
     "AssetResponse",
     "TaskCreate",
     "TaskUpdate",

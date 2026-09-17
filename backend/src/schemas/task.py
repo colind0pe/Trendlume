@@ -30,6 +30,7 @@ class TaskCreate(BaseModel):
     voice_id: str | None = None
     voice_speed: float = Field(default=1.0, ge=0.5, le=2.0)
     content_mode: ContentMode | None = None
+    animation_mode: Literal["standard", "enhanced_stop_motion"] = "standard"
     target_scene_count: int = Field(default=8, ge=8, le=20, description="目标分镜数量")
     scheduled_publish: ScheduledPublishConfig | None = None
     template_params: dict[str, Any] = Field(default_factory=dict)
@@ -40,6 +41,7 @@ class TaskCreate(BaseModel):
     research_max_queries: int = Field(default=3, ge=1, le=3)
     research_max_results: int = Field(default=5, ge=1, le=5)
     image_workflow_id: str | None = None
+    image_img2img_workflow_id: str | None = None
     video_workflow_id: str | None = None
 
 

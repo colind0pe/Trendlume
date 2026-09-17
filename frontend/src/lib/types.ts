@@ -30,6 +30,7 @@ export type PublishJobStatus =
   | "uncertain";
 export type VisualMode = "image" | "video";
 export type ContentMode = "generated_image" | "generated_video" | "online_asset" | "static" | "uploaded_asset";
+export type AnimationMode = "standard" | "enhanced_stop_motion";
 export type TemplateType = "image" | "video" | "static" | "asset";
 
 /** Persisted trend feed contract; source ingestion remains an explicit adapter boundary. */
@@ -331,12 +332,119 @@ export interface Scene {
   updated_at: string;
 }
 
+export interface SceneAnimationPose {
+  pose_id?: string | null;
+  asset_id: string;
+  hold: number;
+  description?: string | null;
+  framing?: string | null;
+  prop?: string | null;
+  expression?: string | null;
+  transition?: "stepped" | "blink" | "mouth" | "head" | "expression";
+}
+
+export interface SceneMotionPlanPose {
+  pose_id: string;
+  pose_name: string;
+  pose_description: string;
+  expression_hint: string;
+  framing_hint: string;
+  prop_hint: string;
+  recommended_hold_duration: number;
+  transition: "stepped" | "blink" | "mouth" | "head" | "expression";
+  asset_id?: string | null;
+  status: "pending" | "generating" | "completed" | "failed";
+  error_message?: string | null;
+}
+
+export interface SceneMotionPlan {
+  version: number;
+  mode: "enhanced_stop_motion";
+  source: "llm" | "template";
+  status: "planned" | "generating" | "partial" | "completed" | "failed";
+  style_preset: string;
+  reference_asset_id?: string | null;
+  pose_fps: number;
+  output_fps: 24 | 30;
+  poses: SceneMotionPlanPose[];
+  error_message?: string | null;
+}
+
+export interface SceneMicroMotionSpec {
+  enabled: boolean;
+  blink: boolean;
+  blink_interval_seconds: number;
+  head_bob: number;
+  breathing: number;
+  jitter: number;
+  scale: number;
+  rotate: number;
+  push: number;
+  pan_x: number;
+  pan_y: number;
+}
+
+export interface SceneParallaxLayers {
+  foreground_asset_id?: string | null;
+  background_asset_id?: string | null;
+}
+
+export interface SceneParallaxSpec {
+  enabled: boolean;
+  strength: number;
+  layers: SceneParallaxLayers;
+}
+
+export interface SceneNormalizedRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface SceneFaceAlignmentSpec {
+  enabled: boolean;
+  source_box?: SceneNormalizedRect | null;
+  target_center_x: number;
+  target_center_y: number;
+  target_width: number;
+}
+
+export interface SceneReferenceFrameSpec {
+  enabled: boolean;
+  width: number;
+  height: number;
+  fit: "contain" | "cover";
+  padding_color: "black" | "white";
+  face_alignment: SceneFaceAlignmentSpec;
+}
+
+export interface SceneOpticalFlowSpec {
+  enabled: boolean;
+  transition_seconds: number;
+  max_transitions: number;
+  region?: SceneNormalizedRect | null;
+}
+
+export interface SceneAnimationSpec {
+  mode: "enhanced_stop_motion";
+  reference_asset_id?: string | null;
+  pose_fps: number;
+  output_fps: 24 | 30;
+  poses: SceneAnimationPose[];
+  reference_frame?: SceneReferenceFrameSpec | null;
+  micro_motion: SceneMicroMotionSpec;
+  parallax: SceneParallaxSpec;
+  optical_flow?: SceneOpticalFlowSpec | null;
+}
+
 export interface SceneCreate {
   sequence_index: number;
   narration_text: string;
   visual_prompt: string;
   duration_seconds: number;
   layout_params?: Record<string, any>;
+  animation?: SceneAnimationSpec | null;
   audio_asset_id?: string | null;
   media_asset_id?: string | null;
 }

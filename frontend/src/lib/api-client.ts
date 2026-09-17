@@ -281,6 +281,7 @@ export const api = {
       voice_id?: string | null;
       voice_speed?: number;
       content_mode?: ContentMode;
+      animation_mode?: "standard" | "enhanced_stop_motion";
       material_provider_id?: string | null;
       template_params?: Record<string, any>;
       source_asset_id?: string | null;
@@ -289,6 +290,7 @@ export const api = {
       research_max_queries?: number;
       research_max_results?: number;
       image_workflow_id?: string | null;
+      image_img2img_workflow_id?: string | null;
       video_workflow_id?: string | null;
       target_scene_count?: number;
       scheduled_publish?: ScheduledPublishConfig | null;
@@ -457,6 +459,59 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ prompt_override: promptOverride }),
     }),
+
+  planSceneMotion: (
+    sceneId: string,
+    options: {
+      style_preset?: string | null;
+      reference_asset_id?: string | null;
+      force?: boolean;
+      use_llm?: boolean;
+    } = {}
+  ) =>
+    request<Scene>(`/generation/scenes/${sceneId}/stop-motion/plan`, {
+      method: "POST",
+      body: JSON.stringify(options),
+    }),
+
+  generateSceneStopMotion: (
+    sceneId: string,
+    options: {
+      pose_id?: string | null;
+      style_preset?: string | null;
+      reference_asset_id?: string | null;
+      prompt_override?: string | null;
+      force?: boolean;
+      use_llm?: boolean;
+    } = {}
+  ) =>
+    request<Scene>(`/generation/scenes/${sceneId}/stop-motion/poses`, {
+      method: "POST",
+      body: JSON.stringify(options),
+    }),
+
+  renderSceneStopMotion: (sceneId: string) =>
+    request<Scene>(`/generation/scenes/${sceneId}/stop-motion/render`, {
+      method: "POST",
+    }),
+
+  retrySceneStopMotionPose: (
+    sceneId: string,
+    poseId: string,
+    options: {
+      style_preset?: string | null;
+      reference_asset_id?: string | null;
+      prompt_override?: string | null;
+      use_llm?: boolean;
+    } = {}
+  ) =>
+    request<Scene>(
+      `/generation/scenes/${sceneId}/stop-motion/poses/${encodeURIComponent(poseId)}/retry`,
+      {
+        method: "POST",
+        body: JSON.stringify(options),
+      }
+    ),
 
   // Assets
   listAssets: (projectId?: string, assetType?: string) => {

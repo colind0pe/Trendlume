@@ -29,6 +29,15 @@ async def test_provider_snapshot_freezes_options_but_rotates_credentials(test_se
 
 
 @pytest.mark.asyncio
+async def test_comfyui_snapshot_tracks_reference_workflow(test_session):
+    snapshot = await ProviderManager(test_session).capture_snapshot()
+    image = snapshot['image']
+
+    assert image['provider_name'] == 'comfyui'
+    assert image['reference_workflow_sha256']
+
+
+@pytest.mark.asyncio
 async def test_snapshot_tts_voice_and_default_selection_are_fixed(test_session):
     manager = ProviderManager(test_session)
     snapshot = await manager.capture_snapshot()

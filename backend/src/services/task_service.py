@@ -132,6 +132,10 @@ class TaskService:
         # as a backwards-compatible alias for older clients and tasks.
         legacy_visual_mode = "video" if content_mode == "generated_video" else "image"
 
+        animation_mode = payload.get("animation_mode", data.animation_mode)
+        if animation_mode not in {"standard", "enhanced_stop_motion"}:
+            raise ValidationException("动画模式必须为 standard 或 enhanced_stop_motion。")
+
         source_asset_id = payload.get("source_asset_id", data.source_asset_id)
         if content_mode == "uploaded_asset":
             if not source_asset_id:
@@ -172,12 +176,18 @@ class TaskService:
         image_workflow_id = payload.get(
             "image_workflow_id", data.image_workflow_id
         )
+        image_img2img_workflow_id = payload.get(
+            "image_img2img_workflow_id", data.image_img2img_workflow_id
+        )
         video_workflow_id = payload.get(
             "video_workflow_id", data.video_workflow_id
         )
         try:
             image_workflow_snapshot = workflow_service.get_workflow_snapshot(
                 image_workflow_id, expected_type="image"
+            )
+            image_img2img_workflow_snapshot = workflow_service.get_workflow_snapshot(
+                image_img2img_workflow_id, expected_type="image"
             )
             video_workflow_snapshot = workflow_service.get_workflow_snapshot(
                 video_workflow_id, expected_type="video"
@@ -234,6 +244,7 @@ class TaskService:
             **payload,
             "visual_mode": legacy_visual_mode,
             "content_mode": content_mode,
+            "animation_mode": animation_mode,
             "target_scene_count": target_scene_count,
             "template_id": requested_template_id,
             "template_version": template["version"],
@@ -253,8 +264,10 @@ class TaskService:
             "research_max_queries": research_max_queries,
             "research_max_results": research_max_results,
             "image_workflow_id": image_workflow_id,
+            "image_img2img_workflow_id": image_img2img_workflow_id,
             "video_workflow_id": video_workflow_id,
             "image_workflow_snapshot": image_workflow_snapshot,
+            "image_img2img_workflow_snapshot": image_img2img_workflow_snapshot,
             "video_workflow_snapshot": video_workflow_snapshot,
         }
         if scheduled_publish is None:
@@ -315,6 +328,9 @@ class TaskService:
             new_payload.update({key: value for key, value in old_payload.items() if is_internal(key)})
             changed = {key for key in old_payload.keys() | new_payload.keys()
                        if old_payload.get(key) != new_payload.get(key)}
+            animation_mode = new_payload.get("animation_mode", "standard")
+            if animation_mode not in {"standard", "enhanced_stop_motion"}:
+                raise ValidationException("动画模式必须为 standard 或 enhanced_stop_motion。")
         steps = set()
         if changed & {"bgm_enabled", "bgm_asset_id", "bgm_volume"}:
             steps.update({"composition", "export"})
@@ -322,11 +338,11 @@ class TaskService:
             steps.update({"planning", "voice", "subtitles", "composition", "export"})
         if changed & {"template_id", "template_version", "template_params", "custom_css"}:
             steps.update({"planning", "composition", "export"})
-        if changed & {"content_mode", "visual_mode", "source_asset_id", "image_workflow_id", "video_workflow_id"}:
+        if changed & {"content_mode", "visual_mode", "animation_mode", "source_asset_id", "image_workflow_id", "image_img2img_workflow_id", "video_workflow_id"}:
             steps.update({"planning", "assets", "composition", "export"})
         handled = {"bgm_enabled", "bgm_asset_id", "bgm_volume", "voice_id", "speed", "voice_speed",
-                   "template_id", "template_version", "template_params", "custom_css", "content_mode",
-                   "visual_mode", "source_asset_id", "image_workflow_id", "video_workflow_id"}
+                   "template_id", "template_version", "template_params", "custom_css", "content_mode", "animation_mode",
+                   "visual_mode", "source_asset_id", "image_workflow_id", "image_img2img_workflow_id", "video_workflow_id"}
         if changed - handled or (data.title is not None and data.title != task.title):
             steps.update({"topic", "research", "planning", "script", "storyboard", "assets", "voice", "subtitles", "composition", "export"})
         if steps:

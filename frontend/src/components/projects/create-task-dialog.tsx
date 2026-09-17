@@ -41,6 +41,7 @@ import {
 } from "@/lib/ui-constants";
 import {
   Asset,
+  AnimationMode,
   ContentMode,
   Project,
   SocialAccount,
@@ -114,6 +115,7 @@ export function CreateTaskDialog({
 
   // Content mode & template
   const [contentMode, setContentMode] = React.useState<ContentMode>("generated_image");
+  const [animationMode, setAnimationMode] = React.useState<AnimationMode>("standard");
   const [selectedTemplateId, setSelectedTemplateId] = React.useState("");
   const [templateParams, setTemplateParams] = React.useState<Record<string, any>>({});
   const [sourceAssetId, setSourceAssetId] = React.useState("");
@@ -141,6 +143,7 @@ export function CreateTaskDialog({
   // Advanced: Workflows & Automated publishing
   const [showAdvanced, setShowAdvanced] = React.useState(false);
   const [imageWorkflowId, setImageWorkflowId] = React.useState("");
+  const [imageImg2ImgWorkflowId, setImageImg2ImgWorkflowId] = React.useState("");
   const [videoWorkflowId, setVideoWorkflowId] = React.useState("");
   const [autoSchedulePublish, setAutoSchedulePublish] = React.useState(false);
   const [scheduleAccountId, setScheduleAccountId] = React.useState("");
@@ -235,11 +238,13 @@ export function CreateTaskDialog({
           topic: finalTitle,
           raw_script: rawScript,
           split_mode: splitMode,
-          ...generationOptions,
-          visual_mode: selectedVisualMode,
-          template_params: templateParams,
+            ...generationOptions,
+            visual_mode: selectedVisualMode,
+            animation_mode: animationMode,
+            template_params: templateParams,
           scheduled_publish: scheduledPublish,
           image_workflow_id: imageWorkflowId || null,
+          image_img2img_workflow_id: imageImg2ImgWorkflowId || null,
           video_workflow_id: videoWorkflowId || null,
         },
         visual_mode: selectedVisualMode,
@@ -250,10 +255,12 @@ export function CreateTaskDialog({
         voice_id: taskVoiceId,
         voice_speed: taskSpeed,
         content_mode: contentMode,
+        animation_mode: animationMode,
         template_params: templateParams,
         source_asset_id: contentMode === "uploaded_asset" ? sourceAssetId || null : null,
         enable_research: enableResearch,
         image_workflow_id: imageWorkflowId || null,
+        image_img2img_workflow_id: imageImg2ImgWorkflowId || null,
         video_workflow_id: videoWorkflowId || null,
         target_scene_count: targetSceneCount,
         scheduled_publish: scheduledPublish,
@@ -267,6 +274,7 @@ export function CreateTaskDialog({
       setTaskTitle("");
       setRawScript("");
       setSourceAssetId("");
+      setAnimationMode("standard");
       setTargetSceneCount(SCENE_COUNT_MIN);
       setAutoSchedulePublish(false);
       setScheduleAccountId("");
@@ -660,7 +668,7 @@ export function CreateTaskDialog({
 
                 {/* Visual Mode & Template */}
                 <div className="space-y-2.5 pt-3 border-t border-border">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div className="space-y-1.5">
                       <label htmlFor="studio-content-mode" className="text-sm font-medium text-foreground">
                         画面来源
@@ -672,6 +680,10 @@ export function CreateTaskDialog({
                         onChange={(e) => {
                           const next = e.target.value as ContentMode;
                           setContentMode(next);
+                          if (next !== "generated_image" && animationMode === "enhanced_stop_motion") {
+                            setAnimationMode("standard");
+                            toast("当前画面来源不支持多状态动画，已切回单画面。", "warning");
+                          }
                         }}
                         className="h-9 text-sm"
                       >
@@ -687,6 +699,34 @@ export function CreateTaskDialog({
                       </Select>
                       <p id="studio-content-mode-description" className="text-xs text-muted-foreground">
                         {CONTENT_MODE_SPECS[contentMode].selectionHint}
+                      </p>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label htmlFor="studio-animation-mode" className="text-sm font-medium text-foreground">
+                        动画方式
+                      </label>
+                      <Select
+                        id="studio-animation-mode"
+                        value={animationMode}
+                        aria-describedby="studio-animation-mode-description"
+                        onChange={(e) => {
+                          const next = e.target.value as AnimationMode;
+                          setAnimationMode(next);
+                        }}
+                        className="h-9 text-sm"
+                      >
+                        <option value="standard">单画面</option>
+                        <option value="enhanced_stop_motion" disabled={contentMode !== "generated_image"}>
+                          多状态动画（推荐）
+                        </option>
+                      </Select>
+                      <p id="studio-animation-mode-description" className="text-xs text-muted-foreground">
+                        {animationMode === "enhanced_stop_motion"
+                          ? "自动规划并生成 3–6 个连续状态，适合人物、商品、物体、场景和图文。"
+                          : contentMode === "generated_image"
+                          ? "每个分镜使用一张图片。需要连续状态时可切换此方式。"
+                          : "当前画面来源使用单画面；多状态动画仅适用于 AI 生成图片。"}
                       </p>
                     </div>
 
@@ -867,7 +907,7 @@ export function CreateTaskDialog({
                     <div className="flex items-center gap-2">
                       <Settings2 className="h-4 w-4 text-primary" />
                       <span>高级配置与自动化</span>
-                      {(Boolean(imageWorkflowId) || Boolean(videoWorkflowId) || autoSchedulePublish) && (
+                      {(Boolean(imageWorkflowId) || Boolean(imageImg2ImgWorkflowId) || Boolean(videoWorkflowId) || autoSchedulePublish) && (
                         <span className="h-2 w-2 rounded-full bg-primary" />
                       )}
                     </div>
@@ -897,6 +937,34 @@ export function CreateTaskDialog({
                               </option>
                             ))}
                         </Select>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label htmlFor="studio-img2img-workflow" className="text-xs text-muted-foreground">
+                          ComfyUI 图生图微调工作流
+                        </label>
+                        <Select
+                          id="studio-img2img-workflow"
+                          value={imageImg2ImgWorkflowId}
+                          onChange={(e) => setImageImg2ImgWorkflowId(e.target.value)}
+                          disabled={
+                            contentMode !== "generated_image" ||
+                            animationMode !== "enhanced_stop_motion"
+                          }
+                          className="h-9 text-sm"
+                        >
+                          <option value="">不启用两阶段图生图微调</option>
+                          {workflows
+                            .filter((w) => w.type === "image")
+                            .map((w) => (
+                              <option key={w.id} value={w.id}>
+                                {w.name}
+                              </option>
+                            ))}
+                        </Select>
+                        <p className="text-[11px] leading-4 text-muted-foreground">
+                          仅增强定格动画生效：每个场景只生成一次基础图，再用此工作流为其他状态做图生图微调。
+                        </p>
                       </div>
 
                       <div className="space-y-1.5">

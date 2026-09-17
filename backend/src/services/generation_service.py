@@ -6,9 +6,11 @@ import time
 import uuid
 import zlib
 from datetime import UTC, datetime
+from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from loguru import logger
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -39,7 +41,13 @@ from src.schemas.generation import (
     format_untrusted_prompt_data,
     normalize_generated_title,
 )
-from src.schemas.scene import SceneCreate
+from src.schemas.scene import (
+    SceneAnimationSpec,
+    SceneCreate,
+    SceneMotionPlan,
+    SceneMotionPlanState,
+    SceneReferenceFrameSpec,
+)
 from src.services.asset_service import AssetService
 from src.services.media_probe import media_probe_service
 from src.services.prompt_observability import PromptCallContext, PromptObservationRecorder
@@ -47,6 +55,7 @@ from src.services.prompt_registry import prompt_registry
 from src.services.provider_manager import ProviderManager
 from src.services.scene_service import SceneService
 from src.services.template_catalog import template_catalog
+from src.services.workflow_execution import assert_task_editable
 from src.storage.local_storage import LocalStorageService, local_storage
 
 ONLINE_ASSET_VISUAL_PROMPT = "online_asset_search_context"
@@ -189,6 +198,7 @@ PROMPT_CALL_BUDGETS = {
     "narration": {"max_calls": 1, "temperature": 0.7, "max_tokens": 2500},
     "visual_single": {"max_calls": 1, "temperature": 0.5, "max_tokens": 500},
     "metadata_regenerate": {"max_calls": 1, "temperature": 0.2, "max_tokens": 1000},
+    "motion_plan": {"max_calls": 1, "temperature": 0.2, "max_tokens": 1800},
 }
 
 
@@ -1834,6 +1844,12 @@ class GenerationService:
                 visual_prompt=sc.visual_prompt,
                 layout_params={
                     **({"badge_text": sc.badge_text} if sc.badge_text else {}),
+                    **(
+                        {"animation_mode": "enhanced_stop_motion"}
+                        if (task.input_payload or {}).get("animation_mode")
+                        == "enhanced_stop_motion"
+                        else {}
+                    ),
                 },
             )
             for i, sc in enumerate(script.scenes)
@@ -1841,6 +1857,975 @@ class GenerationService:
 
         await self.scene_service.replace_task_scenes(task_id, scenes_data)
         return await self.task_repo.get_with_scenes(task_id)  # type: ignore
+
+    @staticmethod
+    def _stop_motion_plan_count(duration_seconds: float) -> int:
+        """Choose a small, predictable number of visual states for one Scene."""
+        duration = max(0.1, float(duration_seconds or 0.0))
+        return min(6, max(3, int(round(duration / 1.5))))
+
+    @classmethod
+    def build_stop_motion_plan(
+        cls,
+        *,
+        narration_text: str,
+        visual_prompt: str,
+        duration_seconds: float,
+        style_preset: str = "cinematic_real",
+        reference_asset_id: str | None = None,
+        pose_count: int | None = None,
+    ) -> SceneMotionPlan:
+        """Build the deterministic fallback used when a planning LLM is unavailable."""
+        source = " ".join((visual_prompt or narration_text or "场景主体").split()).strip()
+        source = source[:180] or "场景主体"
+        count = min(6, max(3, int(pose_count))) if pose_count is not None else cls._stop_motion_plan_count(duration_seconds)
+        target_duration = max(0.3, float(duration_seconds or 0.0))
+        default_hold = round(target_duration / count, 2)
+        holds = [max(0.1, default_hold) for _ in range(count)]
+        holds[-1] = max(0.1, round(target_duration - sum(holds[:-1]), 2))
+        phase_names = {
+            3: ("起始建立", "动作展开", "收束定格"),
+            4: ("起始建立", "动作准备", "动作展开", "收束定格"),
+            5: ("起始建立", "动作准备", "动作展开", "反应停留", "收束定格"),
+            6: ("起始建立", "动作准备", "动作展开", "动作定格", "反应停留", "收束定格"),
+        }[count]
+        motions = ("稳定建立", "轻微变化", "变化展开", "重点停留", "自然收束", "稳定定格")
+        cameras = ("中景，主体或核心元素完整入镜", "中近景，突出状态变化", "固定镜头，保持空间连续")
+        element_hint = "沿用场景中的主体、文字、商品或图形元素，不新增无关内容。"
+        states = []
+        for index, phase_name in enumerate(phase_names):
+            # Keep semantic body/prop changes stepped. Reserve the local
+            # continuity pass for an explicitly restrained state between them.
+            transition = (
+                "expression"
+                if 0 < index < count - 1 and index % 2 == 1
+                else "stepped"
+            )
+            if transition == "expression":
+                state_description = (
+                    f"{phase_name}：表现“{source}”中的局部连续状态；保持主体轮廓、镜头、"
+                    "主要元素、遮挡和位置不变，只改变局部反应、视线或重点区域状态。"
+                )
+                motion_hint = "局部连续变化，不改变主体轮廓或主要元素关系"
+                camera_hint = "固定镜头，保持同一景别与主体位置"
+            else:
+                state_description = (
+                    f"{phase_name}：表现“{source}”中的视觉状态，"
+                    "保持主体、元素、材质、色彩、图层和环境连续。"
+                )
+                motion_hint = motions[index % len(motions)]
+                camera_hint = cameras[index % len(cameras)]
+            states.append(
+                SceneMotionPlanState(
+                    state_id=f"pose_{index + 1}",
+                    state_name=phase_name,
+                    state_description=state_description,
+                    motion_hint=motion_hint,
+                    camera_hint=camera_hint,
+                    element_hint=element_hint,
+                    recommended_hold_duration=holds[index],
+                    transition=transition,
+                )
+            )
+        return SceneMotionPlan(
+            source="template",
+            style_preset=style_preset or "cinematic_real",
+            reference_asset_id=reference_asset_id,
+            states=states,
+        )
+
+    @staticmethod
+    def _stop_motion_default_optical_flow(plan: SceneMotionPlan) -> dict[str, Any] | None:
+        """Enable local continuity for the planner's explicitly small changes."""
+        if not any(
+            state.transition in {"blink", "mouth", "head", "expression"}
+            for state in plan.states[1:]
+        ):
+            return None
+        return {
+            "enabled": True,
+            "transition_seconds": 0.18,
+            "max_transitions": 2,
+            "region": {
+                "x": 0.28,
+                "y": 0.08,
+                "width": 0.44,
+                "height": 0.30,
+            },
+        }
+
+    @classmethod
+    def _normalize_llm_motion_plan(
+        cls,
+        plan: SceneMotionPlan,
+        *,
+        narration_text: str,
+        visual_prompt: str,
+        duration_seconds: float,
+        style_preset: str,
+        reference_asset_id: str | None,
+    ) -> SceneMotionPlan:
+        """Keep LLM wording while enforcing stable IDs and the local state contract."""
+        fallback = cls.build_stop_motion_plan(
+            narration_text=narration_text,
+            visual_prompt=visual_prompt,
+            duration_seconds=duration_seconds,
+            style_preset=style_preset,
+            reference_asset_id=reference_asset_id,
+        )
+        if len(plan.states) != len(fallback.states):
+            raise ValueError(
+                f"关键状态数量必须为 {len(fallback.states)} 项，实际为 {len(plan.states)} 项。"
+            )
+        states = []
+        for index, (item, default) in enumerate(zip(plan.states, fallback.states, strict=True)):
+            state_name = str(item.state_name or "").strip() or default.state_name
+            states.append(
+                SceneMotionPlanState(
+                    state_id=f"pose_{index + 1}",
+                    state_name=state_name,
+                    state_description=(item.state_description or default.state_description).strip(),
+                    motion_hint=(item.motion_hint or default.motion_hint).strip(),
+                    camera_hint=(item.camera_hint or default.camera_hint).strip(),
+                    element_hint=(item.element_hint or default.element_hint).strip(),
+                    recommended_hold_duration=item.recommended_hold_duration
+                    or default.recommended_hold_duration,
+                    transition=item.transition,
+                )
+            )
+        return SceneMotionPlan(
+            source="llm",
+            style_preset=style_preset,
+            reference_asset_id=reference_asset_id,
+            pose_fps=fallback.pose_fps,
+            output_fps=fallback.output_fps,
+            states=states,
+        )
+
+    async def _get_scene_image_asset(self, asset_id: str, task: TaskModel, label: str):
+        asset = await self.asset_service.asset_repo.get_by_id(asset_id)
+        if not asset:
+            raise ValidationException(f"{label}素材不存在：{asset_id}")
+        if asset.asset_type != AssetType.IMAGE.value:
+            raise ValidationException(f"{label}素材必须是图片：{asset.file_name}")
+        if asset.project_id not in {None, task.project_id}:
+            raise ValidationException(f"{label}素材不属于当前项目：{asset.file_name}")
+        path = self.storage.get_path(asset.file_path)
+        if not path.exists() or path.stat().st_size == 0:
+            raise ValidationException(f"{label}文件不存在：{asset.file_name}")
+        return asset
+
+    async def _stop_motion_reference_context(
+        self, reference_asset_id: str | None, task: TaskModel
+    ) -> str:
+        if not reference_asset_id:
+            return ""
+        asset = await self._get_scene_image_asset(reference_asset_id, task, "主体参考图")
+        metadata = dict(asset.metadata_json or {})
+        hint = metadata.get("prompt") or metadata.get("description") or ""
+        details = [f"参考图文件名：{asset.file_name}", f"参考图 Asset ID：{asset.id}"]
+        if hint:
+            details.append(f"参考图已有描述：{str(hint)[:600]}")
+        return format_untrusted_prompt_data(
+            "；".join(details), label="stop_motion_reference", max_chars=1600
+        )
+
+    @staticmethod
+    async def _call_image_provider(
+        image_provider: Any,
+        prompt: str,
+        *,
+        aspect_ratio: str,
+        workflow: str | None,
+        width: int,
+        height: int,
+        style_preset: str | None = None,
+        reference_image_path: str | None = None,
+        reference_image_options: dict[str, Any] | None = None,
+        require_workflow: bool = False,
+    ):
+        """Call old and current ImageProvider implementations compatibly."""
+        full_kwargs = {
+            "prompt": prompt,
+            "aspect_ratio": aspect_ratio,
+            "workflow": workflow,
+            "width": width,
+            "height": height,
+        }
+        if reference_image_path:
+            full_kwargs["reference_image_path"] = reference_image_path
+        if reference_image_options is not None:
+            full_kwargs["reference_image_options"] = reference_image_options
+        attempts = []
+        if style_preset:
+            attempts.append({**full_kwargs, "style_preset": style_preset})
+        attempts.append(full_kwargs)
+        if reference_image_options is not None:
+            # Providers that already support reference images may not yet
+            # understand the optional framing contract.
+            without_options = dict(full_kwargs)
+            without_options.pop("reference_image_options", None)
+            if style_preset:
+                attempts.append({**without_options, "style_preset": style_preset})
+            attempts.append(without_options)
+        if reference_image_path:
+            # Never retry without an explicitly requested reference image: doing
+            # so would silently turn image-to-image into text-to-image.
+            minimal_reference = {
+                "prompt": prompt,
+                "aspect_ratio": aspect_ratio,
+                "reference_image_path": reference_image_path,
+            }
+            if workflow is not None:
+                minimal_reference["workflow"] = workflow
+            if reference_image_options is not None:
+                attempts.append({**minimal_reference, "reference_image_options": reference_image_options})
+            attempts.append(minimal_reference)
+            if workflow is not None and not require_workflow:
+                no_workflow_reference = dict(minimal_reference)
+                no_workflow_reference.pop("workflow", None)
+                if reference_image_options is not None:
+                    attempts.append(
+                        {
+                            **no_workflow_reference,
+                            "reference_image_options": reference_image_options,
+                        }
+                    )
+                attempts.append(no_workflow_reference)
+        else:
+            attempts.append(
+                {"prompt": prompt, "aspect_ratio": aspect_ratio, "workflow": workflow}
+            )
+            if workflow is None or not require_workflow:
+                attempts.append({"prompt": prompt, "aspect_ratio": aspect_ratio})
+        last_error = None
+        for kwargs in attempts:
+            try:
+                return await image_provider.generate_image(**kwargs)
+            except TypeError as exc:
+                last_error = exc
+        if last_error:
+            if reference_image_path:
+                raise ValidationException("当前图片 Provider 不支持 reference image 输入。") from last_error
+            raise last_error
+        raise ValidationException("图片 Provider 调用失败。")
+
+    @staticmethod
+    def _stop_motion_reference_frame_options(
+        raw_animation: dict[str, Any],
+        *,
+        width: int,
+        height: int,
+        reference_metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Resolve fixed framing without adding columns or a second renderer."""
+        raw_frame = raw_animation.get("reference_frame")
+        frame = dict(raw_frame) if isinstance(raw_frame, dict) else {}
+        frame.setdefault("enabled", True)
+        frame.setdefault("width", width)
+        frame.setdefault("height", height)
+
+        face = frame.get("face_alignment")
+        face = dict(face) if isinstance(face, dict) else {}
+        metadata = reference_metadata or {}
+        if "source_box" not in face:
+            for key in ("face_box", "face_bbox", "source_face_box"):
+                candidate = metadata.get(key)
+                if isinstance(candidate, dict):
+                    face["source_box"] = candidate
+                    break
+        if "source_box" in face:
+            face.setdefault("enabled", True)
+        frame["face_alignment"] = face
+        return SceneReferenceFrameSpec.model_validate(frame).model_dump(
+            exclude_none=True, by_alias=True
+        )
+
+    @staticmethod
+    def _stop_motion_pose_prompt(
+        scene: SceneModel,
+        item: SceneMotionPlanState,
+        *,
+        pose_index: int,
+        total_poses: int,
+        style_preset: str,
+        reference_context: str,
+        reference_frame: dict[str, Any] | None = None,
+        prompt_override: str | None = None,
+    ) -> str:
+        prompt = (
+            "生成动画增强分镜中的一张关键状态静态图。"
+            "内容可以是人物、商品、物体、场景、图文或信息图；必须保持主体、元素、材质、"
+            "主色、光线、图层、背景和画幅连续，只呈现当前状态，不把多个时间点合并到一张图。"
+            "若场景本身包含文字或信息图，应保持其结构一致；不要额外添加字幕、标志、水印或签名。\n"
+            f"这是第 {pose_index + 1}/{total_poses} 张关键状态图。\n"
+            f"场景旁白：{format_untrusted_prompt_data(scene.narration_text, label='scene_narration', max_chars=1600)}\n"
+            f"场景画面提示词：{format_untrusted_prompt_data(scene.visual_prompt, label='scene_visual_prompt', max_chars=1800)}\n"
+            f"状态名称：{format_untrusted_prompt_data(item.state_name, label='state_name', max_chars=200)}\n"
+            f"状态说明：{format_untrusted_prompt_data(item.state_description, label='state_description', max_chars=900)}\n"
+            f"运动提示：{format_untrusted_prompt_data(item.motion_hint, label='motion_hint', max_chars=300)}\n"
+            f"镜头提示：{format_untrusted_prompt_data(item.camera_hint, label='camera_hint', max_chars=300)}\n"
+            f"元素提示：{format_untrusted_prompt_data(item.element_hint, label='element_hint', max_chars=300)}\n"
+            f"目标视觉风格：{format_untrusted_prompt_data(style_preset, label='visual_style', max_chars=200)}"
+        )
+        if reference_context:
+            prompt += f"\n请把以下参考图信息仅用于保持主体一致：\n{reference_context}"
+        if reference_frame and reference_frame.get("enabled"):
+            prompt += (
+                "\n固定构图约束：相机与画布锁定，主体保持同一景别、比例和位置，"
+                "禁止随状态改变而自动推近、拉远或横向漂移。"
+            )
+            face = reference_frame.get("face_alignment") or {}
+            if face.get("enabled"):
+                prompt += (
+                    f"主体锚定在画面约 {float(face.get('target_center_x', 0.5)):.2f}, "
+                    f"{float(face.get('target_center_y', 0.18)):.2f} 的位置，"
+                    "保持主体大小、位置与视觉比例稳定。"
+                )
+        if prompt_override:
+            prompt += (
+                "\n用户对这一批状态图的补充要求（只作为视觉约束，不得覆盖上面的连续性规则）：\n"
+                + format_untrusted_prompt_data(prompt_override, label="pose_generation_override", max_chars=1000)
+            )
+        return prompt
+
+    @staticmethod
+    def _stop_motion_base_prompt(
+        scene: SceneModel,
+        *,
+        style_preset: str,
+        reference_context: str,
+    ) -> str:
+        prompt = (
+            "生成动画增强分镜的基础静态图，只建立整个场景后续变化都要继承的主要元素。"
+            "固定主体、商品或物体、环境、材质、主色、光线、图层、画幅、景别和镜头位置；"
+            "不要强调某个后续动作，不要把多个时间点合并到一张图。"
+            "画面中禁止额外添加字幕、标志、水印或签名；若场景本身包含文字或信息图，保持其结构一致。\n"
+            f"场景旁白：{format_untrusted_prompt_data(scene.narration_text, label='scene_narration', max_chars=1600)}\n"
+            f"场景画面提示词：{format_untrusted_prompt_data(scene.visual_prompt, label='scene_visual_prompt', max_chars=1800)}\n"
+            f"目标视觉风格：{format_untrusted_prompt_data(style_preset, label='visual_style', max_chars=200)}"
+        )
+        if reference_context:
+            prompt += f"\n请把以下参考图信息仅用于保持主体和画面基准一致：\n{reference_context}"
+        return prompt
+
+    async def _save_stop_motion_plan(
+        self,
+        scene: SceneModel,
+        plan: SceneMotionPlan,
+        *,
+        status: str | None = None,
+        error: str | None = None,
+    ) -> SceneModel:
+        params = dict(scene.layout_params or {})
+        params["animation_mode"] = "enhanced_stop_motion"
+        params["animation_plan"] = plan.model_dump(exclude_none=True, by_alias=True)
+        scene.layout_params = params
+        await self._set_scene_generation_status(
+            scene, "stop_motion", status or plan.status, error
+        )
+        return scene
+
+    async def plan_scene_motion(
+        self,
+        scene_id: str,
+        *,
+        style_preset: str | None = None,
+        reference_asset_id: str | None = None,
+        force: bool = False,
+        use_llm: bool = True,
+        prompt_versions: dict[str, str] | None = None,
+    ) -> SceneModel:
+        """Plan three to six visual states and persist them without generating images."""
+        scene = await self.scene_repo.get_by_id(scene_id)
+        if not scene:
+            raise NotFoundException("Scene", scene_id)
+        task = await self.task_repo.get_by_id(scene.task_id)
+        if not task:
+            raise NotFoundException("Task", scene.task_id)
+
+        if not self.execution_context:
+            await assert_task_editable(self.session, task.id)
+
+        layout = dict(scene.layout_params or {})
+        layout_reference = layout.get("animation_reference_asset_id") or layout.get(
+            "reference_asset_id"
+        )
+        existing_plan = None
+        if layout.get("animation_plan") and not force:
+            try:
+                existing_plan = SceneMotionPlan.model_validate(layout["animation_plan"])
+            except ValidationError:
+                existing_plan = None
+            if existing_plan and (
+                (reference_asset_id or layout_reference) is None
+                or (reference_asset_id or layout_reference) == existing_plan.reference_asset_id
+            ):
+                return scene
+            force = True
+
+        payload = task.input_payload or {}
+        raw_animation = layout.get("animation")
+        current_animation = None
+        if raw_animation and not force:
+            try:
+                current_animation = SceneAnimationSpec.model_validate(raw_animation)
+            except ValidationError:
+                current_animation = None
+        resolved_reference = (
+            reference_asset_id
+            or (current_animation.reference_asset_id if current_animation else None)
+            or layout_reference
+            or (existing_plan.reference_asset_id if existing_plan else None)
+            or payload.get("reference_asset_id")
+            or payload.get("reference_image_asset_id")
+        )
+        if resolved_reference:
+            await self._get_scene_image_asset(resolved_reference, task, "主体参考图")
+        resolved_style = style_preset or payload.get("style_preset") or "cinematic_real"
+
+        await self._set_scene_generation_status(scene, "stop_motion", "generating")
+        try:
+            if current_animation:
+                plan = self.build_stop_motion_plan(
+                    narration_text=scene.narration_text,
+                    visual_prompt=scene.visual_prompt,
+                    duration_seconds=scene.duration_seconds,
+                    style_preset=resolved_style,
+                    reference_asset_id=resolved_reference,
+                    pose_count=len(current_animation.states),
+                ).model_copy(
+                    update={
+                        "pose_fps": current_animation.pose_fps,
+                        "output_fps": current_animation.output_fps,
+                    }
+                )
+                mapped_states = []
+                for planned, current in zip(plan.states, current_animation.states, strict=True):
+                    mapped_states.append(
+                        planned.model_copy(
+                            update={
+                                "state_id": current.state_id or planned.state_id,
+                                "state_description": current.state or planned.state_description,
+                                "motion_hint": current.motion or planned.motion_hint,
+                                "camera_hint": current.camera or planned.camera_hint,
+                                "element_hint": current.elements or planned.element_hint,
+                                "recommended_hold_duration": current.hold,
+                                "transition": current.transition,
+                                "asset_id": current.asset_id,
+                                "status": "completed",
+                            }
+                        )
+                    )
+                plan = plan.model_copy(
+                    update={"status": "completed", "states": mapped_states}
+                )
+            else:
+                plan = None
+                if use_llm:
+                    try:
+                        llm_provider = await self._get_llm_provider()
+                        reference_context = await self._stop_motion_reference_context(
+                            resolved_reference, task
+                        )
+                        expected_count = self._stop_motion_plan_count(scene.duration_seconds)
+                        prompt = (
+                            "请为一个短视频 Scene 规划关键视觉状态。内容可包含人物、商品、物体、场景、"
+                            "图文或信息图。只返回 JSON 对象，包含 states 数组，"
+                            f"必须恰好返回 {expected_count} 项并按时间顺序排列；每项包含 state_id、state_name、"
+                            "state_description、motion_hint、camera_hint、element_hint、recommended_hold_duration 和 transition。"
+                            "transition 只能是 stepped、blink、mouth、head 或 expression；第一个状态必须是 stepped。"
+                            "只有在相邻状态保持同一镜头、轮廓、服装、手持物、遮挡和主要元素，只改变局部视线、眼睑、"
+                            "嘴部或小幅局部反应时，才使用 blink、mouth、head 或 expression；其余变化使用 stepped。"
+                            "不要生成图片，不要加入场景文本未支持的主体或元素。\n"
+                            f"旁白：{format_untrusted_prompt_data(scene.narration_text, label='scene_narration', max_chars=1800)}\n"
+                            f"画面提示词：{format_untrusted_prompt_data(scene.visual_prompt, label='scene_visual_prompt', max_chars=2000)}\n"
+                            f"Scene 时长：{float(scene.duration_seconds or 0):.2f} 秒\n"
+                            f"视觉风格：{format_untrusted_prompt_data(resolved_style, label='visual_style', max_chars=200)}"
+                        )
+                        if reference_context:
+                            prompt += f"\n主体一致性参考信息：\n{reference_context}"
+                        llm_plan = await self._llm_structured(
+                            llm_provider,
+                            "animation.motion_plan",
+                            prompt,
+                            SceneMotionPlan,
+                            prompt_versions=prompt_versions or payload.get("prompt_versions"),
+                            system_prompt=(
+                                "你是稳定、克制的分镜规划器。每项必须是可由单张静态图片表达的视觉状态，"
+                                "围绕 subject、element、state、motion、camera、layer 描述变化，"
+                                "保持主体、元素、镜头和图层连续；先判断相邻状态的转场风险，输出 JSON，不要输出解释。"
+                            ),
+                            temperature=PROMPT_CALL_BUDGETS["motion_plan"]["temperature"],
+                            max_tokens=PROMPT_CALL_BUDGETS["motion_plan"]["max_tokens"],
+                        )
+                        plan = self._normalize_llm_motion_plan(
+                            llm_plan,
+                            narration_text=scene.narration_text,
+                            visual_prompt=scene.visual_prompt,
+                            duration_seconds=scene.duration_seconds,
+                            style_preset=resolved_style,
+                            reference_asset_id=resolved_reference,
+                        )
+                    except Exception as exc:
+                        self._record_prompt_downgrade(
+                            "motion_plan",
+                            1,
+                            f"结构化规划失败：{redact_sensitive_text(str(exc)) or type(exc).__name__}",
+                        )
+                        await self._mark_prompt_fallback(
+                            getattr(self, "_last_prompt_context", None)
+                        )
+                        logger.warning(
+                            "Stop-motion plan fell back to deterministic template for scene {}: {}",
+                            scene.id,
+                            redact_sensitive_text(str(exc)) or type(exc).__name__,
+                        )
+                if plan is None:
+                    plan = self.build_stop_motion_plan(
+                        narration_text=scene.narration_text,
+                        visual_prompt=scene.visual_prompt,
+                        duration_seconds=scene.duration_seconds,
+                        style_preset=resolved_style,
+                        reference_asset_id=resolved_reference,
+                    )
+
+            if force:
+                layout.pop("animation", None)
+                scene.layout_params = layout
+            plan.error_message = None
+            await self._save_stop_motion_plan(scene, plan, status=plan.status)
+            return scene
+        except Exception as exc:
+            await self._set_scene_generation_status(
+                scene,
+                "stop_motion",
+                "failed",
+                str(exc),
+            )
+            if isinstance(exc, ValidationException):
+                raise
+            raise ValidationException(f"关键状态规划失败：{exc}") from exc
+
+    async def generate_scene_stop_motion_poses(
+        self,
+        scene_id: str,
+        *,
+        pose_id: str | None = None,
+        style_preset: str | None = None,
+        reference_asset_id: str | None = None,
+        prompt_override: str | None = None,
+        force: bool = False,
+        use_llm: bool = True,
+        prompt_versions: dict[str, str] | None = None,
+    ) -> SceneModel:
+        """Generate missing or selected visual-state images and bind their Asset IDs."""
+        scene = await self.scene_repo.get_by_id(scene_id)
+        if not scene:
+            raise NotFoundException("Scene", scene_id)
+        task = await self.task_repo.get_by_id(scene.task_id)
+        if not task:
+            raise NotFoundException("Task", scene.task_id)
+        if not self.execution_context:
+            await assert_task_editable(self.session, task.id)
+
+        raw_layout = dict(scene.layout_params or {})
+        raw_plan = raw_layout.get("animation_plan")
+        try:
+            plan = SceneMotionPlan.model_validate(raw_plan) if raw_plan else None
+        except ValidationError:
+            plan = None
+        if plan is None or (force and not raw_plan):
+            scene = await self.plan_scene_motion(
+                scene_id,
+                style_preset=style_preset,
+                reference_asset_id=reference_asset_id,
+                force=force and not raw_plan,
+                use_llm=use_llm,
+                prompt_versions=prompt_versions,
+            )
+            scene = await self.scene_repo.get_by_id(scene_id)
+            raw_layout = dict(scene.layout_params or {})
+            plan = SceneMotionPlan.model_validate(raw_layout.get("animation_plan"))
+
+        animation_options = dict(raw_layout.get("animation") or {})
+        layout_has_reference = "animation_reference_asset_id" in raw_layout
+        layout_reference = raw_layout.get("animation_reference_asset_id")
+        if reference_asset_id is not None:
+            resolved_reference = reference_asset_id
+        elif layout_has_reference:
+            resolved_reference = layout_reference
+        else:
+            resolved_reference = plan.reference_asset_id
+        reference_image_path = None
+        reference_metadata: dict[str, Any] = {}
+        if resolved_reference:
+            reference_asset = await self._get_scene_image_asset(resolved_reference, task, "主体参考图")
+            reference_image_path = str(self.storage.get_path(reference_asset.file_path))
+            reference_metadata = dict(reference_asset.metadata_json or {})
+        resolved_style = style_preset or plan.style_preset or "cinematic_real"
+
+        if resolved_reference != plan.reference_asset_id:
+            plan = plan.model_copy(
+                update={
+                    "reference_asset_id": resolved_reference,
+                    "status": "planned",
+                    "error_message": None,
+                    "states": [
+                        item.model_copy(
+                            update={"asset_id": None, "status": "pending", "error_message": None}
+                        )
+                        for item in plan.states
+                    ],
+                }
+            )
+
+        if pose_id:
+            if not any(item.state_id == pose_id for item in plan.states):
+                raise ValidationException(f"关键状态不存在：{pose_id}")
+            target_ids = {pose_id}
+        else:
+            target_ids = set()
+            for item in plan.states:
+                if force or not item.asset_id or item.status != "completed":
+                    target_ids.add(item.state_id)
+                    continue
+                try:
+                    await self._get_scene_image_asset(item.asset_id, task, "状态图")
+                except ValidationException:
+                    target_ids.add(item.state_id)
+
+        if not target_ids:
+            if plan.status == "completed" and raw_layout.get("animation"):
+                return scene
+            target_ids = set()
+
+        try:
+            image_provider = await self._get_image_provider()
+            if not image_provider:
+                error = "未配置可用的图片 Provider，无法生成关键状态图。"
+                plan = plan.model_copy(update={"status": "failed", "error_message": error})
+                await self._save_stop_motion_plan(scene, plan, status="failed", error=error)
+                raise ValidationException(error)
+            project = await self.project_repo.get_by_id(task.project_id)
+            aspect_ratio = project.aspect_ratio if project else "9:16"
+            workflow_snapshot = (task.input_payload or {}).get("image_workflow_snapshot") or {}
+            workflow_target = workflow_snapshot.get("path") or (task.input_payload or {}).get(
+                "image_workflow_id"
+            )
+            img2img_workflow_snapshot = (
+                (task.input_payload or {}).get("image_img2img_workflow_snapshot") or {}
+            )
+            img2img_workflow_target = img2img_workflow_snapshot.get("path") or (
+                task.input_payload or {}
+            ).get("image_img2img_workflow_id")
+            shared_base_generation = bool(img2img_workflow_target)
+            base_asset = None
+            base_reference_path = None
+            if shared_base_generation:
+                first_state = plan.states[0]
+                reuse_existing_base = bool(
+                    first_state.asset_id
+                    and first_state.status == "completed"
+                    and not (force and pose_id is None)
+                    and first_state.state_id != pose_id
+                )
+                if reuse_existing_base:
+                    try:
+                        base_asset = await self._get_scene_image_asset(
+                            first_state.asset_id, task, "场景基础图"
+                        )
+                    except ValidationException:
+                        base_asset = None
+                if base_asset:
+                    base_reference_path = str(self.storage.get_path(base_asset.file_path))
+                else:
+                    # The first state is also the durable scene base. This lets
+                    # later missing states and single-state retries reuse it.
+                    target_ids.add(first_state.state_id)
+            aspect_ratio, media_width, media_height = self._resolve_template_media(
+                task, aspect_ratio
+            )
+            reference_context = await self._stop_motion_reference_context(
+                resolved_reference, task
+            )
+            reference_image_options = (
+                self._stop_motion_reference_frame_options(
+                    animation_options,
+                    width=media_width,
+                    height=media_height,
+                    reference_metadata=reference_metadata,
+                )
+                if reference_image_path
+                else None
+            )
+            plan = plan.model_copy(
+                update={
+                    "style_preset": resolved_style,
+                    "reference_asset_id": resolved_reference,
+                    "status": "generating" if target_ids else plan.status,
+                    "error_message": None,
+                    "states": [
+                        item.model_copy(
+                            update={
+                                "status": "generating" if item.state_id in target_ids else item.status,
+                                "error_message": None if item.state_id in target_ids else item.error_message,
+                            }
+                        )
+                        for item in plan.states
+                    ],
+                }
+            )
+            if target_ids:
+                raw_layout.pop("animation", None)
+                scene.layout_params = raw_layout
+            await self._save_stop_motion_plan(
+                scene, plan, status="generating" if target_ids else plan.status
+            )
+
+            for index, item in enumerate(plan.states):
+                if item.state_id not in target_ids:
+                    continue
+                is_scene_base = shared_base_generation and index == 0
+                prompt = (
+                    self._stop_motion_base_prompt(
+                        scene,
+                        style_preset=resolved_style,
+                        reference_context=reference_context,
+                    )
+                    if is_scene_base
+                    else self._stop_motion_pose_prompt(
+                        scene,
+                        item,
+                        pose_index=index,
+                        total_poses=len(plan.states),
+                        style_preset=resolved_style,
+                        reference_context=reference_context,
+                        reference_frame=reference_image_options,
+                        prompt_override=prompt_override,
+                    )
+                )
+                if self.execution_context:
+                    await self.execution_context.fence(self.session)
+                await self.session.commit()
+                try:
+                    generation_metadata = None
+                    if is_scene_base:
+                        result = await self._call_image_provider(
+                            image_provider,
+                            prompt,
+                            aspect_ratio=aspect_ratio,
+                            workflow=workflow_target,
+                            width=media_width,
+                            height=media_height,
+                            style_preset=resolved_style,
+                            require_workflow=True,
+                        )
+                        generation_metadata = {
+                            "mode": "txt2img_scene_base",
+                            "base_workflow": workflow_target or "provider_default",
+                            "reference_source": "scene_base",
+                        }
+                    elif shared_base_generation:
+                        if not base_reference_path:
+                            raise ValidationException("场景基础图缺失，无法执行图生图微调。")
+                        result = await self._call_image_provider(
+                            image_provider,
+                            prompt,
+                            aspect_ratio=aspect_ratio,
+                            workflow=img2img_workflow_target,
+                            width=media_width,
+                            height=media_height,
+                            style_preset=resolved_style,
+                            reference_image_path=base_reference_path,
+                            require_workflow=True,
+                        )
+                        generation_metadata = {
+                            "mode": "img2img_from_scene_base",
+                            "base_workflow": workflow_target or "provider_default",
+                            "img2img_workflow": img2img_workflow_target,
+                            "reference_source": "scene_base",
+                            "base_asset_id": base_asset.id if base_asset else None,
+                        }
+                    else:
+                        result = await self._call_image_provider(
+                            image_provider,
+                            prompt,
+                            aspect_ratio=aspect_ratio,
+                            workflow=workflow_target,
+                            width=media_width,
+                            height=media_height,
+                            style_preset=resolved_style,
+                            reference_image_path=reference_image_path,
+                            reference_image_options=reference_image_options,
+                        )
+                    if not result.image_bytes:
+                        raise ValidationException("图片 Provider 返回空文件。")
+                    file_format = str(result.format or "png").lower()
+                    asset = await self.asset_service.save_asset(
+                        content=result.image_bytes,
+                        file_name=f"state_{scene.id}_{item.state_id}_{uuid.uuid4().hex[:6]}.{file_format}",
+                        mime_type=result.mime_type,
+                        asset_type=AssetType.IMAGE,
+                        project_id=task.project_id,
+                        width=result.width,
+                        height=result.height,
+                        metadata={
+                            "scene_id": scene.id,
+                            "pose_id": item.state_id,
+                            "state_id": item.state_id,
+                            "animation_mode": "enhanced_stop_motion",
+                            "source_kind": "generated_stop_motion_pose",
+                            "prompt": prompt,
+                            "provider": getattr(image_provider, "name", "unknown"),
+                            "workflow": workflow_target or "provider_default",
+                            "img2img_workflow": (
+                                generation_metadata.get("img2img_workflow")
+                                if generation_metadata
+                                else None
+                            ),
+                            "image_generation_mode": (
+                                generation_metadata["mode"] if generation_metadata else "single_stage"
+                            ),
+                            "image_generation_stages": generation_metadata,
+                            "style_preset": resolved_style,
+                            "reference_asset_id": resolved_reference,
+                            "reference_image_conditioning": bool(
+                                reference_image_path and not generation_metadata
+                            ),
+                            "reference_image_options": (
+                                reference_image_options if not generation_metadata else None
+                            ),
+                        },
+                    )
+                    if is_scene_base:
+                        base_asset = asset
+                        base_reference_path = str(self.storage.get_path(asset.file_path))
+                except Exception as exc:
+                    error = str(exc)[:1000]
+                    completed_any = any(
+                        current.asset_id and current.status == "completed"
+                        for current in plan.states
+                    )
+                    failed_plan = plan.model_copy(
+                        update={
+                            "status": "partial" if completed_any else "failed",
+                            "error_message": error,
+                            "states": [
+                                current.model_copy(
+                                    update={
+                                        "status": (
+                                            "failed"
+                                            if current.state_id == item.state_id
+                                            else "pending"
+                                            if current.status == "generating"
+                                            else current.status
+                                        ),
+                                        "asset_id": None
+                                        if current.state_id == item.state_id
+                                        else current.asset_id,
+                                        "error_message": error
+                                        if current.state_id == item.state_id
+                                        else current.error_message,
+                                    }
+                                )
+                                for current in plan.states
+                            ],
+                        }
+                    )
+                    await self._save_stop_motion_plan(
+                        scene, failed_plan, status=failed_plan.status, error=error
+                    )
+                    raise ValidationException(
+                        f"状态 {item.state_id} 生成失败：{error}"
+                    ) from exc
+
+                plan = plan.model_copy(
+                    update={
+                        "states": [
+                            current.model_copy(
+                                update={
+                                    "asset_id": asset.id,
+                                    "status": "completed",
+                                    "error_message": None,
+                                }
+                            )
+                            if current.state_id == item.state_id
+                            else current
+                            for current in plan.states
+                        ],
+                        "error_message": None,
+                    }
+                )
+                await self._save_stop_motion_plan(scene, plan, status="generating")
+
+            ready = True
+            for item in plan.states:
+                if item.status != "completed" or not item.asset_id:
+                    ready = False
+                    break
+                try:
+                    await self._get_scene_image_asset(item.asset_id, task, "状态图")
+                except ValidationException:
+                    ready = False
+                    break
+            if not ready:
+                plan = plan.model_copy(
+                    update={
+                        "status": "partial"
+                        if any(item.asset_id for item in plan.states)
+                        else "planned"
+                    }
+                )
+                await self._save_stop_motion_plan(scene, plan, status=plan.status)
+                return scene
+
+            configured_optical_flow = (
+                animation_options["optical_flow"]
+                if "optical_flow" in animation_options
+                else None
+                if (animation_options.get("parallax") or {}).get("enabled")
+                else self._stop_motion_default_optical_flow(plan)
+            )
+            animation = SceneAnimationSpec.model_validate(
+                {
+                    "mode": "enhanced_stop_motion",
+                    "reference_asset_id": plan.reference_asset_id,
+                    "reference_frame": reference_image_options,
+                    "pose_fps": plan.pose_fps,
+                    "output_fps": plan.output_fps,
+                    "poses": [
+                        {
+                            "pose_id": item.state_id,
+                            "asset_id": item.asset_id,
+                            "hold": item.recommended_hold_duration,
+                            "description": item.state_description,
+                            "framing": item.camera_hint,
+                            "prop": item.element_hint,
+                            "expression": item.motion_hint,
+                            "transition": item.transition,
+                        }
+                        for item in plan.states
+                    ],
+                    "micro_motion": animation_options.get("micro_motion") or {},
+                    "parallax": animation_options.get("parallax") or {},
+                    "optical_flow": configured_optical_flow,
+                }
+            )
+            scene.layout_params = {
+                **(scene.layout_params or {}),
+                "animation": animation.model_dump(exclude_none=True, by_alias=True),
+            }
+            plan = plan.model_copy(update={"status": "completed", "error_message": None})
+            await self._save_stop_motion_plan(scene, plan, status="completed")
+            return scene
+        except ValidationException:
+            raise
+        except Exception as exc:
+            error = str(exc)[:1000]
+            failed_plan = plan.model_copy(update={"status": "failed", "error_message": error})
+            await self._save_stop_motion_plan(scene, failed_plan, status="failed", error=error)
+            raise ValidationException(f"关键状态图生成失败：{error}") from exc
 
     async def generate_scene_audio(
         self, scene_id: str, voice_id: str | None = None, speed: float | None = None

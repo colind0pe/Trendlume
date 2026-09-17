@@ -41,6 +41,7 @@ async def _create_project_task(
     storage: LocalStorageService | None = None,
     bgm_enabled: bool = False,
     image_workflow_id: str | None = None,
+    image_img2img_workflow_id: str | None = None,
     template_id: str | None = None,
     content_mode: str | None = None,
 ) -> tuple[object, TaskModel, GenerationService]:
@@ -58,6 +59,7 @@ async def _create_project_task(
             input_payload=input_payload,
             bgm_enabled=bgm_enabled,
             image_workflow_id=image_workflow_id,
+            image_img2img_workflow_id=image_img2img_workflow_id,
         ),
     )
     return project, task, GenerationService(session, storage=storage or LocalStorageService())
@@ -517,6 +519,23 @@ async def test_workflow_is_snapshotted_and_passed_to_image_provider(
     refreshed_task = await service.task_repo.get_by_id(task.id)
     assert refreshed_task is not None
     assert refreshed_task.input_payload["image_workflow_snapshot"]["type"] == "image"
+
+
+@pytest.mark.asyncio
+async def test_img2img_workflow_is_snapshotted_for_animation_tasks(
+    test_session: AsyncSession, tmp_path
+):
+    storage = LocalStorageService(base_storage_dir=tmp_path)
+    _, task, _ = await _create_project_task(
+        test_session,
+        storage=storage,
+        title="图生图工作流快照测试",
+        image_img2img_workflow_id="image/image_flux2_img2img.json",
+    )
+
+    snapshot = task.input_payload["image_img2img_workflow_snapshot"]
+    assert snapshot["id"] == "image/image_flux2_img2img.json"
+    assert snapshot["type"] == "image"
 
 
 @pytest.mark.asyncio

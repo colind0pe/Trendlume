@@ -200,41 +200,109 @@ def extract_chat_completion_content(data: Any) -> str:
 
 
 def _generate_schema_example(schema_class: type[BaseModel]) -> str:
-    """Generate a clean, intuitive JSON example template from a Pydantic model for LLM prompting"""
+    """Generate a valid, intuitive JSON example template for LLM prompting."""
     try:
         schema = schema_class.model_json_schema()
         defs = schema.get("$defs", {})
+        omitted = object()
 
         def resolve_prop(prop_info: dict) -> Any:
+            if not isinstance(prop_info, dict):
+                return None
             if "$ref" in prop_info:
                 ref_name = prop_info["$ref"].split("/")[-1]
                 if ref_name in defs:
                     return resolve_obj(defs[ref_name])
+            for composition in ("anyOf", "oneOf"):
+                options = prop_info.get(composition)
+                if isinstance(options, list):
+                    if "default" in prop_info:
+                        return prop_info["default"]
+                    non_null = [item for item in options if item.get("type") != "null"]
+                    for option in non_null or options:
+                        value = resolve_prop(option)
+                        if value is not omitted:
+                            return value
+                    return None
+            all_of = prop_info.get("allOf")
+            if isinstance(all_of, list):
+                for option in all_of:
+                    value = resolve_prop(option)
+                    if value is not omitted:
+                        return value
+            if "const" in prop_info:
+                return prop_info["const"]
+            if "enum" in prop_info and prop_info["enum"]:
+                return prop_info["enum"][0]
+            if "default" in prop_info:
+                default = prop_info["default"]
+                if default is not None:
+                    return default
+
             prop_type = prop_info.get("type", "string")
             if prop_type == "array":
                 items = prop_info.get("items", {})
-                if "$ref" in items:
-                    ref_name = items["$ref"].split("/")[-1]
-                    if ref_name in defs:
-                        return [resolve_obj(defs[ref_name])]
-                return [resolve_prop(items)]
+                if not items:
+                    return []
+                count = max(1, int(prop_info.get("minItems", 0) or 0))
+                values = [resolve_prop(items) for _ in range(count)]
+                return [None if value is omitted else value for value in values]
             elif prop_type == "integer":
-                return 0
+                return _numeric_example(prop_info, integer=True)
             elif prop_type == "number":
-                return 4.0
+                return _numeric_example(prop_info, integer=False)
             elif prop_type == "boolean":
                 return True
             elif prop_type == "object":
-                return {}
+                return resolve_obj(prop_info)
+            elif prop_type == "null":
+                return None
             else:
-                desc = prop_info.get("description")
-                return f"<{desc}>" if desc else "<string>"
+                return _string_example(prop_info)
+
+        def _numeric_example(prop_info: dict, *, integer: bool) -> int | float:
+            if "default" in prop_info and prop_info["default"] is not None:
+                value = float(prop_info["default"])
+            elif "exclusiveMinimum" in prop_info:
+                value = float(prop_info["exclusiveMinimum"]) + (1.0 if integer else 0.1)
+            elif "minimum" in prop_info:
+                value = float(prop_info["minimum"])
+            else:
+                value = 1.0
+
+            if "exclusiveMaximum" in prop_info:
+                value = min(value, float(prop_info["exclusiveMaximum"]) - (1.0 if integer else 0.1))
+            elif "maximum" in prop_info:
+                value = min(value, float(prop_info["maximum"]))
+            return int(value) if integer else round(value, 3)
+
+        def _string_example(prop_info: dict) -> str | None:
+            if prop_info.get("type") == "null":
+                return None
+            formats = {
+                "date": "2026-01-01",
+                "date-time": "2026-01-01T00:00:00Z",
+                "email": "example@example.com",
+                "uri": "https://example.com",
+                "uri-reference": "https://example.com",
+                "uuid": "00000000-0000-0000-0000-000000000000",
+            }
+            value = formats.get(prop_info.get("format"), "示例文本")
+            min_length = int(prop_info.get("minLength", 0) or 0)
+            max_length = prop_info.get("maxLength")
+            if len(value) < min_length:
+                value = (value or "x") * ((min_length + len(value or "x") - 1) // len(value or "x"))
+            if max_length is not None:
+                value = value[: int(max_length)]
+            return value
 
         def resolve_obj(obj_schema: dict) -> dict:
             props = obj_schema.get("properties", {})
             res = {}
             for k, v in props.items():
-                res[k] = resolve_prop(v)
+                value = resolve_prop(v)
+                if value is not omitted:
+                    res[k] = value
             return res
 
         example_dict = resolve_obj(schema)
