@@ -56,7 +56,8 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { StatusBadge } from "@/components/ui/status-badge";
-import { ContentMode, SceneCreate, StructuredScript, ResearchResponse, PlatformMetadata, TemplateCatalogItem } from "@/lib/types";
+import { ContentMode, KnowledgeBrief, ResearchSource, SceneCreate, StructuredScript, ResearchResponse, PlatformMetadata, TemplateCatalogItem, VisualRole } from "@/lib/types";
+import { CommercePreflightCard } from "@/components/commerce/commerce-preflight-card";
 import { generationStatus, isGenerationLifecycleEvent, isSourceMaterialMode } from "@/lib/task-generation-state";
 import { VerificationModal } from "@/components/verification-modal";
 import { useToast } from "@/components/ui/toast";
@@ -78,6 +79,7 @@ import {
   formatTemplateName,
   formatParamLabel,
   getContentModeSpec,
+  VISUAL_ROLE_OPTIONS,
 } from "@/lib/ui-constants";
 
 const TASK_LIFECYCLE_EVENTS = new Set([
@@ -110,7 +112,7 @@ const researchContextForScript = (research: ResearchResponse | null) => {
   return [
     research.summary,
     ...research.sources.map(
-      (source, index) => `[${index + 1}] ${source.title}\nURL: ${source.url}\n摘要：${source.snippet}`
+      (source, index) => `[${source.ref_id || `source-${index + 1}`}] ${source.title}\nURL: ${source.url}\n摘要：${source.snippet}`
     ),
   ].join("\n");
 };
@@ -455,6 +457,10 @@ export default function TaskStoryboardPage() {
             visual_prompt: s.visual_prompt || "",
             duration_seconds: s.duration_seconds || 4.0,
             layout_params: s.layout_params || {},
+            visual_role: s.visual_role || "concept",
+            claim_refs: s.claim_refs || [],
+            source_refs: s.source_refs || [],
+            production_metadata: s.production_metadata || {},
             audio_asset_id: s.audio_asset_id,
             media_asset_id: s.media_asset_id,
           }))
@@ -677,6 +683,7 @@ export default function TaskStoryboardPage() {
       api.batchUpdateTaskScenes(taskId, scenesData),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["task-detail", taskId] });
+      queryClient.invalidateQueries({ queryKey: ["commerce-preflight", taskId] });
     },
   });
 
@@ -747,6 +754,7 @@ export default function TaskStoryboardPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["task-detail", taskId] });
+      queryClient.invalidateQueries({ queryKey: ["commerce-preflight", taskId] });
       queryClient.invalidateQueries({ queryKey: ["task-workflow", taskId] });
       toast("最终完整成片已合成完毕。", "success");
     },
@@ -887,6 +895,8 @@ export default function TaskStoryboardPage() {
       hook_type?: string;
       style_preset?: string;
       target_scene_count?: number;
+      knowledge_brief?: KnowledgeBrief;
+      research_sources?: ResearchSource[];
     }) => api.generateScript(payload),
     onSuccess: (data) => setGeneratedScript(data),
     onError: (err: any) => {
@@ -966,6 +976,11 @@ export default function TaskStoryboardPage() {
         narration_text: "",
         visual_prompt: "",
         duration_seconds: 4.0,
+        layout_params: {},
+        visual_role: "b_roll",
+        claim_refs: [],
+        source_refs: [],
+        production_metadata: {},
       },
     ]);
   };
@@ -1260,7 +1275,7 @@ export default function TaskStoryboardPage() {
             </Button>
           )}
 
-          <Button
+          {task.production_mode === "knowledge" && <Button
             variant="outline"
             size="sm"
             onClick={() => {
@@ -1273,7 +1288,7 @@ export default function TaskStoryboardPage() {
           >
             <Sparkles aria-hidden="true" className="h-4 w-4 text-primary" />
             AI 生成脚本
-          </Button>
+          </Button>}
 
           <div ref={moreMenuRef} className="relative inline-block">
             <Button
@@ -1566,6 +1581,8 @@ export default function TaskStoryboardPage() {
         </Card>
       )}
 
+      {task.production_mode === "commerce" && <CommercePreflightCard taskId={taskId} busy={isRunning} />}
+
       {/* Top Workspace Grid: Left Video Preview / Center Pipeline / Right Metadata (Collapsible) */}
       {isDeckCollapsed ? (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card/60 px-4 py-2.5 text-xs">
@@ -1577,7 +1594,7 @@ export default function TaskStoryboardPage() {
             </span>
             <span className="text-border">·</span>
             <span className="text-muted-foreground">
-              内容模式：<strong className="text-foreground">{taskContentModeLabel}</strong>
+              画面来源：<strong className="text-foreground">{taskContentModeLabel}</strong>
             </span>
             {finalVideoUrl ? (
               <a
@@ -1747,7 +1764,7 @@ export default function TaskStoryboardPage() {
               <div className="text-xs text-muted-foreground">
                 模板：<strong className="text-foreground">{selectedTemplateName}</strong>
                 <span className="mx-1.5">·</span>
-                内容模式：<strong className="text-foreground">{taskContentModeLabel}</strong>
+                画面来源：<strong className="text-foreground">{taskContentModeLabel}</strong>
               </div>
               <div className="flex items-center justify-between gap-3 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs">
                 <div className="min-w-0">
@@ -2064,6 +2081,75 @@ export default function TaskStoryboardPage() {
                       </div>
                     )}
 
+                    <div className="space-y-2 rounded-lg border border-primary/15 bg-primary/[0.03] p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-semibold text-foreground">信息逻辑</span>
+                        <div className="flex flex-wrap justify-end gap-1">
+                          {(scene.source_refs || []).map((sourceRef) => (
+                            <Badge key={sourceRef} variant="outline" className="max-w-[180px] truncate font-mono text-[10px]">
+                              来源 {sourceRef}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                        <div className="space-y-1.5">
+                          <label htmlFor={`scene-${index}-visual-role`} className="text-xs font-medium text-muted-foreground">
+                            视觉角色
+                          </label>
+                          <Select
+                            id={`scene-${index}-visual-role`}
+                            value={scene.visual_role || "concept"}
+                            onChange={(event) => handleSceneChange(index, "visual_role", event.target.value as VisualRole)}
+                            className="h-9 text-sm"
+                          >
+                            {VISUAL_ROLE_OPTIONS.map((role) => (
+                              <option key={role.value} value={role.value}>{role.label}</option>
+                            ))}
+                          </Select>
+                        </div>
+                        <div className="space-y-1.5">
+                          <label htmlFor={`scene-${index}-claim-refs`} className="text-xs font-medium text-muted-foreground">
+                            对应主张 ID
+                          </label>
+                          <Input
+                            id={`scene-${index}-claim-refs`}
+                            value={(scene.claim_refs || []).join(", ")}
+                            onChange={(event) =>
+                              handleSceneChange(
+                                index,
+                                "claim_refs",
+                                event.target.value.split(",").map((value) => value.trim()).filter(Boolean),
+                              )
+                            }
+                            placeholder="claim-1, claim-2"
+                            className="h-9 text-sm font-mono"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <label htmlFor={`scene-${index}-source-refs`} className="text-xs font-medium text-muted-foreground">
+                            来源 ID
+                          </label>
+                          <Input
+                            id={`scene-${index}-source-refs`}
+                            value={(scene.source_refs || []).join(", ")}
+                            onChange={(event) =>
+                              handleSceneChange(
+                                index,
+                                "source_refs",
+                                event.target.value.split(",").map((value) => value.trim()).filter(Boolean),
+                              )
+                            }
+                            placeholder="source-a1b2c3"
+                            className="h-9 text-sm font-mono"
+                          />
+                        </div>
+                      </div>
+                      <p className="text-[11px] leading-relaxed text-muted-foreground">
+                        视觉角色决定画面应如何解释信息；主张和来源 ID 会随故事板保存，不再塞进排版参数。
+                      </p>
+                    </div>
+
                     {/* Narration Textarea */}
                     <div className="space-y-1.5">
                       <div className="flex justify-between items-center text-xs">
@@ -2201,9 +2287,9 @@ export default function TaskStoryboardPage() {
       {/* AI Script Assistant Dialog */}
       <Dialog open={isAIOpen} onClose={() => setIsAIOpen(false)} className="max-w-2xl max-h-[88vh]">
         <DialogHeader>
-          <DialogTitle>AI 脚本生成</DialogTitle>
+          <DialogTitle>AI 知识脚本生成</DialogTitle>
           <DialogDescription>
-            基于视频标题检索背景事实，自动生成结构化分镜与解说旁白。
+            基于主题、Knowledge Brief 和来源，生成带视觉角色与出处关系的结构化分镜。
           </DialogDescription>
         </DialogHeader>
 
@@ -2276,7 +2362,7 @@ export default function TaskStoryboardPage() {
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
-              <label htmlFor="ai-genre" className="text-xs font-semibold text-foreground">题材方向</label>
+              <label htmlFor="ai-genre" className="text-xs font-semibold text-foreground">知识方向</label>
               <Select
                 id="ai-genre"
                 value={aiGenre}
@@ -2410,6 +2496,8 @@ export default function TaskStoryboardPage() {
                 hook_type: aiHookType,
                 style_preset: aiStylePreset,
                 target_scene_count: aiSceneCount,
+                knowledge_brief: task?.input_payload?.knowledge_brief as KnowledgeBrief | undefined,
+                research_sources: researchData?.sources || taskResearch?.sources || [],
               })
             }
             className="w-full gap-1.5"
@@ -2439,6 +2527,26 @@ export default function TaskStoryboardPage() {
                 <p className="text-muted-foreground mt-0.5">{generatedScript.hook}</p>
               </div>
 
+              {generatedScript.knowledge_brief && (
+                <div className="space-y-1.5 pt-2 border-t border-border/40">
+                  <span className="text-xs font-semibold text-muted-foreground">知识 Brief</span>
+                  <p className="text-muted-foreground">
+                    面向：{generatedScript.knowledge_brief.audience || "未指定"}
+                  </p>
+                  <p className="text-foreground">
+                    主张：{generatedScript.knowledge_brief.thesis || "将由脚本整理"}
+                  </p>
+                  <p className="text-muted-foreground">
+                    带走：{generatedScript.knowledge_brief.viewer_takeaway || "将由脚本整理"}
+                  </p>
+                  {generatedScript.knowledge_brief.source_refs?.length > 0 && (
+                    <p className="font-mono text-[11px] text-primary">
+                      来源：{generatedScript.knowledge_brief.source_refs.join(", ")}
+                    </p>
+                  )}
+                </div>
+              )}
+
               {generatedScript.metadata && (
                 <div className="space-y-1.5 pt-2 border-t border-border/40">
                   <span className="text-xs font-semibold text-muted-foreground">平台发布信息</span>
@@ -2467,9 +2575,21 @@ export default function TaskStoryboardPage() {
                 {generatedScript.scenes.map((sc, i) => (
                     <div key={i} className="p-2 bg-background rounded border border-border/60 space-y-1">
                       <div className="flex justify-between font-medium">
-                        <span>#{i + 1} {sc.badge_text || "分镜"}</span>
+                        <span>
+                          #{i + 1} {sc.badge_text || "分镜"}
+                          {sc.visual_role && (
+                            <Badge variant="secondary" className="ml-1.5 text-[10px] px-1.5 py-0">
+                              {VISUAL_ROLE_OPTIONS.find((role) => role.value === sc.visual_role)?.label || sc.visual_role}
+                            </Badge>
+                          )}
+                        </span>
                       </div>
-                    <p className="text-foreground">{sc.narration_text}</p>
+                      <p className="text-foreground">{sc.narration_text}</p>
+                      {(sc.claim_refs?.length || sc.source_refs?.length) ? (
+                        <p className="font-mono text-[11px] text-primary">
+                          {[...(sc.claim_refs || []).map((ref) => `主张:${ref}`), ...(sc.source_refs || []).map((ref) => `来源:${ref}`)].join(" · ")}
+                        </p>
+                      ) : null}
                     {usesVisualPrompt && sc.visual_prompt && (
                       <p className="text-xs font-mono text-muted-foreground">{sc.visual_prompt}</p>
                     )}
@@ -2516,7 +2636,7 @@ export default function TaskStoryboardPage() {
             </div>
             {availableTemplates.length === 0 ? (
               <div className="rounded-xl border border-dashed border-border/80 p-4 text-center text-xs text-muted-foreground glass-pill">
-                当前画幅与内容模式下暂无可适配的排版模板
+                当前画幅与画面来源下暂无可适配的排版模板
               </div>
             ) : (
               <Select
@@ -2566,7 +2686,7 @@ export default function TaskStoryboardPage() {
                       规格: {currentRerenderTpl.width}×{currentRerenderTpl.height} · {currentRerenderTpl.aspect_ratio || "9:16"}
                     </div>
                     <div className="text-xs text-muted-foreground line-clamp-1">
-                      适配模式: {taskContentModeLabel}
+                      适配画面来源：{taskContentModeLabel}
                     </div>
                   </div>
                 </div>

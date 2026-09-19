@@ -3,11 +3,9 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Wand2,
-  Sparkles,
-  FileText,
   Volume2,
   Palette,
   Music,
@@ -15,19 +13,19 @@ import {
   ChevronUp,
   Settings2,
   Film,
-  Search,
 } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/field";
-import { Textarea } from "@/components/ui/textarea";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/components/ui/toast";
+import { KnowledgeTaskForm } from "@/components/projects/knowledge-task-form";
+import { CommerceTaskForm } from "@/components/projects/commerce-task-form";
+import { ProductionModeSelector } from "@/components/projects/production-mode-selector";
+import { DramaTaskLauncher } from "@/components/projects/drama-task-launcher";
 import {
-  GENRE_OPTIONS,
   HOOK_OPTIONS,
   SCENE_COUNT_MIN,
   SCENE_COUNT_PRESETS,
@@ -42,7 +40,11 @@ import {
 import {
   Asset,
   ContentMode,
+  CreativeAngle,
+  CreativePlan,
   Project,
+  Product,
+  ProductionMode,
   SocialAccount,
   TemplateCatalogItem,
   VoiceInfo,
@@ -107,6 +109,15 @@ export function CreateTaskDialog({
   const [taskHookType, setTaskHookType] = React.useState("auto");
   const [targetSceneCount, setTargetSceneCount] = React.useState(SCENE_COUNT_MIN);
   const [enableResearch, setEnableResearch] = React.useState(true);
+  const [knowledgeAudience, setKnowledgeAudience] = React.useState("");
+  const [knowledgeThesis, setKnowledgeThesis] = React.useState("");
+  const [knowledgeViewerTakeaway, setKnowledgeViewerTakeaway] = React.useState("");
+  const [productId, setProductId] = React.useState("");
+  const [creativePlanId, setCreativePlanId] = React.useState("");
+  const [creativeAngle, setCreativeAngle] = React.useState<CreativeAngle>("direct");
+  const [productionMode, setProductionMode] = React.useState<ProductionMode>(
+    project.primary_production_mode,
+  );
 
   // Visual style
   const [taskStylePreset, setTaskStylePreset] = React.useState("stick_figure");
@@ -119,6 +130,24 @@ export function CreateTaskDialog({
   const [sourceAssetId, setSourceAssetId] = React.useState("");
 
   const projectAspect = project?.aspect_ratio || "9:16";
+  const isCommerce = productionMode === "commerce";
+
+  React.useEffect(() => {
+    if (open) setProductionMode(project.primary_production_mode);
+  }, [open, project.primary_production_mode]);
+
+  const { data: products = [], isLoading: productsLoading } = useQuery<Product[]>({
+    queryKey: ["products"],
+    queryFn: () => api.listProducts(),
+    enabled: open && isCommerce,
+  });
+  const selectedProduct = products.find((product) => product.id === productId);
+  const { data: creativePlans = [], isLoading: creativePlansLoading } = useQuery<CreativePlan[]>({
+    queryKey: ["creative-plans", productId],
+    queryFn: () => api.listCreativePlans(productId),
+    enabled: open && isCommerce && Boolean(productId),
+  });
+  const selectedCreativePlan = creativePlans.find((plan) => plan.id === creativePlanId);
 
   // Filter templates strictly matching project's aspect ratio and current content mode
   const availableTemplates = React.useMemo(() => {
@@ -186,12 +215,44 @@ export function CreateTaskDialog({
     }
   }, [open, availableTemplates, selectedTemplateId, project, canonicalTemplateId]);
 
+  React.useEffect(() => {
+    if (!open || !isCommerce) return;
+    if (!productId && products.length > 0) setProductId(products[0].id);
+  }, [open, isCommerce, productId, products]);
+
+  React.useEffect(() => {
+    if (!isCommerce || !productId) {
+      setCreativePlanId("");
+      return;
+    }
+    if (creativePlans.length === 0) {
+      setCreativePlanId("");
+      return;
+    }
+    if (!creativePlans.some((plan) => plan.id === creativePlanId && plan.status !== "archived")) {
+      setCreativePlanId(
+        creativePlans.find((plan) => plan.status === "selected")?.id ||
+        creativePlans.find((plan) => plan.status !== "archived")?.id ||
+        "",
+      );
+    }
+  }, [creativePlans, creativePlanId, isCommerce, productId]);
+
   // Creation mutation
   const createTaskMutation = useMutation({
     mutationFn: async () => {
       const finalTitle =
         taskTitle.trim() ||
-        (creationMode === "fixed" ? rawScript.slice(0, 20) : "未命名短视频任务");
+        (isCommerce
+          ? selectedProduct?.title || "未命名商品视频任务"
+          : creationMode === "fixed" ? rawScript.slice(0, 20) : "未命名短视频任务");
+
+      if (isCommerce && !productId) {
+        throw new Error("请先选择商品事实卡。 ");
+      }
+      if (isCommerce && !creativePlanId) {
+        throw new Error("请先在商品库生成并选择一个 Creative Plan。");
+      }
 
       if (autoSchedulePublish && (!scheduleAccountId || !scheduleAt)) {
         throw new Error("请先选择发布账号和计划发布时间。");
@@ -226,15 +287,43 @@ export function CreateTaskDialog({
       return api.createProjectTask(projectId, {
         title: finalTitle,
         description:
-          creationMode === "fixed"
+          isCommerce
+            ? `商品视频：${selectedProduct?.title || finalTitle} · Creative Plan：${selectedCreativePlan?.variant_label || creativeAngle}`
+            : creationMode === "fixed"
             ? rawScript.slice(0, 200)
-            : `题材: ${taskGenre}, 画面来源: ${CONTENT_MODE_LABELS[contentMode]}, 分镜: ${targetSceneCount}`,
+            : `知识主题: ${finalTitle}, 面向: ${knowledgeAudience.trim() || "普通观众"}`,
         job_type: "video_composition",
+        production_mode: productionMode,
+        product_id: isCommerce ? productId : undefined,
+        creative_plan_id: isCommerce ? creativePlanId : undefined,
+        creative_angle: isCommerce ? creativeAngle : undefined,
+        ...(!isCommerce ? {
+          knowledge_brief: {
+            audience: knowledgeAudience.trim(),
+            thesis: knowledgeThesis.trim(),
+            viewer_takeaway: knowledgeViewerTakeaway.trim(),
+            key_claims: [],
+            source_refs: [],
+            genre: taskGenre,
+          },
+        } : {}),
         input_payload: {
+          production_mode: productionMode,
+          ...(isCommerce ? { product_id: productId, creative_plan_id: creativePlanId, creative_angle: creativeAngle } : {}),
           mode: creationMode,
           topic: finalTitle,
           raw_script: rawScript,
           split_mode: splitMode,
+          ...(!isCommerce ? {
+            knowledge_brief: {
+              audience: knowledgeAudience.trim(),
+              thesis: knowledgeThesis.trim(),
+              viewer_takeaway: knowledgeViewerTakeaway.trim(),
+              key_claims: [],
+              source_refs: [],
+              genre: taskGenre,
+            },
+          } : {}),
           ...generationOptions,
           visual_mode: selectedVisualMode,
           template_params: templateParams,
@@ -261,7 +350,7 @@ export function CreateTaskDialog({
     },
     onSuccess: (newTask) => {
       queryClient.invalidateQueries({ queryKey: ["project-tasks", projectId] });
-      toast("短视频生成任务创建成功！正在进入工作台…", "success");
+      toast(`${isCommerce ? "商品视频" : "知识视频"}任务创建成功！正在进入工作台…`, "success");
       onOpenChange(false);
       // Reset main inputs
       setTaskTitle("");
@@ -271,6 +360,12 @@ export function CreateTaskDialog({
       setAutoSchedulePublish(false);
       setScheduleAccountId("");
       setScheduleAt("");
+      setKnowledgeAudience("");
+      setKnowledgeThesis("");
+      setKnowledgeViewerTakeaway("");
+      setProductId("");
+      setCreativePlanId("");
+      setCreativeAngle("direct");
       router.push(`/projects/${projectId}/tasks/${newTask.id}`);
     },
     onError: (error: any) => {
@@ -296,7 +391,9 @@ export function CreateTaskDialog({
   const usesAiVisualStyle = contentModeSpec.usesVisualPrompt;
 
   const isFormValid =
-    (creationMode === "generate" ? Boolean(taskTitle.trim()) : Boolean(rawScript.trim())) &&
+    (isCommerce
+      ? Boolean(productId) && Boolean(creativePlanId)
+      : (creationMode === "generate" ? Boolean(taskTitle.trim()) : Boolean(rawScript.trim()))) &&
     (!contentModeSpec.requiresSourceAsset || Boolean(sourceAssetId)) &&
     (!autoSchedulePublish || (Boolean(scheduleAccountId) && Boolean(scheduleAt))) &&
     Boolean(selectedTemplateId);
@@ -315,7 +412,7 @@ export function CreateTaskDialog({
           </div>
           <div>
             <div className="flex items-center gap-2.5">
-              <h2 className="text-base font-bold text-foreground">新建视频任务</h2>
+              <h2 className="text-base font-bold text-foreground">新建 Production Task</h2>
             </div>
             <p className="text-xs text-muted-foreground mt-0.5">
               所属空间：《{project.name}》· {project.aspect_ratio} 画幅
@@ -324,206 +421,64 @@ export function CreateTaskDialog({
         </div>
       </div>
 
+      <div className="border-b border-border bg-card/60 px-5 py-4 sm:px-6">
+        <ProductionModeSelector value={productionMode} onChange={setProductionMode} />
+        {productionMode !== project.primary_production_mode && (
+          <p className="mt-2 text-xs text-muted-foreground">
+            此任务将覆盖 Project 默认模式；Project 仍保持 {project.primary_production_mode}。
+          </p>
+        )}
+      </div>
+
       {/* Studio Two-Column Body */}
+      {productionMode === "drama" ? (
+        <DramaTaskLauncher projectId={projectId} onClose={() => onOpenChange(false)} />
+      ) : (
       <form onSubmit={handleSubmit} className="flex-1 flex flex-col min-h-0 overflow-hidden">
         <div className="flex-1 overflow-y-auto min-h-0">
-          <div className="grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-border">
+            <div className="grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-border">
             {/* Left Column: Creative Core (58%) */}
             <div className="lg:col-span-7 p-5 sm:p-6 space-y-5">
-              {/* Mode Switcher */}
-              <Tabs
-                value={creationMode}
-                onValueChange={(val) => setCreationMode(val as "generate" | "fixed")}
-                className="space-y-0"
-              >
-                <TabsList aria-label="创作模式选择" className="w-full h-10 p-1 bg-secondary/50 rounded-xl">
-                  <TabsTrigger value="generate" className="flex-1 gap-2 text-sm font-medium h-8">
-                    <Sparkles className="h-4 w-4 text-primary" />
-                    AI 主题生成
-                  </TabsTrigger>
-                  <TabsTrigger value="fixed" className="flex-1 gap-2 text-sm font-medium h-8">
-                    <FileText className="h-4 w-4 text-primary" />
-                    已有文案拆分
-                  </TabsTrigger>
-                </TabsList>
-              </Tabs>
-
-              {/* Mode 1: AI Generate */}
-              {creationMode === "generate" && (
-                <div className="space-y-4">
-                  <div className="space-y-1.5">
-                    <label htmlFor="studio-task-topic" className="text-sm font-medium text-foreground flex items-center gap-1">
-                      <span>视频核心主题 / 课题</span>
-                      <span className="text-destructive">*</span>
-                    </label>
-                    <Input
-                      id="studio-task-topic"
-                      placeholder="例如：为什么量子纠缠被称为鬼魅般的超距作用？"
-                      value={taskTitle}
-                      onChange={(e) => setTaskTitle(e.target.value)}
-                      required={creationMode === "generate"}
-                      className="h-10 text-sm px-3.5"
-                    />
-                  </div>
-
-                  {/* Genre & Hook Controls */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                    <div className="space-y-1.5">
-                      <label htmlFor="studio-genre" className="text-sm font-medium text-foreground">
-                        题材方向
-                      </label>
-                      <Select
-                        id="studio-genre"
-                        value={taskGenre}
-                        onChange={(e) => setTaskGenre(e.target.value)}
-                        className="h-9 text-sm"
-                      >
-                        {GENRE_OPTIONS.map((g) => (
-                          <option key={g.value} value={g.value}>
-                            {g.label}
-                          </option>
-                        ))}
-                      </Select>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label htmlFor="studio-hook" className="text-sm font-medium text-foreground">
-                        开场钩子
-                      </label>
-                      <Select
-                        id="studio-hook"
-                        value={taskHookType}
-                        onChange={(e) => setTaskHookType(e.target.value)}
-                        className="h-9 text-sm"
-                      >
-                        {HOOK_OPTIONS.map((h) => (
-                          <option key={h.value} value={h.value}>
-                            {h.label}
-                          </option>
-                        ))}
-                      </Select>
-                    </div>
-                  </div>
-
-                  {/* Scene count presets & fact research */}
-                  <div className="space-y-2.5 pt-1">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium text-foreground">分镜片段规划</span>
-                      <span className="font-mono text-xs text-primary font-medium">
-                        目标 {targetSceneCount} 镜 · 约 {targetSceneCount * 4} 秒
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-5 gap-2">
-                      {SCENE_COUNT_PRESETS.map((preset) => (
-                        <button
-                          key={preset.count}
-                          type="button"
-                          onClick={() => setTargetSceneCount(preset.count)}
-                          aria-pressed={targetSceneCount === preset.count}
-                          className={`py-2 px-1.5 rounded-lg text-center border transition-all cursor-pointer select-none ${
-                            targetSceneCount === preset.count
-                              ? "bg-primary text-primary-foreground border-primary shadow-xs font-semibold"
-                              : "bg-card text-muted-foreground border-border hover:bg-secondary hover:text-foreground"
-                          }`}
-                        >
-                          <div className="text-sm font-bold font-mono">{preset.count} 镜</div>
-                          <div className="text-xs opacity-80 mt-0.5">{preset.desc.split(" ")[0]}</div>
-                        </button>
-                      ))}
-                    </div>
-
-                    {/* Fact Research Switch */}
-                    <label
-                      htmlFor="studio-research"
-                      className="flex cursor-pointer items-center justify-between rounded-lg border border-border/80 bg-secondary/25 px-3.5 py-2.5 text-sm transition-colors hover:bg-secondary/45 mt-2"
-                    >
-                      <div className="flex items-center gap-2.5">
-                        <Search className="h-4 w-4 text-primary shrink-0" />
-                        <div>
-                          <span className="font-medium text-foreground">全网事实检索 (Tavily)</span>
-                          <span className="block text-xs text-muted-foreground mt-0.5">联网检索学术事实与专业定义，提升分镜知识深度</span>
-                        </div>
-                      </div>
-                      <input
-                        id="studio-research"
-                        type="checkbox"
-                        checked={enableResearch}
-                        onChange={(e) => setEnableResearch(e.target.checked)}
-                        className="rounded border-border text-primary focus:ring-primary h-4 w-4 cursor-pointer"
-                      />
-                    </label>
-                  </div>
-                </div>
-              )}
-
-              {/* Mode 2: Fixed Raw Text */}
-              {creationMode === "fixed" && (
-                <div className="space-y-4">
-                  <div className="space-y-1.5">
-                    <label htmlFor="studio-fixed-title" className="text-sm font-medium text-foreground">
-                      任务标题（可选）
-                    </label>
-                    <Input
-                      id="studio-fixed-title"
-                      placeholder="留空则自动提取文案前 20 字作为标题"
-                      value={taskTitle}
-                      onChange={(e) => setTaskTitle(e.target.value)}
-                      className="h-9 text-sm"
-                    />
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <label htmlFor="studio-fixed-script" className="text-sm font-medium text-foreground flex items-center gap-1">
-                        <span>完整口播 / 解说文案</span>
-                        <span className="text-destructive">*</span>
-                      </label>
-                      <span className="text-xs text-muted-foreground font-mono">
-                        {rawScript.length} 字
-                      </span>
-                    </div>
-                    <Textarea
-                      id="studio-fixed-script"
-                      placeholder="在此直接粘贴完整脚本内容，系统将自动拆分并为每一句话生成对应的镜头画面与配音..."
-                      value={rawScript}
-                      onChange={(e) => setRawScript(e.target.value)}
-                      rows={6}
-                      required={creationMode === "fixed"}
-                      className="text-sm leading-relaxed p-3"
-                    />
-                  </div>
-
-                  {/* Split Rules */}
-                  <div className="space-y-2">
-                    <span className="text-sm font-medium text-foreground">分镜拆分规则</span>
-                    <div className="grid grid-cols-3 gap-2.5">
-                      {[
-                        { mode: "paragraph", label: "按段落拆分", desc: "空行分隔分镜" },
-                        { mode: "line", label: "按换行拆分", desc: "单行对应一镜" },
-                        { mode: "sentence", label: "按标点拆分", desc: "语义断句断镜" },
-                      ].map((item) => (
-                        <button
-                          key={item.mode}
-                          type="button"
-                          onClick={() => setSplitMode(item.mode as any)}
-                          aria-pressed={splitMode === item.mode}
-                          className={`p-2.5 rounded-lg border text-left transition-colors cursor-pointer ${
-                            splitMode === item.mode
-                              ? "border-primary bg-primary/5 text-foreground ring-1 ring-primary"
-                              : "border-border bg-card text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
-                          }`}
-                        >
-                          <div className="text-sm font-medium text-foreground">{item.label}</div>
-                          <div className="text-xs text-muted-foreground mt-0.5">{item.desc}</div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
+              {isCommerce ? (
+                <CommerceTaskForm
+                  products={products}
+                  productsLoading={productsLoading}
+                  productId={productId}
+                  onProductIdChange={setProductId}
+                  creativePlans={creativePlans}
+                  creativePlansLoading={creativePlansLoading}
+                  creativePlanId={creativePlanId}
+                  onCreativePlanIdChange={setCreativePlanId}
+                  creativeAngle={creativeAngle}
+                  onCreativeAngleChange={setCreativeAngle}
+                  taskTitle={taskTitle}
+                  onTaskTitleChange={setTaskTitle}
+                />
+              ) : (
+                <KnowledgeTaskForm
+                  creationMode={creationMode}
+                  onCreationModeChange={setCreationMode}
+                  taskTitle={taskTitle}
+                  onTaskTitleChange={setTaskTitle}
+                  rawScript={rawScript}
+                  onRawScriptChange={setRawScript}
+                  splitMode={splitMode}
+                  onSplitModeChange={setSplitMode}
+                  taskGenre={taskGenre}
+                  onTaskGenreChange={setTaskGenre}
+                  audience={knowledgeAudience}
+                  onAudienceChange={setKnowledgeAudience}
+                  thesis={knowledgeThesis}
+                  onThesisChange={setKnowledgeThesis}
+                  viewerTakeaway={knowledgeViewerTakeaway}
+                  onViewerTakeawayChange={setKnowledgeViewerTakeaway}
+                  enableResearch={enableResearch}
+                  onEnableResearchChange={setEnableResearch}
+                />
               )}
 
               {/* Visual Style Preset Selection */}
-              {usesAiVisualStyle && (
+              {showAdvanced && usesAiVisualStyle && (
                 <div className="space-y-2.5 pt-3 border-t border-border">
                   <div className="flex items-center justify-between">
                     <label className="text-sm font-medium text-foreground flex items-center gap-2">
@@ -585,7 +540,9 @@ export function CreateTaskDialog({
                     <div className="space-y-0.5">
                       <span className="text-xs text-muted-foreground">镜头规划</span>
                       <p className="font-mono font-medium text-foreground">
-                        {creationMode === "generate" ? `${targetSceneCount} 镜` : "文本拆分计算"}
+                        {productionMode === "knowledge"
+                          ? creationMode === "generate" ? `${targetSceneCount} 镜` : "文本拆分计算"
+                          : `${selectedCreativePlan?.scene_outline.length || 0} 个方案节拍`}
                       </p>
                     </div>
                     <div className="space-y-0.5">
@@ -659,7 +616,7 @@ export function CreateTaskDialog({
                 </div>
 
                 {/* Visual Mode & Template */}
-                <div className="space-y-2.5 pt-3 border-t border-border">
+                {showAdvanced && <div className="space-y-2.5 pt-3 border-t border-border">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div className="space-y-1.5">
                       <label htmlFor="studio-content-mode" className="text-sm font-medium text-foreground">
@@ -755,8 +712,8 @@ export function CreateTaskDialog({
                         </div>
                         <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
                           {selectedTemplate.parameter_schema?.length
-                            ? `${selectedTemplate.parameter_schema.length} 项可调参数 · 支持 ${selectedTemplate.supported_content_modes.length} 种画面模式`
-                            : `支持 ${selectedTemplate.supported_content_modes.length} 种画面模式`}
+                            ? `${selectedTemplate.parameter_schema.length} 项可调参数 · 支持 ${selectedTemplate.supported_content_modes.length} 种画面来源`
+                            : `支持 ${selectedTemplate.supported_content_modes.length} 种画面来源`}
                         </p>
                       </div>
                     </div>
@@ -792,10 +749,10 @@ export function CreateTaskDialog({
                       </Select>
                     </div>
                   )}
-                </div>
+                </div>}
 
                 {/* Background Music Section */}
-                <div className="space-y-2.5 pt-3 border-t border-border">
+                {showAdvanced && <div className="space-y-2.5 pt-3 border-t border-border">
                   <div className="flex items-center justify-between">
                     <label className="text-sm font-medium text-foreground flex items-center gap-2">
                       <Music className="h-4 w-4 text-primary" />
@@ -855,7 +812,7 @@ export function CreateTaskDialog({
                       )}
                     </div>
                   )}
-                </div>
+                </div>}
 
                 {/* Progressive Disclosure: Advanced Settings */}
                 <div className="pt-3 border-t border-border">
@@ -876,6 +833,54 @@ export function CreateTaskDialog({
 
                   {showAdvanced && (
                     <div className="mt-3 space-y-3 rounded-lg border border-border bg-card/80 p-3.5">
+                      {/* Knowledge planning controls */}
+                      {productionMode === "knowledge" && creationMode === "generate" && (
+                        <div className="space-y-2.5 pb-2.5 border-b border-border/60">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-medium text-foreground">分镜规划</span>
+                            <span className="font-mono text-[11px] text-primary font-medium">
+                              目标 {targetSceneCount} 镜 · 约 {targetSceneCount * 4} 秒
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-5 gap-2">
+                            {SCENE_COUNT_PRESETS.map((preset) => (
+                              <button
+                                key={preset.count}
+                                type="button"
+                                onClick={() => setTargetSceneCount(preset.count)}
+                                aria-pressed={targetSceneCount === preset.count}
+                                className={`py-2 px-1.5 rounded-lg text-center border transition-all cursor-pointer select-none ${
+                                  targetSceneCount === preset.count
+                                    ? "bg-primary text-primary-foreground border-primary shadow-xs font-semibold"
+                                    : "bg-card text-muted-foreground border-border hover:bg-secondary hover:text-foreground"
+                                }`}
+                              >
+                                <div className="text-xs font-bold font-mono">{preset.count} 镜</div>
+                                <div className="text-[10px] opacity-80 mt-0.5">{preset.desc.split(" ")[0]}</div>
+                              </button>
+                            ))}
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div className="space-y-1.5">
+                              <label htmlFor="studio-hook" className="text-xs text-muted-foreground">开场表达</label>
+                              <Select
+                                id="studio-hook"
+                                value={taskHookType}
+                                onChange={(event) => setTaskHookType(event.target.value)}
+                                className="h-9 text-sm"
+                              >
+                                {HOOK_OPTIONS.map((hook) => (
+                                  <option key={hook.value} value={hook.value}>{hook.label}</option>
+                                ))}
+                              </Select>
+                            </div>
+                            <div className="flex items-end text-xs leading-relaxed text-muted-foreground">
+                              镜头数只影响规划目标；最终场景会根据旁白和信息量调整。
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
                       {/* Workflows */}
                       <div className="space-y-1.5">
                         <label htmlFor="studio-img-workflow" className="text-xs text-muted-foreground">
@@ -976,9 +981,8 @@ export function CreateTaskDialog({
                 </div>
               </div>
             </div>
+            </div>
           </div>
-        </div>
-
         {/* Studio Dialog Footer */}
         <div className="px-6 py-3.5 border-t border-border bg-card/90 flex items-center justify-end gap-3 shrink-0">
           <Button
@@ -1000,6 +1004,7 @@ export function CreateTaskDialog({
           </Button>
         </div>
       </form>
+      )}
     </Dialog>
   );
 }

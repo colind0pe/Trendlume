@@ -8,7 +8,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.exceptions import NotFoundException, ValidationException
 from src.domain.content_modes import is_content_mode_supported, resolve_content_mode
-from src.domain.enums import AccountStatus, AssetType, PlatformType, TaskStatus
+from src.domain.enums import (
+    AccountStatus,
+    AssetType,
+    CreativeAngle,
+    PlatformType,
+    ProductionMode,
+    TaskStatus,
+)
+from src.domain.production_workflows import get_production_workflow
 from src.models.asset import AssetModel
 from src.models.publishing import SocialAccountModel
 from src.models.scene import SceneModel
@@ -16,7 +24,10 @@ from src.models.task import TaskModel
 from src.repositories.project_repository import ProjectRepository
 from src.repositories.scene_repository import SceneRepository
 from src.repositories.task_repository import TaskRepository
+from src.schemas.generation import KnowledgeBrief
 from src.schemas.task import ScheduledPublishConfig, TaskCreate, TaskUpdate
+from src.services.commerce_task_service import resolve_commerce_task_context
+from src.services.production_pipeline import production_pipeline_registry
 from src.services.provider_manager import ProviderManager
 from src.services.system_asset_service import is_system_asset
 from src.services.template_catalog import template_catalog
@@ -110,6 +121,58 @@ class TaskService:
 
         task_id = f"task_{uuid.uuid4().hex[:12]}"
         payload = dict(data.input_payload or {})
+        requested_production_mode = payload.get("production_mode", data.production_mode)
+        if requested_production_mode is None:
+            requested_production_mode = getattr(
+                project, "primary_production_mode", ProductionMode.KNOWLEDGE.value
+            )
+        try:
+            production_mode = ProductionMode(str(requested_production_mode))
+        except ValueError as exc:
+            raise ValidationException("不支持的生产模式。") from exc
+        if not production_pipeline_registry.is_registered(production_mode):
+            raise ValidationException(f"生产模式 {production_mode.value} 暂未开放。")
+        if production_mode == ProductionMode.DRAMA:
+            raise ValidationException("Drama Task 必须从 Drama workspace 的已批准 Episode 创建。")
+        product_id = payload.get("product_id", data.product_id)
+        creative_plan_id = payload.get("creative_plan_id", data.creative_plan_id)
+        creative_angle = payload.get("creative_angle", data.creative_angle)
+        if production_mode == ProductionMode.COMMERCE:
+            commerce = await resolve_commerce_task_context(
+                self.session,
+                product_id=str(product_id) if product_id else None,
+                creative_plan_id=str(creative_plan_id) if creative_plan_id else None,
+                creative_angle=creative_angle,
+                include_plan_snapshot=True,
+            )
+            product_id = commerce.product_id
+            creative_plan_id = commerce.creative_plan_id
+            creative_angle = commerce.creative_angle
+            payload.update(
+                product_id=product_id,
+                creative_angle=creative_angle.value,
+            )
+            if creative_plan_id:
+                payload["creative_plan_id"] = creative_plan_id
+                payload["creative_plan_snapshot"] = commerce.creative_plan_snapshot
+        else:
+            product_id = creative_plan_id = creative_angle = None
+            for key in ("product_id", "creative_plan_id", "creative_plan_snapshot", "creative_angle"):
+                payload.pop(key, None)
+
+        if production_mode == ProductionMode.KNOWLEDGE:
+            brief_input = payload.get("knowledge_brief", data.knowledge_brief)
+            if brief_input is None:
+                brief_input = payload.get("content_brief")
+            knowledge_brief = KnowledgeBrief.from_payload(brief_input)
+            if not knowledge_brief.thesis:
+                knowledge_brief.thesis = str(payload.get("topic") or data.title).strip()[:500]
+            if not knowledge_brief.genre or knowledge_brief.genre == "auto":
+                knowledge_brief.genre = str(payload.get("genre") or "auto")[:100]
+            payload["knowledge_brief"] = knowledge_brief.model_dump()
+        else:
+            for key in ("knowledge_brief", "content_brief", "genre", "hook_type", "enable_research", "research_max_queries", "research_max_results", "target_scene_count"):
+                payload.pop(key, None)
         requested_template_id = payload.get("template_id", data.template_id)
         if requested_template_id == "default_portrait" and "template_id" not in payload:
             project_template = getattr(project, "template", None)
@@ -232,6 +295,7 @@ class TaskService:
         )
         input_payload = {
             **payload,
+            "production_mode": production_mode.value,
             "visual_mode": legacy_visual_mode,
             "content_mode": content_mode,
             "target_scene_count": target_scene_count,
@@ -257,6 +321,26 @@ class TaskService:
             "image_workflow_snapshot": image_workflow_snapshot,
             "video_workflow_snapshot": video_workflow_snapshot,
         }
+        if production_mode != ProductionMode.KNOWLEDGE:
+            for key in (
+                "knowledge_brief",
+                "content_brief",
+                "genre",
+                "hook_type",
+                "enable_research",
+                "research_max_queries",
+                "research_max_results",
+                "target_scene_count",
+            ):
+                input_payload.pop(key, None)
+        if product_id:
+            input_payload["product_id"] = str(product_id)
+        if creative_angle is not None:
+            input_payload["creative_angle"] = (
+                creative_angle.value
+                if isinstance(creative_angle, CreativeAngle)
+                else str(creative_angle)
+            )
         if scheduled_publish is None:
             input_payload.pop("scheduled_publish", None)
         else:
@@ -266,9 +350,19 @@ class TaskService:
         task = TaskModel(
             id=task_id,
             project_id=project_id,
+            product_id=str(product_id) if product_id else None,
+            creative_plan_id=str(creative_plan_id) if creative_plan_id else None,
             title=data.title,
             description=data.description,
             job_type=data.job_type.value,
+            production_mode=production_mode.value,
+            creative_angle=(
+                creative_angle.value
+                if isinstance(creative_angle, CreativeAngle)
+                else str(creative_angle)
+                if creative_angle is not None
+                else None
+            ),
             status=TaskStatus.DRAFT.value,
             progress_percentage=0,
             input_payload=input_payload,
@@ -315,6 +409,99 @@ class TaskService:
             new_payload.update({key: value for key, value in old_payload.items() if is_internal(key)})
             changed = {key for key in old_payload.keys() | new_payload.keys()
                        if old_payload.get(key) != new_payload.get(key)}
+        requested_production_mode = data.production_mode
+        if requested_production_mode is None and new_payload is not None:
+            requested_production_mode = new_payload.get("production_mode")
+        if requested_production_mode is not None:
+            try:
+                production_mode = ProductionMode(str(requested_production_mode))
+            except ValueError as exc:
+                raise ValidationException("不支持的生产模式。") from exc
+            if not production_pipeline_registry.is_registered(production_mode):
+                raise ValidationException(f"生产模式 {production_mode.value} 暂未开放。")
+            if production_mode == ProductionMode.DRAMA:
+                raise ValidationException("现有 Task 不能直接切换为 Drama；请从 Drama workspace 创建。")
+            if task.production_mode != production_mode.value:
+                changed.add("production_mode")
+                task.production_mode = production_mode.value
+            if new_payload is not None:
+                new_payload["production_mode"] = production_mode.value
+        final_production_mode = ProductionMode(task.production_mode)
+        requested_product_id = data.product_id
+        if requested_product_id is None and new_payload is not None:
+            requested_product_id = new_payload.get("product_id", task.product_id)
+        if requested_product_id is None:
+            requested_product_id = task.product_id
+        requested_plan_id = data.creative_plan_id
+        if requested_plan_id is None and new_payload is not None:
+            requested_plan_id = new_payload.get("creative_plan_id", task.creative_plan_id)
+        if requested_plan_id is None:
+            requested_plan_id = task.creative_plan_id
+        requested_angle = data.creative_angle
+        if requested_angle is None and new_payload is not None:
+            requested_angle = new_payload.get("creative_angle", task.creative_angle)
+        if requested_angle is None:
+            requested_angle = task.creative_angle
+        commerce_plan_snapshot = None
+        if final_production_mode == ProductionMode.COMMERCE:
+            commerce = await resolve_commerce_task_context(
+                self.session,
+                product_id=str(requested_product_id) if requested_product_id else None,
+                creative_plan_id=str(requested_plan_id) if requested_plan_id else None,
+                creative_angle=requested_angle,
+                include_plan_snapshot=True,
+            )
+            requested_product_id = commerce.product_id
+            requested_plan_id = commerce.creative_plan_id
+            requested_angle = commerce.creative_angle
+            commerce_plan_snapshot = commerce.creative_plan_snapshot
+        else:
+            requested_product_id = requested_plan_id = requested_angle = None
+        normalized_product_id = str(requested_product_id) if requested_product_id else None
+        normalized_angle = (
+            requested_angle.value
+            if isinstance(requested_angle, CreativeAngle)
+            else str(requested_angle)
+            if requested_angle
+            else None
+        )
+        if task.product_id != normalized_product_id:
+            changed.add("product_id")
+            task.product_id = normalized_product_id
+        if task.creative_angle != normalized_angle:
+            changed.add("creative_angle")
+            task.creative_angle = normalized_angle
+        normalized_plan_id = str(requested_plan_id) if requested_plan_id else None
+        if task.creative_plan_id != normalized_plan_id:
+            changed.add("creative_plan_id")
+            task.creative_plan_id = normalized_plan_id
+        if new_payload is not None:
+            if task.product_id:
+                new_payload["product_id"] = task.product_id
+            else:
+                new_payload.pop("product_id", None)
+            if task.creative_angle:
+                new_payload["creative_angle"] = task.creative_angle
+            else:
+                new_payload.pop("creative_angle", None)
+            if task.creative_plan_id:
+                new_payload["creative_plan_id"] = task.creative_plan_id
+                new_payload["creative_plan_snapshot"] = commerce_plan_snapshot
+            else:
+                new_payload.pop("creative_plan_id", None)
+                new_payload.pop("creative_plan_snapshot", None)
+            if final_production_mode != ProductionMode.KNOWLEDGE:
+                for key in (
+                    "knowledge_brief",
+                    "content_brief",
+                    "genre",
+                    "hook_type",
+                    "enable_research",
+                    "research_max_queries",
+                    "research_max_results",
+                    "target_scene_count",
+                ):
+                    new_payload.pop(key, None)
         steps = set()
         if changed & {"bgm_enabled", "bgm_asset_id", "bgm_volume"}:
             steps.update({"composition", "export"})
@@ -326,9 +513,14 @@ class TaskService:
             steps.update({"planning", "assets", "composition", "export"})
         handled = {"bgm_enabled", "bgm_asset_id", "bgm_volume", "voice_id", "speed", "voice_speed",
                    "template_id", "template_version", "template_params", "custom_css", "content_mode",
-                   "visual_mode", "source_asset_id", "image_workflow_id", "video_workflow_id"}
+                   "visual_mode", "source_asset_id", "image_workflow_id", "video_workflow_id",
+                   "production_mode", "product_id", "creative_plan_id", "creative_angle"}
+        if "production_mode" in changed:
+            steps.update(get_production_workflow(task.production_mode).stage_keys)
+        if changed & {"product_id", "creative_plan_id", "creative_angle"}:
+            steps.update(get_production_workflow(task.production_mode).stage_keys)
         if changed - handled or (data.title is not None and data.title != task.title):
-            steps.update({"topic", "research", "planning", "script", "storyboard", "assets", "voice", "subtitles", "composition", "export"})
+            steps.update(get_production_workflow(task.production_mode).stage_keys)
         if steps:
             await mark_steps_stale(self.session, task_id, steps, "任务输入已修改")
         if data.title is not None:
@@ -339,6 +531,13 @@ class TaskService:
             task.status = data.status.value
         if data.input_payload is not None:
             task.input_payload = new_payload
+        elif changed & {"product_id", "creative_plan_id", "creative_angle"}:
+            task.input_payload = {
+                **(task.input_payload or {}),
+                **({"product_id": task.product_id} if task.product_id else {}),
+                **({"creative_angle": task.creative_angle} if task.creative_angle else {}),
+                **({"creative_plan_id": task.creative_plan_id} if task.creative_plan_id else {}),
+            }
         if data.result_payload is not None:
             task.result_payload = data.result_payload
         if data.error_message is not None:
@@ -363,9 +562,13 @@ class TaskService:
         clone = TaskModel(
             id=f"task_{uuid.uuid4().hex[:12]}",
             project_id=source.project_id,
+            product_id=source.product_id,
+            creative_plan_id=source.creative_plan_id,
             title=title or f"{source.title} - 副本",
             description=source.description,
             job_type=source.job_type,
+            production_mode=source.production_mode,
+            creative_angle=source.creative_angle,
             status=TaskStatus.DRAFT.value,
             progress_percentage=0,
             input_payload={
@@ -388,6 +591,10 @@ class TaskService:
                         visual_prompt=source_scene.visual_prompt,
                         duration_seconds=source_scene.duration_seconds,
                         layout_params=deepcopy(source_scene.layout_params or {}),
+                        visual_role=source_scene.visual_role,
+                        claim_refs=deepcopy(source_scene.claim_refs or []),
+                        source_refs=deepcopy(source_scene.source_refs or []),
+                        production_metadata=deepcopy(source_scene.production_metadata or {}),
                         audio_asset_id=None,
                         media_asset_id=None,
                         rendered_segment_asset_id=None,

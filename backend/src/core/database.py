@@ -70,9 +70,24 @@ _REQUIRED_TABLES = {
     "trend_project_matches",
     "topic_proposals",
     "trend_subscriptions",
+    "products",
+    "product_assets",
+    "commerce_creative_plans",
+    "drama_bibles",
+    "drama_characters",
+    "drama_locations",
+    "drama_episodes",
+    "drama_scenes",
+    "drama_shots",
+    "drama_dialogue_lines",
 }
 
 _REQUIRED_COLUMNS = {
+    "projects": {"primary_production_mode"},
+    "tasks": {"production_mode", "product_id", "creative_angle", "creative_plan_id"},
+    "products": {"title", "source_snapshot", "truth_sheet"},
+    "product_assets": {"product_id", "asset_id", "source_kind"},
+    "scenes": {"visual_role", "claim_refs", "source_refs", "production_metadata"},
     "workflow_jobs": {"lease_token"},
     "workflow_step_runs": {"input_fingerprint", "output_payload", "validity"},
     "project_templates": {"template_id", "template_version"},
@@ -82,6 +97,19 @@ _REQUIRED_COLUMNS = {
         "last_test_message",
         "last_test_latency_ms",
     },
+    "drama_bibles": {"project_id", "current_stage", "stage_state", "checkpoint"},
+    "drama_characters": {"bible_id", "appearance_lock", "prompt_anchor", "approval_status"},
+    "drama_locations": {"bible_id", "visual_description", "reference_asset_ids", "approval_status"},
+    "drama_episodes": {"bible_id", "episode_number", "approval_status", "checkpoint"},
+    "drama_scenes": {"episode_id", "approval_status"},
+    "drama_shots": {
+        "scene_id",
+        "character_ids",
+        "duration_hint",
+        "prompt_anchor",
+        "approval_status",
+    },
+    "drama_dialogue_lines": {"shot_id", "speaker_name", "text"},
 }
 
 

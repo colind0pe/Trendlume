@@ -54,6 +54,7 @@ class ProjectService:
             name=data.name,
             description=data.description,
             aspect_ratio=data.aspect_ratio.value,
+            primary_production_mode=data.primary_production_mode.value,
             status=ProjectStatus.DRAFT.value,
             default_voice_id=data.default_voice_id,
             bgm_asset_id=selected_bgm_id,
@@ -118,6 +119,8 @@ class ProjectService:
             project.description = data.description
         if data.aspect_ratio is not None:
             project.aspect_ratio = data.aspect_ratio.value
+        if data.primary_production_mode is not None:
+            project.primary_production_mode = data.primary_production_mode.value
         if data.status is not None:
             project.status = data.status.value
         if data.cover_asset_id is not None:

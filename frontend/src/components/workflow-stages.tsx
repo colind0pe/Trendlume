@@ -31,7 +31,6 @@ import {
 } from "@/components/ui/dialog";
 import type {
   WorkflowSnapshot,
-  WorkflowStageSummary,
   WorkflowStepRun,
 } from "@/lib/types";
 
@@ -72,19 +71,6 @@ export const STAGE_STATES: Record<string, string> = {
   cancelled: "已取消",
   reused: "已复用",
 };
-
-export const ALL_STEP_KEYS = [
-  "topic",
-  "research",
-  "planning",
-  "script",
-  "storyboard",
-  "assets",
-  "voice",
-  "subtitles",
-  "composition",
-  "export",
-] as const;
 
 export function getStageIcon(status: string, validity?: string) {
   if (status === "running") return Loader2;
@@ -129,7 +115,7 @@ export function getStageDotColor(status: string, validity?: string) {
 }
 
 /**
- * 紧凑型十阶段流水线微缩轨 (Workflow Mini-Rail)
+ * 紧凑型流水线微缩轨 (Workflow Mini-Rail)
  * 高度仅约 44px，取代原先通栏占用数百像素的巨幅卡片。
  */
 export function WorkflowMiniRail({
@@ -151,24 +137,14 @@ export function WorkflowMiniRail({
   variant?: "standalone" | "integrated";
   className?: string;
 }) {
-  const stagesMap = React.useMemo(() => {
-    const map = new Map<string, WorkflowStageSummary>();
-    if (workflow?.stages) {
-      for (const stage of workflow.stages) {
-        map.set(stage.step_key, stage);
-      }
-    }
-    return map;
-  }, [workflow]);
+  const stages = workflow?.stages ?? [];
 
   // 计算全局统计信息
-  const completedCount = ALL_STEP_KEYS.filter((key) => {
-    const stage = stagesMap.get(key);
+  const completedCount = stages.filter((stage) => {
     return stage?.status === "completed" || stage?.status === "reused" || stage?.status === "skipped";
   }).length;
 
-  const hasIssues = ALL_STEP_KEYS.some((key) => {
-    const stage = stagesMap.get(key);
+  const hasIssues = stages.some((stage) => {
     return (
       stage?.status === "failed" ||
       stage?.status === "interrupted" ||
@@ -187,13 +163,13 @@ export function WorkflowMiniRail({
       className={`${containerStyle} ${className || ""}`}
       aria-label="生产流水线概览"
     >
-      {/* 左侧：十阶段紧凑流线轨 */}
+      {/* 左侧：由当前 Production Workflow 定义的紧凑流线轨 */}
       <div className="flex flex-1 items-center gap-1 overflow-x-auto py-0.5 scrollbar-none min-w-0">
         <span className="shrink-0 font-medium text-muted-foreground mr-1 hidden sm:inline">
           流水线:
         </span>
-        {ALL_STEP_KEYS.map((key, index) => {
-          const stage = stagesMap.get(key);
+        {stages.map((stage, index) => {
+          const key = stage.step_key;
           const status = stage?.status || "waiting";
           const validity = stage?.validity || "valid";
           const Icon = getStageIcon(status, validity);
@@ -215,7 +191,7 @@ export function WorkflowMiniRail({
               <button
                 type="button"
                 onClick={onOpenDetails}
-                title={`${STAGE_NAMES[key] || key} · ${STAGE_STATES[status] || status}${
+                title={`${stage.label || STAGE_NAMES[key] || key} · ${STAGE_STATES[status] || status}${
                   validity === "stale" ? " (已过期)" : validity === "corrupt" ? " (制品损坏)" : ""
                 }`}
                 className={`group inline-flex shrink-0 items-center gap-1 rounded-md border px-2 py-1 transition-all hover:scale-[1.02] cursor-pointer ${colorClass} ${
@@ -229,7 +205,7 @@ export function WorkflowMiniRail({
                   aria-hidden="true"
                 />
                 <span className="font-medium text-xs">
-                  {STAGE_SHORT_NAMES[key] || key}
+                  {stage.label || STAGE_SHORT_NAMES[key] || key}
                 </span>
                 {status === "reused" && (
                   <span className="text-xs opacity-80" title="该阶段已复用已有制品">
@@ -245,7 +221,7 @@ export function WorkflowMiniRail({
       {/* 右侧：状态概要与详情唤起入口 */}
       <div className="flex items-center gap-2 shrink-0">
         <span className="text-xs font-mono text-muted-foreground">
-          {completedCount}/10 阶段就绪
+          {completedCount}/{stages.length} 阶段就绪
         </span>
 
         {hasIssues && (
@@ -460,7 +436,7 @@ export function WorkflowInspectorDialog({
         {query.isPending && (
           <div className="flex items-center justify-center py-8 text-xs sm:text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin mr-2" />
-            正在读取十阶段状态与制品快照…
+            正在读取当前流水线状态与制品快照…
           </div>
         )}
 

@@ -3,6 +3,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import (
+    get_commerce_preflight_service,
     get_db,
     get_generation_service,
     get_publishing_service,
@@ -15,6 +16,7 @@ from src.core.exceptions import ValidationException
 from src.domain.enums import JobType
 from src.schemas.asset import AssetResponse
 from src.schemas.common import APIResponse
+from src.schemas.creative_plan import CommercePreflightResponse
 from src.schemas.generation import ResearchResponse
 from src.schemas.publishing import (
     PublishingJobResponse,
@@ -30,6 +32,7 @@ from src.schemas.task import (
     TaskUpdate,
 )
 from src.schemas.workflow import TaskResumeRequest, WorkflowJobResponse
+from src.services.commerce_preflight import CommercePreflightService
 from src.services.generation_service import GenerationService
 from src.services.publishing_service import PublishingService
 from src.services.rendering_service import RenderingService
@@ -39,6 +42,20 @@ from src.tasks.broadcaster import event_broadcaster
 from src.tasks.manager import task_manager
 
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
+
+
+@router.post(
+    "/{task_id}/commerce-preflight",
+    response_model=APIResponse[CommercePreflightResponse],
+)
+async def commerce_preflight(
+    task_id: str,
+    require_media: bool = Query(False),
+    service: CommercePreflightService = Depends(get_commerce_preflight_service),
+):
+    return APIResponse(
+        data=await service.run(task_id, require_media=require_media)
+    )
 
 
 async def _task_response(task, db: AsyncSession) -> TaskResponse:
@@ -84,9 +101,13 @@ async def get_task(
         data=TaskDetailResponse(
             id=task.id,
             project_id=task.project_id,
+            product_id=task.product_id,
+            creative_plan_id=task.creative_plan_id,
+            creative_angle=task.creative_angle,
             title=task.title,
             description=task.description,
             job_type=task.job_type,
+            production_mode=task.production_mode,
             status=task.status,
             progress_percentage=task.progress_percentage,
             input_payload=task.input_payload,
@@ -143,9 +164,13 @@ async def duplicate_task(
     return APIResponse(data=TaskDetailResponse(
         id=task.id,
         project_id=task.project_id,
+        product_id=task.product_id,
+        creative_plan_id=task.creative_plan_id,
+        creative_angle=task.creative_angle,
         title=task.title,
         description=task.description,
         job_type=task.job_type,
+        production_mode=task.production_mode,
         status=task.status,
         progress_percentage=task.progress_percentage,
         input_payload=task.input_payload,
@@ -375,9 +400,13 @@ async def update_task(
         data=TaskDetailResponse(
             id=task.id,
             project_id=task.project_id,
+            product_id=task.product_id,
+            creative_plan_id=task.creative_plan_id,
+            creative_angle=task.creative_angle,
             title=task.title,
             description=task.description,
             job_type=task.job_type,
+            production_mode=task.production_mode,
             status=task.status,
             progress_percentage=task.progress_percentage,
             input_payload=task.input_payload,

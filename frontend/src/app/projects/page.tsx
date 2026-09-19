@@ -16,6 +16,9 @@ import { Input, SearchInput } from "@/components/ui/input";
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDate } from "@/lib/utils";
+import { ProductionModeSelector } from "@/components/projects/production-mode-selector";
+import { PRODUCTION_MODE_SPECS } from "@/lib/ui-constants";
+import type { ProductionMode } from "@/lib/types";
 
 export default function ProjectsPage() {
   const queryClient = useQueryClient();
@@ -26,6 +29,7 @@ export default function ProjectsPage() {
   const [name, setName] = React.useState("");
   const [description, setDescription] = React.useState("");
   const [aspectRatio, setAspectRatio] = React.useState("9:16");
+  const [primaryProductionMode, setPrimaryProductionMode] = React.useState<ProductionMode>("knowledge");
   const [projectToDelete, setProjectToDelete] = React.useState<{ id: string; name: string } | null>(null);
 
   const { data: projects = [], isLoading } = useQuery({
@@ -55,12 +59,13 @@ export default function ProjectsPage() {
   }, [projects]);
 
   const createMutation = useMutation({
-    mutationFn: (data: { name: string; description: string; aspect_ratio: string }) => api.createProject(data),
+    mutationFn: (data: { name: string; description: string; aspect_ratio: string; primary_production_mode: ProductionMode }) => api.createProject(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       setIsCreateOpen(false);
       setName("");
       setDescription("");
+      setPrimaryProductionMode("knowledge");
     },
   });
 
@@ -75,7 +80,7 @@ export default function ProjectsPage() {
   const handleCreate = (event: React.FormEvent) => {
     event.preventDefault();
     if (!name.trim()) return;
-    createMutation.mutate({ name, description, aspect_ratio: aspectRatio });
+    createMutation.mutate({ name, description, aspect_ratio: aspectRatio, primary_production_mode: primaryProductionMode });
   };
 
   const requestDelete = (project: { id: string; name: string }) => setProjectToDelete(project);
@@ -193,9 +198,14 @@ export default function ProjectsPage() {
             <Card key={project.id} className="group flex flex-col justify-between hover:border-primary/40 transition-colors duration-200">
               <CardHeader className="p-4 sm:p-5 pb-3">
                 <div className="flex items-start justify-between gap-2">
-                  <span className="rounded-md border border-border/80 bg-secondary/80 px-2 py-0.5 font-mono text-xs font-medium text-foreground shadow-xs">
-                    {project.aspect_ratio}
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="rounded-md border border-primary/20 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                      {PRODUCTION_MODE_SPECS[project.primary_production_mode].label}
+                    </span>
+                    <span className="rounded-md border border-border/80 bg-secondary/80 px-2 py-0.5 font-mono text-xs font-medium text-foreground shadow-xs">
+                      {project.aspect_ratio}
+                    </span>
+                  </div>
                   <IconButton
                     label={`删除项目 ${project.name}`}
                     variant="ghost"
@@ -241,6 +251,9 @@ export default function ProjectsPage() {
             <div key={project.id} className="flex items-center justify-between gap-4 p-4 sm:px-5 transition-colors hover:bg-secondary/40">
               <div className="min-w-0 flex-1 space-y-1">
                 <div className="flex items-center gap-2.5">
+                  <span className="rounded-md border border-primary/20 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                    {PRODUCTION_MODE_SPECS[project.primary_production_mode].label}
+                  </span>
                   <span className="rounded-md border border-border/80 bg-secondary/80 px-2 py-0.5 font-mono text-xs font-medium text-foreground shadow-xs">
                     {project.aspect_ratio}
                   </span>
@@ -280,6 +293,8 @@ export default function ProjectsPage() {
           <DialogDescription>定义项目名称与画布比例，作为视频创作与排版预设的容器。</DialogDescription>
         </DialogHeader>
         <form onSubmit={handleCreate} className="space-y-4 pt-1">
+          <ProductionModeSelector value={primaryProductionMode} onChange={setPrimaryProductionMode} />
+
           <Field label="项目名称" htmlFor="project-name" required>
             <Input
               id="project-name"

@@ -3,6 +3,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from src.domain.enums import VisualRole
+
 
 class SceneCreate(BaseModel):
     sequence_index: int = Field(default=0, ge=0)
@@ -10,6 +12,10 @@ class SceneCreate(BaseModel):
     visual_prompt: str = ""
     duration_seconds: float = 4.0
     layout_params: dict[str, Any] = Field(default_factory=dict)
+    visual_role: VisualRole = VisualRole.CONCEPT
+    claim_refs: list[str] = Field(default_factory=list, max_length=20)
+    source_refs: list[str] = Field(default_factory=list, max_length=20)
+    production_metadata: dict[str, Any] = Field(default_factory=dict)
     audio_asset_id: str | None = None
     media_asset_id: str | None = None
 
@@ -20,6 +26,10 @@ class SceneUpdate(BaseModel):
     visual_prompt: str | None = None
     duration_seconds: float | None = None
     layout_params: dict[str, Any] | None = None
+    visual_role: VisualRole | None = None
+    claim_refs: list[str] | None = Field(default=None, max_length=20)
+    source_refs: list[str] | None = Field(default=None, max_length=20)
+    production_metadata: dict[str, Any] | None = None
     audio_asset_id: str | None = None
     media_asset_id: str | None = None
 
@@ -34,6 +44,10 @@ class SceneResponse(BaseModel):
     visual_prompt: str
     duration_seconds: float
     layout_params: dict[str, Any]
+    visual_role: str
+    claim_refs: list[str]
+    source_refs: list[str]
+    production_metadata: dict[str, Any]
     audio_asset_id: str | None = None
     media_asset_id: str | None = None
     rendered_segment_asset_id: str | None = None

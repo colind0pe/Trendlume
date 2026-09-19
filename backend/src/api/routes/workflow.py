@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import get_db
 from src.core.config import settings
+from src.domain.production_workflows import get_production_workflow
 from src.models.asset import AssetModel
 from src.models.scene import SceneModel
 from src.models.task import TaskModel
@@ -27,7 +28,6 @@ from src.schemas.workflow import (
     WorkflowStepRunResponse,
 )
 from src.services.workflow_runtime import (
-    STEP_KEYS,
     SUCCESS_STATUSES,
     safe_artifact_path,
     validate_artifact,
@@ -74,11 +74,14 @@ async def serialize_runs(db, runs):
 @router.get("/tasks/{task_id}/workflow", response_model=APIResponse[WorkflowSnapshotResponse])
 async def get_workflow(task_id: str, db: AsyncSession = Depends(get_db)):
     await require_task(db, task_id)
+    task = await db.get(TaskModel, task_id)
+    workflow = get_production_workflow(getattr(task, "production_mode", None))
     runs = list((await db.scalars(select(WorkflowStepRunModel).where(WorkflowStepRunModel.task_id == task_id).order_by(WorkflowStepRunModel.started_at, WorkflowStepRunModel.attempt))).all())
     history = await serialize_runs(db, runs)
     scene_ids = set((await db.scalars(select(SceneModel.id).where(SceneModel.task_id == task_id))).all())
     stages = []
-    for key in STEP_KEYS:
+    for stage in workflow.stages:
+        key = stage.key
         stage_history = [run for run in history if run.step_key == key]
         latest = {run.unit_key: run for run in stage_history if not run.unit_key or run.unit_key in scene_ids or run.unit_key == 'final'}
         units = list(latest.values())
@@ -86,7 +89,7 @@ async def get_workflow(task_id: str, db: AsyncSession = Depends(get_db)):
         state = next((s for s in ("running", "failed", "interrupted", "cancelled", "waiting", "completed_with_warning") if s in statuses), None)
         state = state or ("reused" if statuses == {"reused"} else "skipped" if statuses == {"skipped"} else "completed" if units else "waiting")
         validity = "corrupt" if any(r.validity == "corrupt" for r in units) else "stale" if any(r.validity == "stale" for r in units) else "valid"
-        stages.append(WorkflowStageSummaryResponse(step_key=key, status=state, validity=validity,
+        stages.append(WorkflowStageSummaryResponse(step_key=key, label=stage.label, status=state, validity=validity,
             duration_ms=sum(r.duration_ms or 0 for r in stage_history), retry_count=sum(1 for i, r in enumerate(stage_history) if r.status != 'reused' and any(p.unit_key == r.unit_key and p.status in {'failed', 'interrupted'} for p in stage_history[:i])), units=units, history=stage_history))
     return APIResponse(data=WorkflowSnapshotResponse(task_id=task_id, stages=stages))
 
@@ -102,12 +105,14 @@ async def get_steps(job_id: str, db: AsyncSession = Depends(get_db)):
 @router.post("/tasks/{task_id}/steps/{step_key}/retry", response_model=APIResponse[WorkflowJobResponse])
 async def retry_step(task_id: str, step_key: str, payload: WorkflowStepRetryRequest | None = None, db: AsyncSession = Depends(get_db)):
     await require_task(db, task_id)
-    if step_key not in STEP_KEYS:
+    task = await db.get(TaskModel, task_id)
+    workflow = get_production_workflow(getattr(task, "production_mode", None))
+    if not workflow.has_stage(step_key):
         raise HTTPException(422, "Unknown workflow stage")
     unit = payload.unit_key if payload else None
     if unit:
         scene = await db.get(SceneModel, unit)
-        if step_key not in {"assets", "voice", "composition"} or scene is None or scene.task_id != task_id:
+        if step_key not in workflow.unit_stage_keys or scene is None or scene.task_id != task_id:
             raise HTTPException(422, "Execution unit does not belong to this task and stage")
     @asynccontextmanager
     async def factory():

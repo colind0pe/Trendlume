@@ -67,6 +67,7 @@ def _task_payload() -> dict:
         "title": "量子通信一分钟科普",
         "description": "前 3 秒先抛出反直觉问题。",
         "job_type": "video_composition",
+        "production_mode": "knowledge",
         "status": "completed",
         "progress_percentage": 100,
         "input_payload": {
@@ -162,6 +163,7 @@ def _project_payload() -> dict:
         "description": "用清晰的短视频解释量子通信。",
         "aspect_ratio": "9:16",
         "status": "configured",
+        "primary_production_mode": "knowledge",
         "cover_asset_id": None,
         "default_voice_id": None,
         "bgm_asset_id": None,
@@ -217,17 +219,21 @@ def test_create_task_uses_new_scene_presets_and_auto_genre(page):
 
     page.route("**/api/v1/**", handle_api)
     page.goto(f"{FRONTEND_URL}/projects/project-1", wait_until="domcontentloaded")
-    page.get_by_role("button", name="新建视频任务").click()
+    page.get_by_role("button", name="新建 Production Task").click()
 
-    genre = page.get_by_label("题材方向")
+    genre = page.get_by_label("知识方向")
     genre.wait_for()
     assert genre.input_value() == "auto"
+    page.get_by_role("button", name="高级配置与自动化").click()
     preset_text = " ".join(page.locator('button[aria-pressed="false"], button[aria-pressed="true"]').all_text_contents())
     assert all(f"{count} 镜" in preset_text for count in (8, 12, 14, 18, 20))
-    assert "4 镜" not in preset_text and "6 镜" not in preset_text and "10 镜" not in preset_text
+    assert all(
+        page.get_by_role("button", name=re.compile(rf"^{count} 镜")).count() == 0
+        for count in (4, 6, 10)
+    )
 
     page.get_by_role("button", name=re.compile(r"20 镜")).click()
-    page.get_by_label("视频核心主题 / 课题").fill("量子通信为什么难以窃听")
+    page.get_by_label("主题 / 要回答的问题").fill("量子通信为什么难以窃听")
     with page.expect_request(
         lambda request: request.method == "POST"
         and request.url.endswith("/api/v1/projects/project-1/tasks")
@@ -272,7 +278,10 @@ def test_task_storyboard_core_flow(page):
             data = []
         elif path == "/api/v1/tasks/task-1/research":
             data = _research_payload()
-        elif path == "/api/v1/generation/tasks/task-1/research":
+        elif path in {
+            "/api/v1/generation/tasks/task-1/research",
+            "/api/v1/generation/research",
+        }:
             research_requests["count"] += 1
             data = _research_payload()
         elif path == "/api/v1/templates":
@@ -306,7 +315,7 @@ def test_task_storyboard_core_flow(page):
     page.get_by_role("status").filter(has_text="故事板与成片配置已保存").wait_for()
 
     page.get_by_role("button", name="AI 生成脚本").click()
-    assert page.get_by_label("题材方向").input_value() == "auto"
+    assert page.get_by_label("知识方向").input_value() == "auto"
     scene_count_input = page.get_by_label("期望分镜数量")
     assert scene_count_input.get_attribute("min") == "8"
     assert scene_count_input.get_attribute("max") == "20"

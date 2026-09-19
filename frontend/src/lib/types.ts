@@ -30,6 +30,34 @@ export type PublishJobStatus =
   | "uncertain";
 export type VisualMode = "image" | "video";
 export type ContentMode = "generated_image" | "generated_video" | "online_asset" | "static" | "uploaded_asset";
+export type ProductionMode = "knowledge" | "commerce" | "drama";
+export type DramaSourceType = "idea" | "script";
+export type DramaStage = "story" | "bible" | "assets" | "episode" | "storyboard" | "approval";
+export type DramaWorkflowStatus = "draft" | "in_progress" | "paused" | "completed" | "failed";
+export type DramaApprovalStatus = "draft" | "in_review" | "approved" | "changes_requested";
+export type CreativeAngle =
+  | "direct"
+  | "pain_point"
+  | "use_case"
+  | "demo"
+  | "review"
+  | "comparison"
+  | "story";
+export type CreativePlanStatus = "draft" | "selected" | "variant" | "archived";
+export type VisualRole =
+  | "concept"
+  | "process"
+  | "comparison"
+  | "timeline"
+  | "data"
+  | "example"
+  | "quote"
+  | "b_roll"
+  | "product_shot"
+  | "context"
+  | "benefit"
+  | "proof"
+  | "cta";
 export type TemplateType = "image" | "video" | "static" | "asset";
 
 /** Persisted trend feed contract; source ingestion remains an explicit adapter boundary. */
@@ -140,6 +168,7 @@ export interface TrendProposalCreateRequest {
   trend_item_id: string;
   angle?: string;
   content_brief?: Record<string, any>;
+  knowledge_brief?: KnowledgeBrief;
   generation_options?: Record<string, any>;
 }
 
@@ -148,6 +177,7 @@ export interface TrendProposalUpdateRequest {
   title?: string;
   angle?: string;
   content_brief?: Record<string, any>;
+  knowledge_brief?: KnowledgeBrief;
   generation_options?: Record<string, any>;
 }
 
@@ -172,7 +202,22 @@ export interface TrendSubscription {
   updated_at: string;
 }
 
-export interface ContentBrief {
+export interface KnowledgeClaim {
+  id: string;
+  statement: string;
+  source_refs: string[];
+}
+
+export interface KnowledgeBrief {
+  audience?: string | null;
+  thesis?: string | null;
+  viewer_takeaway?: string | null;
+  key_claims: KnowledgeClaim[];
+  source_refs: string[];
+  genre?: string | null;
+}
+
+export interface ContentBrief extends KnowledgeBrief {
   audience?: string | null;
   goal?: string | null;
   angle?: string | null;
@@ -202,6 +247,7 @@ export interface TrendProposal {
   matched_keywords: string[];
   trend_snapshot: Record<string, any>;
   content_brief: ContentBrief;
+  knowledge_brief?: KnowledgeBrief | null;
   generation_options: Record<string, any>;
   created_at: string;
   updated_at: string;
@@ -302,6 +348,7 @@ export interface Project {
   name: string;
   description: string;
   aspect_ratio: AspectRatio;
+  primary_production_mode: ProductionMode;
   status: ProjectStatus;
   cover_asset_id?: string | null;
   default_voice_id?: string | null;
@@ -316,6 +363,227 @@ export interface ProjectDetail extends Project {
   tasks: Task[];
 }
 
+export interface DramaStageState {
+  status: string;
+  updated_at?: string | null;
+  message?: string | null;
+}
+
+export interface DramaCharacter {
+  id: string;
+  bible_id: string;
+  name: string;
+  description: string;
+  appearance_lock: string;
+  wardrobe: string;
+  voice_id?: string | null;
+  reference_asset_id?: string | null;
+  prompt_anchor: string;
+  continuity_metadata: Record<string, any>;
+  approval_status: DramaApprovalStatus;
+  approval_note?: string | null;
+  approved_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DramaLocation {
+  id: string;
+  bible_id: string;
+  name: string;
+  visual_description: string;
+  reference_asset_ids: string[];
+  prompt_anchor: string;
+  continuity_metadata: Record<string, any>;
+  approval_status: DramaApprovalStatus;
+  approval_note?: string | null;
+  approved_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DramaDialogueLine {
+  id: string;
+  shot_id: string;
+  sequence_index: number;
+  character_id?: string | null;
+  speaker_name: string;
+  text: string;
+  delivery: string;
+  timing_hint: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DramaShot {
+  id: string;
+  scene_id: string;
+  sequence_index: number;
+  action: string;
+  dialogue: string;
+  character_ids: string[];
+  characters: string[];
+  location_id?: string | null;
+  camera: string;
+  framing: string;
+  movement: string;
+  duration_hint: number;
+  visual_prompt: string;
+  prompt_anchor: string;
+  continuity_metadata: Record<string, any>;
+  approval_status: DramaApprovalStatus;
+  approval_note?: string | null;
+  approved_at?: string | null;
+  dialogue_lines: DramaDialogueLine[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DramaScene {
+  id: string;
+  episode_id: string;
+  sequence_index: number;
+  title: string;
+  summary: string;
+  beat: string;
+  location_id?: string | null;
+  script_text: string;
+  continuity_metadata: Record<string, any>;
+  approval_status: DramaApprovalStatus;
+  approval_note?: string | null;
+  approved_at?: string | null;
+  shots: DramaShot[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DramaEpisode {
+  id: string;
+  bible_id: string;
+  episode_number: number;
+  title: string;
+  synopsis: string;
+  script_text: string;
+  continuity_metadata: Record<string, any>;
+  workflow_status: DramaWorkflowStatus;
+  approval_status: DramaApprovalStatus;
+  approval_note?: string | null;
+  checkpoint: Record<string, any>;
+  approved_at?: string | null;
+  scenes: DramaScene[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DramaBible {
+  id: string;
+  project_id: string;
+  source_type: DramaSourceType;
+  source_text: string;
+  title: string;
+  logline: string;
+  genre: string;
+  tone: string;
+  visual_style: string;
+  current_stage: DramaStage;
+  workflow_status: DramaWorkflowStatus;
+  approval_status: DramaApprovalStatus;
+  stage_state: Record<DramaStage, DramaStageState>;
+  checkpoint: Record<string, any>;
+  continuity_rules: Array<Record<string, any>>;
+  prop_locks: Array<Record<string, any>>;
+  revision: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DramaDetail extends DramaBible {
+  characters: DramaCharacter[];
+  locations: DramaLocation[];
+  episodes: DramaEpisode[];
+}
+
+export interface DramaPreflightCheck {
+  key: string;
+  label: string;
+  passed: boolean;
+  message: string;
+}
+
+export interface DramaPreflight {
+  drama_id: string;
+  ready: boolean;
+  blocking: boolean;
+  current_stage: DramaStage;
+  checks: DramaPreflightCheck[];
+}
+
+export interface DramaApprovalResponse {
+  drama: DramaDetail;
+  preflight: DramaPreflight;
+}
+
+export type DramaProductionStage = "media" | "audio" | "composition";
+
+export interface DramaProductionStartRequest {
+  episode_id?: string | null;
+  visual_mode?: "image" | "video";
+  template_id?: string;
+  template_params?: Record<string, any>;
+  voice_id?: string | null;
+  speed?: number;
+  bgm_enabled?: boolean;
+  bgm_asset_id?: string | null;
+  bgm_volume?: number;
+  image_workflow_id?: string | null;
+  video_workflow_id?: string | null;
+}
+
+export interface DramaProductionFinding {
+  key: string;
+  label: string;
+  severity: "info" | "warning" | "blocking";
+  passed: boolean;
+  message: string;
+  shot_id?: string | null;
+}
+
+export interface DramaShotProduction {
+  shot_id: string;
+  source_shot_id: string;
+  sequence_index: number;
+  status: string;
+  media_status: string;
+  audio_status: string;
+  composition_status: string;
+  media_asset_id?: string | null;
+  audio_asset_id?: string | null;
+  rendered_segment_asset_id?: string | null;
+  duration_seconds?: number | null;
+  dialogue_line_count: number;
+  dialogue_timeline: Array<Record<string, any>>;
+  qa: DramaProductionFinding[];
+  error_message?: string | null;
+}
+
+export interface DramaProductionStatus {
+  drama_id: string;
+  episode_id: string;
+  task_id?: string | null;
+  job_id?: string | null;
+  status: string;
+  progress: number;
+  current_stage?: string | null;
+  shots: DramaShotProduction[];
+  qa_before: DramaProductionFinding[];
+  qa_after: DramaProductionFinding[];
+  final_video_asset_id?: string | null;
+  final_video_url?: string | null;
+  subtitle_artifact_ids: string[];
+  total_duration_seconds?: number | null;
+  error_message?: string | null;
+}
+
 export interface Scene {
   id: string;
   task_id: string;
@@ -324,6 +592,10 @@ export interface Scene {
   visual_prompt: string;
   duration_seconds: number;
   layout_params: Record<string, any>;
+  visual_role: VisualRole;
+  claim_refs: string[];
+  source_refs: string[];
+  production_metadata: Record<string, any>;
   audio_asset_id?: string | null;
   media_asset_id?: string | null;
   rendered_segment_asset_id?: string | null;
@@ -337,6 +609,10 @@ export interface SceneCreate {
   visual_prompt: string;
   duration_seconds: number;
   layout_params?: Record<string, any>;
+  visual_role?: VisualRole;
+  claim_refs?: string[];
+  source_refs?: string[];
+  production_metadata?: Record<string, any>;
   audio_asset_id?: string | null;
   media_asset_id?: string | null;
 }
@@ -366,9 +642,13 @@ export interface WorkflowJob {
 export interface Task {
   id: string;
   project_id: string;
+  product_id?: string | null;
+  creative_plan_id?: string | null;
+  creative_angle?: CreativeAngle | string | null;
   title: string;
   description: string;
   job_type: string;
+  production_mode: ProductionMode;
   status: TaskStatus;
   progress_percentage: number;
   input_payload: Record<string, any>;
@@ -419,6 +699,7 @@ export interface AssetBatchResult {
 }
 
 export interface ResearchSource {
+  ref_id?: string | null;
   title: string;
   url: string;
   snippet: string;
@@ -469,6 +750,128 @@ export interface StructuredSceneScript {
   narration_text: string;
   visual_prompt: string;
   badge_text?: string;
+  visual_role?: VisualRole;
+  claim_refs?: string[];
+  source_refs?: string[];
+  production_metadata?: Record<string, any>;
+}
+
+export type ProductFactSource = "user_input" | "manual_correction" | "json_ld" | "opengraph" | "page_structure";
+export type ProductFactCertainty = "user_asserted" | "source_reported" | "uncertain";
+
+export interface ProductFact {
+  id: string;
+  field: string;
+  value: any;
+  source_type: ProductFactSource;
+  source_ref: string;
+  source_url?: string | null;
+  certainty: ProductFactCertainty;
+  user_confirmed: boolean;
+}
+
+export interface ProductClaim {
+  id: string;
+  text: string;
+  claim_type: "selling_point" | "numerical";
+  evidence_refs: string[];
+  certainty: ProductFactCertainty;
+}
+
+export interface ProductTruthSheet {
+  product_id: string;
+  version: number;
+  facts: ProductFact[];
+  selling_points: ProductClaim[];
+  numerical_claims: ProductClaim[];
+  unresolved_fields: string[];
+  generated_at?: string | null;
+}
+
+export interface ProductAsset {
+  id: string;
+  product_id: string;
+  asset_id?: string | null;
+  asset_type: "image" | "video";
+  role: string;
+  source_kind: string;
+  source_url?: string | null;
+  alt_text: string;
+  sort_order: number;
+  metadata_json: Record<string, any>;
+  created_at: string;
+  asset?: Asset | null;
+}
+
+export interface Product {
+  id: string;
+  title: string;
+  brand: string;
+  description: string;
+  price: string;
+  currency: string;
+  specifications: Record<string, any>;
+  source_url?: string | null;
+  source_snapshot: Record<string, any>;
+  truth_sheet: ProductTruthSheet;
+  status: string;
+  assets: ProductAsset[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreativePlanClaim {
+  id: string;
+  text: string;
+  claim_type: "selling_point" | "numerical";
+  evidence_refs: string[];
+}
+
+export interface CreativeSceneOutline {
+  sequence_index: number;
+  beat: string;
+  visual: string;
+  narration: string;
+  visual_role: VisualRole;
+  claim_refs: string[];
+  asset_strategy: "product_asset" | "deterministic_layout" | "generated_context";
+}
+
+export interface CreativePlan {
+  id: string;
+  product_id: string;
+  source_plan_id?: string | null;
+  status: CreativePlanStatus;
+  variant_label: string;
+  variant_index: number;
+  angle: CreativeAngle;
+  hook: string;
+  audience: string;
+  core_message: string;
+  claims: CreativePlanClaim[];
+  scene_outline: CreativeSceneOutline[];
+  cta: string;
+  truth_sheet_version: number;
+  fact_snapshot: Record<string, any>;
+  selected_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CommercePreflightFinding {
+  code: string;
+  severity: "pass" | "warning" | "error";
+  message: string;
+  scene_ids: string[];
+}
+
+export interface CommercePreflightResponse {
+  task_id: string;
+  status: "pass" | "warning" | "fail";
+  blocking: boolean;
+  checked_at: string;
+  findings: CommercePreflightFinding[];
+  summary: Record<string, any>;
 }
 
 export interface StructuredScript {
@@ -476,6 +879,7 @@ export interface StructuredScript {
   hook: string;
   narration: string;
   scenes: StructuredSceneScript[];
+  knowledge_brief?: KnowledgeBrief;
   metadata?: PlatformMetadata | null;
 }
 
@@ -496,6 +900,8 @@ export interface ScriptGenerateRequest {
   research_max_results?: number;
   research_context?: string;
   target_scene_count?: number;
+  knowledge_brief?: KnowledgeBrief;
+  research_sources?: ResearchSource[];
 }
 
 export interface ProviderConfigItem {
@@ -726,7 +1132,7 @@ export interface WorkflowStepRun {
   started_at: string; completed_at?: string | null; artifacts: WorkflowArtifact[];
 }
 export interface WorkflowStageSummary {
-  step_key: string; status: string; validity: string; duration_ms: number; retry_count: number;
+  step_key: string; label?: string; status: string; validity: string; duration_ms: number; retry_count: number;
   units: WorkflowStepRun[]; history: WorkflowStepRun[];
 }
 export interface WorkflowSnapshot { task_id: string; stages: WorkflowStageSummary[]; }

@@ -16,6 +16,7 @@ import {
   Check,
   RefreshCw,
   Flame,
+  Clapperboard,
 } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { useTaskEvents, type TaskEvent } from "@/lib/use-task-events";
@@ -42,6 +43,7 @@ import {
   formatTemplateName,
   formatParamLabel,
   formatStageName,
+  PRODUCTION_MODE_SPECS,
 } from "@/lib/ui-constants";
 import {
   ProjectTemplateUpdate,
@@ -266,6 +268,8 @@ export default function ProjectDetailPage() {
   if (!project) {
     return <PageContainer><EmptyState title="项目不存在或已被删除" /></PageContainer>;
   }
+  const isKnowledgeProject = project.primary_production_mode === "knowledge";
+  const isDramaProject = project.primary_production_mode === "drama";
   return (
     <PageContainer width="wide" className="space-y-6">
       <PageHeader
@@ -278,6 +282,9 @@ export default function ProjectDetailPage() {
         title={(
           <span className="flex items-center gap-2.5">
             <span>{project.name}</span>
+            <span className="rounded-md border border-primary/20 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+              {PRODUCTION_MODE_SPECS[project.primary_production_mode].label}
+            </span>
             <span className="rounded-md border border-border/80 bg-secondary/80 px-2 py-0.5 font-mono text-xs font-medium text-foreground shadow-xs">
               {project.aspect_ratio}
             </span>
@@ -286,13 +293,21 @@ export default function ProjectDetailPage() {
         description={project.description || "短视频创作项目空间"}
         actions={(
           <>
-            <Button variant="outline" onClick={() => router.push(`/trends?project=${encodeURIComponent(project.id)}`)} className="gap-1.5 h-9 px-3.5 text-sm">
+            {isKnowledgeProject && <Button variant="outline" onClick={() => router.push(`/trends?project=${encodeURIComponent(project.id)}`)} className="gap-1.5 h-9 px-3.5 text-sm">
               <Flame aria-hidden="true" className="h-4 w-4" />
               查看热点
-            </Button>
-            <Button onClick={() => setIsCreateTaskOpen(true)} className="gap-1.5 h-9 px-3.5 text-sm shadow-xs">
+            </Button>}
+            {isDramaProject && (
+              <Link href={`/projects/${project.id}/drama`}>
+                <Button className="gap-1.5 h-9 px-3.5 text-sm shadow-xs">
+                  <Clapperboard aria-hidden="true" className="h-4 w-4" />
+                  进入 Drama workspace
+                </Button>
+              </Link>
+            )}
+            <Button variant={isDramaProject ? "outline" : "default"} onClick={() => setIsCreateTaskOpen(true)} className="gap-1.5 h-9 px-3.5 text-sm shadow-xs">
               <Plus aria-hidden="true" className="h-4 w-4" />
-              新建视频任务
+              {isDramaProject ? "新建其他模式 Task" : "新建 Production Task"}
             </Button>
           </>
         )}
@@ -354,7 +369,12 @@ export default function ProjectDetailPage() {
               ))}
             </div>
           ) : tasks.length === 0 ? (
-            <EmptyState icon={Film} title="该项目下暂无视频任务" description="点击右上角的“新建视频任务”开始您的创意编排。" />
+          <EmptyState
+            icon={project.primary_production_mode === "drama" ? Clapperboard : Film}
+            title={project.primary_production_mode === "drama" ? "Drama 项目尚未开始前期制片" : "该项目下暂无视频任务"}
+            description={project.primary_production_mode === "drama" ? "进入 Drama workspace，从故事想法或已有剧本开始，完成 Approved Storyboard。" : "点击右上角的“制作视频”开始整理主题、来源和分镜。"}
+            action={project.primary_production_mode === "drama" ? <Link href={`/projects/${project.id}/drama`}><Button variant="outline">打开 Drama workspace</Button></Link> : undefined}
+          />
           ) : filteredProjectTasks.length === 0 ? (
             <EmptyState
               icon={Film}

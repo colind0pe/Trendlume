@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 
 from src.core.exceptions import ConflictException, NotFoundException, ValidationException
 from src.domain.content_modes import resolve_content_mode
-from src.domain.enums import TaskStatus
+from src.domain.enums import ProductionMode, TaskStatus
 from src.models.project import ProjectModel
 from src.models.task import TaskModel
 from src.models.trend import (
@@ -20,7 +20,7 @@ from src.models.trend import (
     TrendRunModel,
     TrendSourceRunModel,
 )
-from src.schemas.generation import ContentBrief
+from src.schemas.generation import ContentBrief, KnowledgeBrief
 from src.schemas.task import TaskCreate
 from src.schemas.trend import (
     TrendProposalApproveRequest,
@@ -91,10 +91,12 @@ class TrendProposalServiceMixin:
         matched_keywords = list(match.matched_keywords or []) if match else []
         proposal_title = item.title.strip()[:255]
         angle = (payload.angle or "").strip() or self._default_angle(proposal_title, relation)
-        brief = payload.content_brief or self._default_content_brief(
+        options = self._normalize_generation_options(payload.generation_options)
+        brief = payload.knowledge_brief or payload.content_brief or self._default_content_brief(
             proposal_title, angle, observation.source_url
         )
-        options = self._normalize_generation_options(payload.generation_options)
+        if not getattr(brief, "genre", None) or brief.genre == "auto":
+            brief.genre = str(options.get("genre") or "auto")[:100]
         now = datetime.now(UTC)
         proposal = TopicProposalModel(
             id=f"proposal_{uuid.uuid4().hex[:12]}",
@@ -152,7 +154,9 @@ class TrendProposalServiceMixin:
             next_title = payload.title.strip()
         if payload.angle is not None and payload.angle.strip() != proposal.angle:
             next_angle = payload.angle.strip()
-        if payload.content_brief is not None:
+        if payload.knowledge_brief is not None:
+            next_content_brief = payload.knowledge_brief.model_dump()
+        elif payload.content_brief is not None:
             next_content_brief = payload.content_brief.model_dump()
         if payload.generation_options is not None:
             next_options = self._normalize_generation_options(payload.generation_options)
@@ -250,9 +254,12 @@ class TrendProposalServiceMixin:
         target_scene_count = options["target_scene_count"]
         enable_research = options["enable_research"]
         brief = ContentBrief.model_validate(proposal.content_brief or {})
+        knowledge_brief = KnowledgeBrief.from_payload(brief)
         task_payload = {
             "topic": proposal.title,
             "content_brief": brief.model_dump(),
+            "knowledge_brief": knowledge_brief.model_dump(),
+            "production_mode": ProductionMode.KNOWLEDGE.value,
             "trend_provenance": {
                 "proposal_id": proposal.id,
                 "proposal_revision": proposal.revision,
@@ -294,6 +301,7 @@ class TrendProposalServiceMixin:
                 TaskCreate(
                     title=proposal.title,
                     description=proposal.angle,
+                    production_mode=ProductionMode.KNOWLEDGE,
                     input_payload=task_payload,
                     target_scene_count=target_scene_count,
                     enable_research=enable_research,
@@ -528,6 +536,7 @@ class TrendProposalServiceMixin:
             matched_keywords=list(proposal.matched_keywords or []),
             trend_snapshot=dict(proposal.trend_snapshot or {}),
             content_brief=ContentBrief.model_validate(proposal.content_brief or {}),
+            knowledge_brief=KnowledgeBrief.from_payload(proposal.content_brief or {}),
             generation_options=TrendProposalServiceMixin._normalize_generation_options(
                 proposal.generation_options
             ),

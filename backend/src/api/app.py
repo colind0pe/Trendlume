@@ -11,10 +11,12 @@ from loguru import logger
 
 from src.api.routes import (
     assets_router,
+    drama_router,
     events_router,
     generation_router,
     health_router,
     jobs_router,
+    products_router,
     projects_router,
     providers_router,
     publishing_router,
@@ -103,9 +105,11 @@ def create_app() -> FastAPI:
     api_v1_prefix = "/api/v1"
     app.include_router(health_router, prefix=api_v1_prefix)
     app.include_router(projects_router, prefix=api_v1_prefix)
+    app.include_router(products_router, prefix=api_v1_prefix)
     app.include_router(tasks_router, prefix=api_v1_prefix)
     app.include_router(scenes_router, prefix=api_v1_prefix)
     app.include_router(assets_router, prefix=api_v1_prefix)
+    app.include_router(drama_router, prefix=api_v1_prefix)
     app.include_router(generation_router, prefix=api_v1_prefix)
     app.include_router(jobs_router, prefix=api_v1_prefix)
     app.include_router(workflow_router, prefix=api_v1_prefix)

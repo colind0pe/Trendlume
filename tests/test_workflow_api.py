@@ -85,6 +85,7 @@ async def test_workflow_queries_retry_and_download_validation(
     snapshot = await client.get(f"/api/v1/tasks/{task.id}/workflow")
     assert snapshot.status_code == 200
     export = next(stage for stage in snapshot.json()["data"]["stages"] if stage["step_key"] == "export")
+    assert export["label"] == "导出"
     assert export["status"] == "completed"
     assert export["validity"] == "valid"
     assert export["units"][0]["artifacts"][0]["id"] == artifact.id

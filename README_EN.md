@@ -1,8 +1,8 @@
 # 🎬 Trendlume
 
-> Trendlume is an AI short-video creation and publishing workbench tailored for creators.
+> Trendlume is an AI video production workbench for distinct content tracks.
 
-Turn a topic idea, an existing script, or trending topics into an editable short video. Every scene remains inspectable in the storyboard editor: swap visuals, tweak narration, adjust durations, or retry individual scenes without re-rendering the entire video, then publish directly to Douyin.
+Knowledge, Commerce, and Drama each have their own planning entry point and production workflow while sharing media generation, voice, subtitles, rendering, and durable artifacts. A Project stores its primary Production Mode, while a Task can override it through the appropriate creation flow. `ContentMode` remains the compatible backend contract for the user-facing “Visual Source” setting.
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=flat-square)](LICENSE) [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/) [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/) [![Next.js 14](https://img.shields.io/badge/Next.js-14-black?style=flat-square&logo=next.js&logoColor=white)](https://nextjs.org/) [![React 18](https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react&logoColor=black)](https://react.dev/) [![SQLite](https://img.shields.io/badge/SQLite-3-003B57?style=flat-square&logo=sqlite&logoColor=white)](https://www.sqlite.org/) [![FFmpeg](https://img.shields.io/badge/FFmpeg-6.0+-007808?style=flat-square&logo=ffmpeg&logoColor=white)](https://ffmpeg.org/)
 
@@ -12,28 +12,39 @@ Turn a topic idea, an existing script, or trending topics into an editable short
 </p>
 
 <p align="center">
-  <img src="docs/assets/trendlume-readme-hero.png" alt="Trendlume AI Short Video Creation and Publishing Workbench" />
+  <img src="docs/assets/trendlume-readme-hero.png" alt="Trendlume AI Video Production Workbench for Different Content Tracks" />
 </p>
+
+## Production Modes
+
+| Mode | Starting point | Dedicated workflow |
+| --- | --- | --- |
+| **Knowledge** | Topic, trend proposal, or existing script | Research, Knowledge Brief, knowledge script, storyboard, and scene-level editing |
+| **Commerce** | Product truth sheet and selected Creative Plan | Fact constraints, commercial storyboard, locked real product media, and preflight QA |
+| **Drama** | Story idea or existing screenplay | Drama Bible, characters and locations, Episode, shot storyboard, approval, then production |
+
+All three modes reuse configured LLM, image/video, TTS, material, and rendering providers. Actual generation depends on local services, network access, and credentials. Drama creates a media-production Task only after the storyboard, scenes, and shots are approved.
 
 ## ✨ What It Can Do For You
 
-- **Three Creative Entry Points**: Discover trending topics from 7 public feeds and generate structured proposals, expand a rough topic idea with web research, or paste an existing script to jump straight into storyboard production.
+- **Production by Content Track**: Start a Project in Knowledge, Commerce, or Drama and see only the inputs, checks, and workspace relevant to that track.
+- **Knowledge Entry Points**: Start from a trend proposal, a researched topic, or an existing script. Trends continue through the existing `Trend → Proposal → Knowledge Task` path.
+- **Commerce Fact Constraints**: Build commercial storyboards from a product Truth Sheet and reviewed Creative Plan. Product shots use locked real product media and fail explicitly when required media is missing.
+- **Drama Approval Gates**: Keep story, Bible, characters, locations, Episode, and shot storyboard separate. Only approved work enters media, dialogue audio, and Episode composition.
 - **Scene-Level Visual Fine-Tuning**: Videos are not black boxes. In the storyboard editor, preview each scene, adjust durations, tweak narration, regenerate visuals, or swap in Pexels stock footage without altering the flow of other scenes.
 - **Choose Visual Sources**: Supports AI image generation, AI video generation, Pexels stock video, kinetic typography cards, and custom user uploads.
 - **Audio-Visual-Subtitle Auto-Alignment**: Free built-in Edge-TTS or Volcengine Doubao TTS. The system auto-calculates scene durations based on speech audio and aligns subtitles across 9:16 (vertical), 16:9 (horizontal), and 1:1 (square) templates (19 built-in layout templates).
 - **Pause Anywhere & Partial Retry**: Each stage state is persisted automatically. Resume after network drops or crashes. Changing the 3rd scene's image does not require re-rendering previously finished scenes.
 - **Direct Douyin Publishing**: Authorize via QR code scanning, fill in title, hashtags, select a cover frame, and publish immediately or schedule for later.
 
-## Creation Workflow
+## Production Workflow
 
 ```text
-Trending Topics ──> Topic Proposal ──┐
-                                     ├──> Storyboard Script ──> Visual Fine-tuning
-Input Topic ─────> Web Research ────┤                              │
-                                     │                              │
-Paste Custom Script ─────────────────┘                              │
-                                                                    │
-Video Export / Douyin Publishing <── Video Rendering <── Voiceover & Subtitles <───┘
+Knowledge: Trend / topic / script → research and planning → storyboard → media / voice / subtitles → compose
+Commerce: Product facts → Creative Plan → commercial storyboard → product and supporting media → QA → compose
+Drama: Story / screenplay → Bible → characters and locations → Episode → shot storyboard → approve → produce
+                                                               │
+                 Shared providers, durable artifacts, partial retry, and rendering ───────────────┘
 ```
 
 - **Trending Topics**: Fetch live hotlists from 7 platforms via public feeds, match project keywords with LLMs to generate creative angles, and convert approved proposals directly into standard video tasks.
@@ -195,7 +206,7 @@ After video generation completes, you can inspect or download the following arti
   - Visuals: Midjourney, Kling AI, and additional video/image generation APIs
   - Voice: Enhanced expressive, multi-emotion TTS providers
 - [ ] **Multi-Platform Publishing**: Cover adaptation, hashtag management, and publishing for TikTok, YouTube, Bilibili, Xiaohongshu, and WeChat Video Channel.
-- [ ] **AI Short Drama Mode**: Multi-episode script continuity, character visual & costume consistency locking, multi-camera scene scheduling, and episodic generation.
+- [x] **Drama Production Mode (current checkout)**: Bible, characters/locations, Episodes, shot storyboards, approval gates, and Episode production. Output quality still depends on configured media and TTS providers.
 
 ## 📂 Project Structure
 

@@ -6,7 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.domain.content_modes import LEGACY_CONTENT_MODE, ContentMode
-from src.schemas.generation import ContentBrief
+from src.schemas.generation import ContentBrief, KnowledgeBrief
 
 TrendSourceStatus = Literal["fresh", "stale", "failed", "unavailable"]
 TrendRelation = Literal["high", "medium", "low", "unknown"]
@@ -165,6 +165,7 @@ class TrendProposalCreate(BaseModel):
     trend_item_id: str = Field(min_length=1, max_length=36)
     angle: str | None = Field(default=None, max_length=500)
     content_brief: ContentBrief | None = None
+    knowledge_brief: KnowledgeBrief | None = None
     generation_options: dict[str, Any] = Field(default_factory=dict)
 
     _validate_generation_options = field_validator("generation_options")(
@@ -177,6 +178,7 @@ class TrendProposalUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=255)
     angle: str | None = Field(default=None, min_length=1, max_length=500)
     content_brief: ContentBrief | None = None
+    knowledge_brief: KnowledgeBrief | None = None
     generation_options: dict[str, Any] | None = None
 
     _validate_generation_options = field_validator("generation_options")(
@@ -207,6 +209,7 @@ class TrendProposalResponse(BaseModel):
     matched_keywords: list[str] = Field(default_factory=list)
     trend_snapshot: dict[str, Any] = Field(default_factory=dict)
     content_brief: ContentBrief
+    knowledge_brief: KnowledgeBrief = Field(default_factory=KnowledgeBrief)
     generation_options: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
     updated_at: datetime

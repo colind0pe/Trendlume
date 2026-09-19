@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import json
 import re
 import struct
@@ -14,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.exceptions import NotFoundException, ProviderException, ValidationException
 from src.core.security import redact_sensitive_text
-from src.domain.enums import AssetType
+from src.domain.enums import AssetType, VisualRole
 from src.models.scene import SceneModel
 from src.models.task import TaskModel
 from src.models.workflow import WorkflowJobModel
@@ -27,6 +28,7 @@ from src.repositories.task_repository import TaskRepository
 from src.schemas.generation import (
     ContentGenerateRequest,
     ContentGenerateResponse,
+    KnowledgeBrief,
     PlatformMetadata,
     ResearchQueryPlan,
     ResearchQueryRecord,
@@ -114,13 +116,13 @@ def _visual_prompt_fallback(narration: str) -> str:
 
 
 def format_content_brief(payload: ScriptGenerateRequest) -> str:
-    if not payload.content_brief:
-        return ""
-    values = payload.content_brief.model_dump(exclude_none=True, exclude_defaults=True)
-    if not values:
+    brief = knowledge_brief_for_payload(payload)
+    if not brief.model_dump(exclude_none=True, exclude_defaults=True):
         return ""
     return format_untrusted_prompt_data(
-        json.dumps(values, ensure_ascii=False), label="content_brief", max_chars=5000
+        json.dumps(brief.model_dump(exclude_none=True, exclude_defaults=True), ensure_ascii=False),
+        label="knowledge_brief",
+        max_chars=5000,
     )
 
 # ==================== GENRE & STYLE GUIDES ====================
@@ -147,6 +149,122 @@ def get_genre_instruction(genre: str, *, fallback: str = "general") -> str:
     if genre == "auto":
         return AUTO_GENRE_INSTRUCTION
     return GENRE_INSTRUCTIONS.get(genre, GENRE_INSTRUCTIONS[fallback])
+
+
+def infer_visual_role(text: str) -> VisualRole:
+    """Choose a conservative role for legacy/fixed scripts without inventing claims."""
+    value = str(text or "").strip()
+    if any(token in value for token in ("引用", "原话", "说道", "表示", "称：", "：“")):
+        return VisualRole.QUOTE
+    if any(token in value for token in ("对比", "区别", "不同", "相比", "而不是", " versus ", "vs.")):
+        return VisualRole.COMPARISON
+    if any(token in value for token in ("时间线", "年代", "阶段", "后来", "此前", "起初", "演变")):
+        return VisualRole.TIMELINE
+    if any(token in value for token in ("数据", "比例", "百分比", "增长", "下降", "%", "统计")):
+        return VisualRole.DATA
+    if any(token in value for token in ("第一步", "第二步", "步骤", "流程", "先", "然后", "最后")):
+        return VisualRole.PROCESS
+    if any(token in value for token in ("例如", "比如", "案例", "场景", "试想")):
+        return VisualRole.EXAMPLE
+    if any(token in value for token in ("什么是", "概念", "定义", "本质", "原理")):
+        return VisualRole.CONCEPT
+    return VisualRole.B_ROLL
+
+
+def knowledge_brief_for_payload(payload: ScriptGenerateRequest) -> KnowledgeBrief:
+    """Resolve the new brief while accepting the old ContentBrief contract."""
+    candidate = payload.knowledge_brief or payload.content_brief
+    brief = KnowledgeBrief.from_payload(candidate)
+    if not brief.genre or brief.genre == "auto":
+        brief.genre = payload.genre or "auto"
+    return brief
+
+
+def normalize_knowledge_script(
+    script: StructuredScript,
+    *,
+    payload: ScriptGenerateRequest,
+) -> StructuredScript:
+    """Keep claim/source references closed over the brief and source snapshot."""
+    brief = script.knowledge_brief or knowledge_brief_for_payload(payload)
+    requested = knowledge_brief_for_payload(payload)
+    if not brief.audience and requested.audience:
+        brief.audience = requested.audience
+    if not brief.thesis and requested.thesis:
+        brief.thesis = requested.thesis
+    if not brief.viewer_takeaway and requested.viewer_takeaway:
+        brief.viewer_takeaway = requested.viewer_takeaway
+    if not brief.key_claims and requested.key_claims:
+        brief.key_claims = list(requested.key_claims)
+    if not brief.source_refs and requested.source_refs:
+        brief.source_refs = list(requested.source_refs)
+    if not brief.genre or brief.genre == "auto":
+        brief.genre = payload.genre or requested.genre or "auto"
+
+    allowed_sources = {
+        ref
+        for source in payload.research_sources
+        for ref in (source.ref_id, source.url)
+        if ref
+    }
+    source_aliases = {
+        source.url: source.ref_id
+        for source in payload.research_sources
+        if source.url and source.ref_id
+    }
+    if payload.research_sources and not brief.source_refs:
+        # Fixed scripts do not invent claim-level matches, but they should
+        # still retain the research snapshot for later review instead of
+        # silently dropping all provenance between research and storyboard.
+        brief.source_refs = [source.ref_id for source in payload.research_sources if source.ref_id]
+    for claim in brief.key_claims:
+        claim.source_refs = list(
+            dict.fromkeys(source_aliases.get(ref, ref) for ref in claim.source_refs if ref)
+        )[:20]
+    brief.source_refs = list(
+        dict.fromkeys(source_aliases.get(ref, ref) for ref in brief.source_refs if ref)
+    )[:20]
+    brief.source_refs = list(
+        dict.fromkeys(
+            [*brief.source_refs, *(ref for claim in brief.key_claims for ref in claim.source_refs)]
+        )
+    )[:20]
+    if allowed_sources:
+        # Keep only references present in the research snapshot. User-provided
+        # refs remain valid when no snapshot was supplied, preserving explicit
+        # manual provenance instead of silently inventing a match.
+        brief.source_refs = [ref for ref in brief.source_refs if ref in allowed_sources]
+        for claim in brief.key_claims:
+            claim.source_refs = [ref for ref in claim.source_refs if ref in allowed_sources]
+
+    for scene in script.scenes:
+        scene.source_refs = list(
+            dict.fromkeys(source_aliases.get(ref, ref) for ref in scene.source_refs if ref)
+        )
+    brief.source_refs = list(
+        dict.fromkeys(
+            [*brief.source_refs, *(ref for scene in script.scenes for ref in scene.source_refs)]
+        )
+    )[:20]
+    if allowed_sources:
+        brief.source_refs = [ref for ref in brief.source_refs if ref in allowed_sources]
+
+    claim_ids = {claim.id for claim in brief.key_claims}
+    source_refs = set(brief.source_refs)
+    for scene in script.scenes:
+        scene.visual_role = infer_visual_role(scene.narration_text) if not scene.visual_role else scene.visual_role
+        scene.claim_refs = list(dict.fromkeys(ref for ref in scene.claim_refs if ref in claim_ids))
+        scene.source_refs = [ref for ref in scene.source_refs if ref in source_refs]
+        scene.production_metadata = {
+            **(scene.production_metadata or {}),
+            "knowledge": {
+                "visual_role": scene.visual_role.value,
+                "claim_refs": scene.claim_refs,
+                "source_refs": scene.source_refs,
+            },
+        }
+    script.knowledge_brief = brief
+    return script
 
 
 # ==================== 3-SECOND GOLDEN HOOK STRATEGIES ====================
@@ -272,6 +390,7 @@ def parse_script_from_text(
                         narration_text=current_narration,
                         visual_prompt=vp,
                         badge_text=current_badge or f"Part {len(scenes) + 1}",
+                        visual_role=infer_visual_role(current_narration),
                     )
                 )
                 narration_lines.append(current_narration)
@@ -299,6 +418,7 @@ def parse_script_from_text(
                 narration_text=current_narration,
                 visual_prompt=vp,
                 badge_text=current_badge or f"Part {len(scenes) + 1}",
+                visual_role=infer_visual_role(current_narration),
             )
         )
         narration_lines.append(current_narration)
@@ -315,6 +435,7 @@ def parse_script_from_text(
                     else _visual_prompt_fallback(p)
                 ),
                 badge_text=f"Part {i + 1}",
+                visual_role=infer_visual_role(p),
             )
             for i, p in enumerate(parts)
         ]
@@ -333,8 +454,10 @@ def parse_script_from_text(
                     if style_desc
                     else _visual_prompt_fallback(default_topic)
                 ),
+                visual_role=infer_visual_role(default_topic),
             )
         ],
+        knowledge_brief=KnowledgeBrief(thesis=title, genre="auto"),
     )
 
 
@@ -510,11 +633,16 @@ class GenerationService:
             "你是短视频分镜的批量视觉提示词编辑。只处理输入的旁白，不改写、合并、复制或编造旁白。"
             "必须返回一个 JSON 数据对象，顶层字段为 items；每个输入 sequence_index 恰好对应一个输出项，"
             "索引必须从 0 连续递增，visual_prompt 必须是非空、可直接用于视觉生成的中文提示词。"
+            "画面规划先判断信息角色，再决定构图；可使用 concept、process、comparison、timeline、data、example、quote、b_roll。"
             f"\n{visual_rules}\n"
             "输出对象不能包含 Markdown、解释或额外字段。"
         )
         batch_input = [
-            {"sequence_index": index, "narration_text": narration}
+            {
+                "sequence_index": index,
+                "narration_text": narration,
+                "suggested_visual_role": infer_visual_role(narration).value,
+            }
             for index, narration in enumerate(narrations)
         ]
         prompt = (
@@ -1547,6 +1675,7 @@ class GenerationService:
                     narration_text=narration,
                     visual_prompt=visual_prompt,
                     badge_text=f"Part {index + 1}",
+                    visual_role=infer_visual_role(narration),
                 )
                 for index, (narration, visual_prompt) in enumerate(
                     zip(narrations, visual_prompts, strict=True)
@@ -1563,14 +1692,19 @@ class GenerationService:
                 research_hint=research_hint,
                 prompt_versions=payload.prompt_versions,
             )
-            return self._finalize_script_metadata(
-                StructuredScript(
-                    title=title,
-                    hook=hook,
-                    narration=raw_text,
-                    scenes=scenes,
-                    metadata=generated_metadata or PlatformMetadata(title=title),
+            script = StructuredScript(
+                title=title,
+                hook=hook,
+                narration=raw_text,
+                scenes=scenes,
+                knowledge_brief=KnowledgeBrief(
+                    **knowledge_brief_for_payload(payload).model_dump()
                 ),
+                metadata=generated_metadata or PlatformMetadata(title=title),
+            )
+            script = normalize_knowledge_script(script, payload=payload)
+            return self._finalize_script_metadata(
+                script,
                 topic=payload.topic or raw_text,
                 genre=payload.genre,
             )
@@ -1613,18 +1747,25 @@ class GenerationService:
 
         system_prompt = (
             "你是一名资深的短视频编剧与视觉导演。\n"
-            "你需要根据用户提供的主题、赛道指引与调研素材，创作一条表达清晰、节奏自然、画面明确的短视频结构化分镜脚本。\n\n"
+            "你需要根据用户提供的主题、Knowledge Brief、赛道指引与调研素材，创作一条表达清晰、节奏自然、画面明确的知识视频结构化分镜脚本。\n\n"
             f"【内容质量】\n{CONTENT_QUALITY_RULES}\n\n"
             f"【题材赛道要求】\n{genre_hint}\n\n"
             f"【黄金3秒钩子要求】\n{hook_hint}\n\n"
+            "【知识表达要求】\n"
+            "先明确 audience、thesis、viewer_takeaway，再拆出 key_claims。每个 key_claims 项必须有稳定 id、statement 和 source_refs；"
+            "source_refs 只能使用调研资料中给出的 source ref_id，无法核验的主张保持空引用并在表达中说明不确定性。"
+            "每个 scene 必须选择一个 visual_role，并用 claim_refs/source_refs 表明它解释或使用的关系；不要只生成与旁白相关的漂亮图片。\n"
+            "visual_role 只能是 concept、process、comparison、timeline、data、example、quote、b_roll；"
+            "concept 解释定义，process 表达步骤，comparison 表达差异，timeline 表达时间顺序，data 承载已有数据，example 落地案例，quote 保留引用关系，b_roll 仅作不承载新事实的补充画面。\n\n"
             + visual_section
             +
             "【输出字段要求】\n"
             "1. title: 清晰、有吸引力且符合平台表达的标题（<= 30 字，末尾无标点）；\n"
             "2. hook: 第一分镜黄金 3 秒抓人文案；\n"
             "3. narration: 完整的口播旁白总览；\n"
-            f"4. scenes: 包含分镜序号、精练口语化旁白 (narration_text)、{scene_visual_field}、角标 (badge_text)；\n"
-            "5. metadata: 抖音发布元数据；title 必须与视频 title 一致，description 用与主题相同的语言写 1-3 句发布文案，"
+            "4. knowledge_brief: audience、thesis、viewer_takeaway、key_claims、source_refs；\n"
+            f"5. scenes: 包含分镜序号、精练口语化旁白 (narration_text)、{scene_visual_field}、角标 (badge_text)、visual_role、claim_refs、source_refs、production_metadata；\n"
+            "6. metadata: 抖音发布元数据；title 必须与视频 title 一致，description 用与主题相同的语言写 1-3 句发布文案，"
             "只能重组脚本已有事实；概括核心价值，评论邀请可选。"
             f"{PLATFORM_TAG_RULES}\n"
             "declaration 从‘内容由AI生成’、‘内容取材网络’、‘个人观点，仅供参考’中选择合适的一项。"
@@ -1637,6 +1778,20 @@ class GenerationService:
 
         if payload.research_context:
             user_prompt += "\n" + format_untrusted_prompt_data(payload.research_context) + "\n"
+        if payload.research_sources:
+            source_index = [
+                {
+                    "ref_id": source.ref_id,
+                    "title": source.title,
+                    "url": source.url,
+                }
+                for source in payload.research_sources
+            ]
+            user_prompt += "\n可用来源 ref_id（只能从中选择）：\n" + format_untrusted_prompt_data(
+                json.dumps(source_index, ensure_ascii=False),
+                label="source_index",
+                max_chars=3000,
+            ) + "\n"
         brief = format_content_brief(payload)
         if brief:
             user_prompt += "\n" + brief + "\n"
@@ -1709,6 +1864,8 @@ class GenerationService:
             raise ValidationException(
                 f"分镜数量不符合请求：期望 {payload.target_scene_count} 个分镜，实际 {len(script.scenes)} 个。"
             )
+
+        script = normalize_knowledge_script(script, payload=payload)
 
         # Repair missing/title-derived tags once, without replacing valid metadata.
         valid_tags = self._filter_platform_tags(script.metadata.tags, script.title)
@@ -1820,6 +1977,7 @@ class GenerationService:
             **(task.input_payload or {}),
             "hook": script.hook,
             "narration": script.narration,
+            "knowledge_brief": script.knowledge_brief.model_dump(),
             "metadata": metadata_payload,
         }
         if self.execution_context:
@@ -1835,6 +1993,20 @@ class GenerationService:
                 layout_params={
                     **({"badge_text": sc.badge_text} if sc.badge_text else {}),
                 },
+                visual_role=sc.visual_role,
+                claim_refs=list(sc.claim_refs),
+                source_refs=list(sc.source_refs),
+                production_metadata=(
+                    dict(sc.production_metadata)
+                    if sc.production_metadata
+                    else {
+                        "knowledge": {
+                            "visual_role": sc.visual_role.value,
+                            "claim_refs": list(sc.claim_refs),
+                            "source_refs": list(sc.source_refs),
+                        }
+                    }
+                ),
             )
             for i, sc in enumerate(script.scenes)
         ]
@@ -1975,8 +2147,24 @@ class GenerationService:
         await self.scene_repo.update(scene)
         return scene
 
+    @staticmethod
+    def _provider_accepts(provider, parameter: str, method: str = "generate_image") -> bool:
+        """Detect optional capability without changing existing Providers."""
+        try:
+            signature = inspect.signature(getattr(provider, method))
+        except (AttributeError, TypeError, ValueError):
+            return False
+        return parameter in signature.parameters or any(
+            item.kind == inspect.Parameter.VAR_KEYWORD for item in signature.parameters.values()
+        )
+
     async def generate_scene_image(
-        self, scene_id: str, prompt_override: str | None = None
+        self,
+        scene_id: str,
+        prompt_override: str | None = None,
+        *,
+        reference_image_path: str | None = None,
+        continuity_input: dict | None = None,
     ) -> SceneModel:
         """Generate a real visual image for a scene and bind it to the scene."""
         scene = await self.scene_repo.get_by_id(scene_id)
@@ -2026,10 +2214,22 @@ class GenerationService:
             try:
                 img_result = await image_provider.generate_image(
                     prompt,
-                    aspect_ratio=aspect_ratio,
-                    workflow=workflow_target,
-                    width=media_width,
-                    height=media_height,
+                    **{
+                        "aspect_ratio": aspect_ratio,
+                        "workflow": workflow_target,
+                        "width": media_width,
+                        "height": media_height,
+                        **(
+                            {"reference_image_path": reference_image_path}
+                            if reference_image_path and self._provider_accepts(image_provider, "reference_image_path", "generate_image")
+                            else {}
+                        ),
+                        **(
+                            {"continuity_input": continuity_input}
+                            if continuity_input and self._provider_accepts(image_provider, "continuity_input", "generate_image")
+                            else {}
+                        ),
+                    },
                 )
             except TypeError:
                 try:
@@ -2076,6 +2276,13 @@ class GenerationService:
                     "prompt": prompt,
                     "scene_id": scene.id,
                     "provider": getattr(image_provider, "name", "unknown"),
+                    "reference_strategy": (
+                        "provider_reference"
+                        if reference_image_path and self._provider_accepts(image_provider, "reference_image_path", "generate_image")
+                        else "deterministic_prompt_anchor"
+                    ),
+                    "reference_image_path": reference_image_path if reference_image_path else None,
+                    "continuity_input": continuity_input or {},
                 },
             )
         except Exception as exc:
@@ -2100,7 +2307,11 @@ class GenerationService:
         return scene
 
     async def generate_scene_video(
-        self, scene_id: str, prompt_override: str | None = None
+        self,
+        scene_id: str,
+        prompt_override: str | None = None,
+        *,
+        continuity_input: dict | None = None,
     ) -> SceneModel:
         """Generate video clip for a scene, save as Asset, and bind to Scene"""
         scene = await self.scene_repo.get_by_id(scene_id)
@@ -2152,6 +2363,14 @@ class GenerationService:
             }
             if first_frame_path:
                 video_kwargs["image_url"] = first_frame_path
+            last_frame_path = (continuity_input or {}).get("last_frame_path")
+            if last_frame_path and self._provider_accepts(video_provider, "last_frame_url", "generate_video"):
+                video_kwargs["last_frame_url"] = last_frame_path
+            elif last_frame_path and not first_frame_path and self._provider_accepts(video_provider, "image_url", "generate_video"):
+                # Existing video Providers expose first-frame input as
+                # image_url. Use it as a generic continuity hand-off when a
+                # dedicated last-frame parameter is unavailable.
+                video_kwargs["image_url"] = last_frame_path
             try:
                 if self.execution_context:
                     await self.execution_context.fence(self.session)
@@ -2159,6 +2378,7 @@ class GenerationService:
                 vid_result = await video_provider.generate_video(**video_kwargs)
             except TypeError:
                 video_kwargs.pop("image_url", None)
+                video_kwargs.pop("last_frame_url", None)
                 try:
                     if self.execution_context:
                         await self.execution_context.fence(self.session)
@@ -2197,6 +2417,14 @@ class GenerationService:
                     "prompt": prompt,
                     "scene_id": scene.id,
                     "provider": getattr(video_provider, "name", "unknown"),
+                    "continuity_strategy": (
+                        "provider_last_frame"
+                        if last_frame_path and self._provider_accepts(video_provider, "last_frame_url", "generate_video")
+                        else "provider_first_frame"
+                        if first_frame_path or last_frame_path
+                        else "deterministic_prompt_anchor"
+                    ),
+                    "continuity_input": continuity_input or {},
                     "declared_duration_seconds": vid_result.duration_seconds,
                     "duration_source": "provider_declared",
                 },

@@ -15,7 +15,9 @@ from uuid import uuid4
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.domain.production_workflows import ProductionWorkflow, get_production_workflow
 from src.models.asset import AssetModel
+from src.models.product import ProductAssetModel
 from src.models.task import TaskModel
 from src.models.workflow import (
     WorkflowArtifactModel,
@@ -25,7 +27,6 @@ from src.models.workflow import (
 )
 from src.services.media_probe import MediaProbeService
 
-STEP_KEYS = ('topic', 'research', 'planning', 'script', 'storyboard', 'assets', 'voice', 'subtitles', 'composition', 'export')
 SUCCESS_STATUSES = ('completed', 'completed_with_warning', 'skipped', 'reused')
 _SECRET_KEYS = {
     'api_key', 'apikey', 'password', 'secret', 'token', 'access_token',
@@ -125,11 +126,19 @@ class LeaseLostError(asyncio.CancelledError):
 
 
 class WorkflowRuntime:
-    def __init__(self, db: AsyncSession, storage_root: Path, job_id: str, lease_token: str):
+    def __init__(
+        self,
+        db: AsyncSession,
+        storage_root: Path,
+        job_id: str,
+        lease_token: str,
+        workflow: ProductionWorkflow | None = None,
+    ):
         self.db = db
         self.root = storage_root.resolve()
         self.job_id = job_id
         self.lease_token = lease_token
+        self.workflow = workflow or get_production_workflow(None)
 
     async def assert_lease(self):
         # A conditional write serializes against reclaim/cancel in the same transaction.
@@ -175,7 +184,7 @@ class WorkflowRuntime:
         return target
 
     async def begin(self, step_key: str, inputs: dict, unit_key: str = '', input_artifacts=None, force: bool = False) -> WorkflowStepRunModel:
-        if step_key not in STEP_KEYS:
+        if not self.workflow.has_stage(step_key):
             raise ValueError(f'Unknown workflow stage: {step_key}')
         dependencies = list(input_artifacts or [])
         job = await self.db.get(WorkflowJobModel, self.job_id)
@@ -263,10 +272,23 @@ class WorkflowRuntime:
                 sha256=await sha256_file(path), media_info=media_info or spec.media_info, source=spec.source))
         await self.assert_lease()
         task = await self.db.get(TaskModel, run.task_id)
+        if task is None:
+            await self.db.rollback()
+            raise ValueError("Artifact task does not exist")
         for artifact in artifacts:
             if artifact.asset_id:
                 asset = await self.db.get(AssetModel, artifact.asset_id)
-                if asset is None or asset.project_id != task.project_id:
+                product_asset = None
+                if asset is not None and artifact.source == "product" and task.product_id:
+                    product_asset = await self.db.scalar(
+                        select(ProductAssetModel.id).where(
+                            ProductAssetModel.asset_id == asset.id,
+                            ProductAssetModel.product_id == task.product_id,
+                        ).limit(1)
+                    )
+                project_owned = asset is not None and asset.project_id == task.project_id
+                product_owned = asset is not None and asset.project_id is None and product_asset is not None
+                if not project_owned and not product_owned:
                     await self.db.rollback()
                     raise ValueError("Artifact asset does not belong to the task project")
                 if artifact.source == "generated":

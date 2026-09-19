@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
-import { ArrowRight, Clapperboard, Film, Flame, FolderKanban, Loader2, Play, Plus, ExternalLink, Download, Sparkles } from "lucide-react";
+import { ArrowRight, BookOpen, Clapperboard, Film, Flame, FolderKanban, Loader2, Play, Plus, ExternalLink, Download, Sparkles, ShoppingBag } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -12,7 +12,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { PageContainer, PageHeader, SectionHeader } from "@/components/ui/page-shell";
 import { Progress } from "@/components/ui/progress";
 import { StatusBadge } from "@/components/ui/status-badge";
-import { getTaskStatusTone, isTaskActive, TASK_STATUS_LABELS, formatStageName, formatTemplateName } from "@/lib/ui-constants";
+import { getTaskStatusTone, isTaskActive, TASK_STATUS_LABELS, formatStageName, formatTemplateName, PRODUCTION_MODE_SPECS } from "@/lib/ui-constants";
 import { cn, formatDate } from "@/lib/utils";
 
 export default function DashboardPage() {
@@ -58,6 +58,30 @@ export default function DashboardPage() {
           </div>
         )}
       />
+
+      <section className="space-y-3" aria-labelledby="production-modes-title">
+        <SectionHeader title={<span id="production-modes-title">选择内容赛道</span>} />
+        <div className="grid gap-3 md:grid-cols-3">
+          {([
+            { mode: "knowledge" as const, href: "/projects", icon: BookOpen, action: "新建 Knowledge 项目" },
+            { mode: "commerce" as const, href: "/products", icon: ShoppingBag, action: "进入商品与方案" },
+            { mode: "drama" as const, href: "/drama", icon: Clapperboard, action: "进入 Drama 制片" },
+          ]).map(({ mode, href, icon: Icon, action }) => (
+            <Card key={mode} className="group border-border/80 bg-card/70 transition-colors hover:border-primary/40">
+              <CardContent className="flex h-full flex-col p-4 sm:p-5">
+                <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                  <span className="rounded-lg border border-primary/20 bg-primary/10 p-2 text-primary"><Icon className="h-4 w-4" aria-hidden="true" /></span>
+                  {PRODUCTION_MODE_SPECS[mode].label}
+                </div>
+                <p className="mt-3 flex-1 text-sm leading-6 text-muted-foreground">{PRODUCTION_MODE_SPECS[mode].description}</p>
+                <Link href={href} className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline">
+                  {action}<ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
+                </Link>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      </section>
 
       {/* Studio Pulse Metrics Strip */}
       <div className="grid grid-cols-2 gap-3.5 sm:grid-cols-4">
@@ -211,9 +235,14 @@ export default function DashboardPage() {
                 <Card key={project.id} className="group flex flex-col justify-between hover:border-primary/40 transition-all duration-150">
                   <CardHeader className="p-4 sm:p-5 pb-3">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="rounded-md border border-border/80 bg-secondary/80 px-2 py-0.5 font-mono text-xs font-medium text-foreground shadow-xs">
-                        {project.aspect_ratio}
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="rounded-md border border-primary/20 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                          {PRODUCTION_MODE_SPECS[project.primary_production_mode].label}
+                        </span>
+                        <span className="rounded-md border border-border/80 bg-secondary/80 px-2 py-0.5 font-mono text-xs font-medium text-foreground shadow-xs">
+                          {project.aspect_ratio}
+                        </span>
+                      </div>
                       <span className="font-mono text-xs tabular-nums text-muted-foreground">
                         {formatDate(project.updated_at)}
                       </span>

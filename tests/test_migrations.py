@@ -15,7 +15,7 @@ from src.models import Base
 ROOT_DIR = Path(__file__).resolve().parent.parent
 BACKEND_DIR = ROOT_DIR / "backend"
 BASELINE_REVISION = "001_release_baseline"
-RELEASE_REVISION = "002_trend_center"
+RELEASE_REVISION = "006_drama_preproduction"
 
 
 def _migration_database(tmp_path: Path, filename: str) -> tuple[Path, str]:
@@ -73,6 +73,26 @@ def test_head_creates_current_schema(tmp_path: Path):
             "content_brief",
             "generation_options",
         } <= _table_columns(connection, "topic_proposals")
+        assert "primary_production_mode" in _table_columns(connection, "projects")
+        assert "production_mode" in _table_columns(connection, "tasks")
+        assert {"product_id", "creative_angle"} <= _table_columns(connection, "tasks")
+        assert {"products", "product_assets", "commerce_creative_plans"} <= _table_names(connection)
+        assert {
+            "drama_bibles",
+            "drama_characters",
+            "drama_locations",
+            "drama_episodes",
+            "drama_scenes",
+            "drama_shots",
+            "drama_dialogue_lines",
+        } <= _table_names(connection)
+        assert "creative_plan_id" in _table_columns(connection, "tasks")
+        assert {
+            "visual_role",
+            "claim_refs",
+            "source_refs",
+            "production_metadata",
+        } <= _table_columns(connection, "scenes")
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
@@ -83,11 +103,66 @@ def test_existing_release_database_upgrades_and_downgrades_trend_center(tmp_path
     with sqlite3.connect(database_file) as connection:
         assert _migration_version(connection) == BASELINE_REVISION
         assert "trend_runs" not in _table_names(connection)
+        connection.execute(
+            """
+            INSERT INTO projects
+                (id, name, description, aspect_ratio, status, settings, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("project_legacy", "Legacy", "", "9:16", "draft", "{}", "2026-09-18", "2026-09-18"),
+        )
+        connection.execute(
+            """
+            INSERT INTO tasks
+                (id, project_id, title, description, job_type, status, progress_percentage,
+                 input_payload, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "task_legacy",
+                "project_legacy",
+                "Legacy task",
+                "",
+                "video_composition",
+                "pending",
+                0,
+                "{}",
+                "2026-09-18",
+                "2026-09-18",
+            ),
+        )
+        connection.commit()
 
     _run_migration(database_url, "head")
     with sqlite3.connect(database_file) as connection:
         assert _migration_version(connection) == RELEASE_REVISION
         assert "trend_runs" in _table_names(connection)
+        assert "primary_production_mode" in _table_columns(connection, "projects")
+        assert "production_mode" in _table_columns(connection, "tasks")
+        assert {"product_id", "creative_angle"} <= _table_columns(connection, "tasks")
+        assert {"products", "product_assets", "commerce_creative_plans"} <= _table_names(connection)
+        assert {
+            "drama_bibles",
+            "drama_characters",
+            "drama_locations",
+            "drama_episodes",
+            "drama_scenes",
+            "drama_shots",
+            "drama_dialogue_lines",
+        } <= _table_names(connection)
+        assert "creative_plan_id" in _table_columns(connection, "tasks")
+        assert {
+            "visual_role",
+            "claim_refs",
+            "source_refs",
+            "production_metadata",
+        } <= _table_columns(connection, "scenes")
+        assert connection.execute(
+            "SELECT primary_production_mode FROM projects WHERE id = 'project_legacy'"
+        ).fetchone() == ("knowledge",)
+        assert connection.execute(
+            "SELECT production_mode FROM tasks WHERE id = 'task_legacy'"
+        ).fetchone() == ("knowledge",)
 
     _run_migration(database_url, BASELINE_REVISION, downgrade=True)
     with sqlite3.connect(database_file) as connection:
@@ -133,6 +208,12 @@ async def test_verify_schema_reports_missing_columns(tmp_path: Path):
     assert "project_templates.template_id" in missing
     assert "provider_configs.last_test_connected" in missing
     assert "workflow_jobs.lease_token" in missing
+    assert "projects.primary_production_mode" in missing
+    assert "tasks.production_mode" in missing
+    assert "scenes.visual_role" in missing
+    assert "scenes.claim_refs" in missing
+    assert "scenes.source_refs" in missing
+    assert "scenes.production_metadata" in missing
     assert "workflow_step_runs.input_fingerprint" in missing
     assert "prompt_call_observations" in missing
 

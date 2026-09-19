@@ -1,5 +1,27 @@
 import type { StatusTone } from "@/components/ui/status-badge";
-import type { ContentMode, TrendFrequency } from "@/lib/types";
+import type { ContentMode, CreativeAngle, ProductionMode, TrendFrequency, VisualRole } from "@/lib/types";
+
+export interface ProductionModeSpec {
+  label: string;
+  description: string;
+}
+
+export const PRODUCTION_MODE_SPECS: Record<ProductionMode, ProductionModeSpec> = {
+  knowledge: {
+    label: "知识内容",
+    description: "研究、脚本、分镜与媒体生成的完整知识内容流程。",
+  },
+  commerce: {
+    label: "带货内容",
+    description: "商品事实、创意策略、商业分镜与转化视频的专用流程。",
+  },
+  drama: {
+    label: "Drama 制片",
+    description: "从已批准 Storyboard 到逐 Shot 媒体、对白音频与 Episode 视频。",
+  },
+};
+
+export const PRODUCTION_MODE_VALUES = Object.keys(PRODUCTION_MODE_SPECS) as ProductionMode[];
 
 export const GENRE_OPTIONS = [
   { value: "auto", label: "自动匹配", desc: "根据标题、文案和调研内容自动选择最合适的表达方向" },
@@ -11,6 +33,32 @@ export const GENRE_OPTIONS = [
   { value: "product_review", label: "产品测评与实用干货", desc: "围绕真实场景，清楚说明差异和使用价值" },
   { value: "general", label: "通用随笔与日常短文", desc: "亲切自然，像朋友分享一样直接清楚" },
 ] as const;
+
+export const VISUAL_ROLE_OPTIONS: ReadonlyArray<{ value: VisualRole; label: string; description: string }> = [
+  { value: "concept", label: "概念", description: "解释一个抽象概念或核心定义" },
+  { value: "process", label: "过程", description: "展示步骤、机制或因果链" },
+  { value: "comparison", label: "对比", description: "并列差异、误区或选择" },
+  { value: "timeline", label: "时间线", description: "按时间顺序呈现演变" },
+  { value: "data", label: "数据", description: "突出数字、趋势或图表关系" },
+  { value: "example", label: "例子", description: "把主张落到具体场景" },
+  { value: "quote", label: "引语", description: "突出原话、定义或证据摘录" },
+  { value: "b_roll", label: "补充画面", description: "提供语境，不承载新的关键结论" },
+  { value: "product_shot", label: "商品主体", description: "使用商品库中的真实商品素材" },
+  { value: "context", label: "使用场景", description: "说明商品所处的真实语境" },
+  { value: "benefit", label: "核心价值", description: "呈现已有事实支持的价值" },
+  { value: "proof", label: "事实依据", description: "承载可追溯的商品主张" },
+  { value: "cta", label: "行动引导", description: "引导核对、了解或下一步动作" },
+];
+
+export const CREATIVE_ANGLE_OPTIONS: ReadonlyArray<{ value: CreativeAngle; label: string; description: string }> = [
+  { value: "direct", label: "直接介绍", description: "先把商品和已确认信息讲清楚" },
+  { value: "pain_point", label: "痛点切入", description: "从用户正在面对的需求进入" },
+  { value: "use_case", label: "使用场景", description: "围绕真实使用语境展开" },
+  { value: "demo", label: "功能演示", description: "用商品素材演示如何理解和使用" },
+  { value: "review", label: "真实测评", description: "区分事实、体验与待确认信息" },
+  { value: "comparison", label: "对比选择", description: "按明确维度帮助用户核对选择" },
+  { value: "story", label: "故事叙事", description: "用需求变化串起商品事实" },
+];
 
 export const SCENE_COUNT_MIN = 8;
 export const SCENE_COUNT_MAX = 20;
@@ -192,6 +240,10 @@ export const CONTENT_MODE_LABELS: Record<ContentMode, string> = Object.fromEntri
 ) as Record<ContentMode, string>;
 
 export const STAGE_LABELS: Record<string, string> = {
+  product_ingest: "商品输入",
+  product_truth: "商品事实",
+  creative_strategy: "Creative Planning",
+  variant_selection: "Variant Selection",
   topic: "选题规划",
   planning: "选题策划",
   research: "全网调研",

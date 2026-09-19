@@ -4,9 +4,19 @@ const fs = require("node:fs");
 const path = require("node:path");
 const ts = require("typescript");
 const vm = require("node:vm");
+const uiConstantsSource = fs.readFileSync(path.join(__dirname, "../src/lib/ui-constants.ts"), "utf8");
+const uiConstantsOutput = ts.transpileModule(uiConstantsSource, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText;
+const uiConstantsContext = { exports: {} };
+vm.runInNewContext(uiConstantsOutput, uiConstantsContext);
 const source = fs.readFileSync(path.join(__dirname, "../src/lib/task-generation-state.ts"), "utf8");
 const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText;
-const context = { exports: {} };
+const context = {
+  exports: {},
+  require: (moduleName) => {
+    if (moduleName === "@/lib/ui-constants") return uiConstantsContext.exports;
+    throw new Error(`Unexpected test import: ${moduleName}`);
+  },
+};
 vm.runInNewContext(output, context);
 const { generationStatus, isGenerationLifecycleEvent, resolveSceneAssetRefreshAction } = context.exports;
 

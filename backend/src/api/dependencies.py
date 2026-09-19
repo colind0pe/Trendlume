@@ -5,7 +5,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database import get_db
 from src.services.asset_service import AssetService
+from src.services.commerce_planning_service import CommercePlanningService
+from src.services.commerce_preflight import CommercePreflightService
+from src.services.drama_production_service import DramaProductionService
 from src.services.generation_service import GenerationService
+from src.services.product_service import ProductService
 from src.services.project_service import ProjectService
 from src.services.provider_manager import ProviderManager
 from src.services.publishing_service import PublishingService
@@ -30,6 +34,26 @@ def get_provider_manager(session: AsyncSession = Depends(get_db)) -> ProviderMan
 
 def get_project_service(session: AsyncSession = Depends(get_db)) -> ProjectService:
     return ProjectService(session)
+
+
+def get_product_service(session: AsyncSession = Depends(get_db)) -> ProductService:
+    return ProductService(session)
+
+
+def get_commerce_planning_service(
+    session: AsyncSession = Depends(get_db),
+) -> CommercePlanningService:
+    return CommercePlanningService(session)
+
+
+def get_commerce_preflight_service(
+    session: AsyncSession = Depends(get_db),
+) -> CommercePreflightService:
+    return CommercePreflightService(session)
+
+
+def get_drama_service(session: AsyncSession = Depends(get_db)) -> DramaProductionService:
+    return DramaProductionService(session)
 
 
 def get_template_service(session: AsyncSession = Depends(get_db)) -> ProjectTemplateService:

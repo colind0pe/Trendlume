@@ -87,6 +87,7 @@ class WorkflowStepRetryRequest(BaseModel):
 
 class WorkflowStageSummaryResponse(BaseModel):
     step_key: str
+    label: str = ""
     status: str
     validity: str
     duration_ms: int

@@ -4,7 +4,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.domain.content_modes import ContentMode
-from src.domain.enums import JobType, TaskStatus
+from src.domain.enums import CreativeAngle, JobType, ProductionMode, TaskStatus
+from src.schemas.generation import KnowledgeBrief
 from src.schemas.scene import SceneResponse
 from src.schemas.workflow import WorkflowJobResponse
 
@@ -21,6 +22,11 @@ class TaskCreate(BaseModel):
     title: str = Field(default="新视频生成任务", min_length=1, max_length=255)
     description: str = Field(default="", max_length=2000)
     job_type: JobType = JobType.VIDEO_COMPOSITION
+    production_mode: ProductionMode | None = None
+    product_id: str | None = None
+    creative_plan_id: str | None = None
+    creative_angle: CreativeAngle | None = None
+    knowledge_brief: KnowledgeBrief | None = None
     input_payload: dict[str, Any] = Field(default_factory=dict)
     visual_mode: Literal["image", "video"] = "image"
     template_id: str = "default_portrait"
@@ -46,6 +52,10 @@ class TaskCreate(BaseModel):
 class TaskUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
+    production_mode: ProductionMode | None = None
+    product_id: str | None = None
+    creative_plan_id: str | None = None
+    creative_angle: CreativeAngle | None = None
     status: TaskStatus | None = None
     input_payload: dict[str, Any] | None = None
     result_payload: dict[str, Any] | None = None
@@ -70,9 +80,13 @@ class TaskResponse(BaseModel):
 
     id: str
     project_id: str
+    product_id: str | None = None
+    creative_plan_id: str | None = None
+    creative_angle: str | None = None
     title: str
     description: str
     job_type: str
+    production_mode: str
     status: str
     progress_percentage: int
     input_payload: dict[str, Any]

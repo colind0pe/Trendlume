@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.exceptions import NotFoundException, ValidationException
 from src.domain.enums import BGM_STORAGE_PREFIX, AssetType
 from src.models.asset import AssetModel
+from src.models.product import ProductAssetModel
 from src.models.project import ProjectModel
 from src.models.publishing import PublishingJobModel
 from src.models.scene import SceneModel
@@ -198,6 +199,7 @@ class AssetService:
             "scene_reference": "素材正在被分镜使用，不能删除。",
             "publishing_reference": "素材正在被发布作业使用，不能删除。",
             "task_reference": "素材正在被任务结果或输入配置引用，不能删除。",
+            "product_reference": "素材正在被商品库使用，请从商品库中管理。",
         }.get(reason, "素材当前被引用，不能删除。")
 
     async def _asset_reference_reason(self, asset: AssetModel) -> str | None:
@@ -206,6 +208,10 @@ class AssetService:
             return "workflow_reference"
         if is_system_asset(asset):
             return "system_asset"
+        if await self.session.scalar(
+            select(ProductAssetModel.id).where(ProductAssetModel.asset_id == asset.id).limit(1)
+        ):
+            return "product_reference"
 
         project_filter = asset.project_id
         project_stmt = select(ProjectModel.id).where(

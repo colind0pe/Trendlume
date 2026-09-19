@@ -137,9 +137,12 @@ async def apply_script_to_task(
         data=TaskDetailResponse(
             id=task.id,
             project_id=task.project_id,
+            product_id=task.product_id,
+            creative_angle=task.creative_angle,
             title=task.title,
             description=task.description,
             job_type=task.job_type,
+            production_mode=task.production_mode,
             status=task.status,
             progress_percentage=task.progress_percentage,
             input_payload=task.input_payload,

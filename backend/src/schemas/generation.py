@@ -1,3 +1,4 @@
+import hashlib
 import html
 import re
 from typing import Any, Literal
@@ -5,6 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from src.domain.content_modes import ContentMode
+from src.domain.enums import VisualRole
 
 RESEARCH_CONTEXT_MAX_CHARS = 7000
 PLATFORM_DECLARATIONS = frozenset(
@@ -51,12 +53,20 @@ class ResearchRequest(BaseModel):
 class ResearchSource(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
+    ref_id: str | None = Field(default=None, max_length=100)
     title: str = ""
     url: str = ""
     snippet: str = ""
     domain: str | None = None
     published_at: str | None = None
     score: float | None = None
+
+    @model_validator(mode="after")
+    def ensure_ref_id(self) -> "ResearchSource":
+        if not self.ref_id:
+            basis = (self.url or self.title or "source").strip().encode("utf-8")
+            self.ref_id = f"source-{hashlib.sha256(basis).hexdigest()[:12]}"
+        return self
 
 
 class ResearchQueryRecord(BaseModel):
@@ -100,22 +110,88 @@ class ResearchResponse(BaseModel):
         if self.summary:
             lines.append(f"研究摘要：{self.summary}")
         for index, source in enumerate(self.sources[:max_sources], start=1):
+            ref_id = source.ref_id or f"source-{index}"
             title = source.title or "未命名来源"
             url = source.url or "无链接"
             snippet = source.snippet or "无摘要"
-            lines.append(f"[{index}] {title}\nURL: {url}\n摘要: {snippet}")
+            lines.append(f"[{ref_id}] {title}\nURL: {url}\n摘要: {snippet}")
 
         return format_untrusted_prompt_data(
             "\n".join(lines), label="research_context", max_chars=max_chars
         )
 
 
-class ContentBrief(BaseModel):
-    """Optional, bounded creative intent supplied as untrusted prompt data."""
+class KnowledgeClaim(BaseModel):
+    """A factual or explanatory assertion with explicit source references."""
 
     model_config = ConfigDict(extra="ignore")
 
-    audience: str | None = Field(default=None, max_length=500)
+    id: str = Field(default="", min_length=1, max_length=100)
+    statement: str = Field(default="", min_length=1, max_length=1000)
+    source_refs: list[str] = Field(default_factory=list, max_length=20)
+
+
+class KnowledgeBrief(BaseModel):
+    """The compact editorial contract for every Knowledge Mode video."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    audience: str = Field(default="", max_length=500)
+    thesis: str = Field(default="", max_length=500)
+    viewer_takeaway: str = Field(default="", max_length=500)
+    key_claims: list[KnowledgeClaim] = Field(default_factory=list, max_length=20)
+    source_refs: list[str] = Field(default_factory=list, max_length=20)
+    # Genre is a Knowledge Mode content direction, never a production mode.
+    genre: str = Field(default="auto", max_length=100)
+
+    @field_validator("key_claims", mode="before")
+    @classmethod
+    def normalize_key_claims(cls, value: Any) -> list[Any]:
+        if value is None:
+            return []
+        if isinstance(value, (str, dict)):
+            value = [value]
+        normalized: list[Any] = []
+        for index, item in enumerate(value):
+            if isinstance(item, str):
+                normalized.append({"id": f"claim-{index + 1}", "statement": item})
+            elif isinstance(item, dict):
+                item = dict(item)
+                item.setdefault("id", f"claim-{index + 1}")
+                if "statement" not in item and "text" in item:
+                    item["statement"] = item["text"]
+                normalized.append(item)
+        return normalized[:20]
+
+    @model_validator(mode="after")
+    def normalize_claim_ids(self) -> "KnowledgeBrief":
+        seen: set[str] = set()
+        for index, claim in enumerate(self.key_claims):
+            claim.id = (claim.id or f"claim-{index + 1}").strip()[:100]
+            if claim.id in seen:
+                claim.id = f"claim-{index + 1}"
+            seen.add(claim.id)
+            claim.statement = claim.statement.strip()[:1000]
+            claim.source_refs = list(dict.fromkeys(ref.strip() for ref in claim.source_refs if str(ref).strip()))[:20]
+        self.source_refs = list(dict.fromkeys(ref.strip() for ref in self.source_refs if str(ref).strip()))[:20]
+        return self
+
+    @classmethod
+    def from_payload(cls, value: Any) -> "KnowledgeBrief":
+        if isinstance(value, cls):
+            return value
+        if isinstance(value, ContentBrief):
+            return value.to_knowledge_brief()
+        if isinstance(value, dict):
+            if {"goal", "angle", "key_points", "claims"} & value.keys():
+                return ContentBrief.model_validate(value).to_knowledge_brief()
+            return cls.model_validate(value)
+        return cls()
+
+
+class ContentBrief(KnowledgeBrief):
+    """Legacy content brief accepted by existing clients and Trend proposals."""
+
     goal: str | None = Field(default=None, max_length=500)
     angle: str | None = Field(default=None, max_length=500)
     tone: str | None = Field(default=None, max_length=200)
@@ -123,8 +199,38 @@ class ContentBrief(BaseModel):
     key_points: list[str] = Field(default_factory=list, max_length=20)
     claims: list[str] = Field(default_factory=list, max_length=20)
     uncertainty: str | None = Field(default=None, max_length=1000)
-    source_refs: list[str] = Field(default_factory=list, max_length=20)
     production_constraints: list[str] = Field(default_factory=list, max_length=20)
+
+    @model_validator(mode="after")
+    def normalize_legacy_fields(self) -> "ContentBrief":
+        if not self.thesis:
+            self.thesis = (self.angle or self.goal or "").strip()[:500]
+        if not self.viewer_takeaway:
+            self.viewer_takeaway = (self.goal or self.thesis or "").strip()[:500]
+        if not self.key_claims:
+            legacy_claims = self.claims or self.key_points
+            self.key_claims = [
+                KnowledgeClaim(
+                    id=f"claim-{index + 1}",
+                    statement=claim,
+                    source_refs=list(self.source_refs),
+                )
+                for index, claim in enumerate(legacy_claims)
+                if str(claim).strip()
+            ]
+        return self
+
+    def to_knowledge_brief(self) -> KnowledgeBrief:
+        return KnowledgeBrief.model_validate(
+            {
+                "audience": self.audience,
+                "thesis": self.thesis or self.angle or self.goal or "",
+                "viewer_takeaway": self.viewer_takeaway or self.goal or "",
+                "key_claims": [claim.model_dump() for claim in self.key_claims],
+                "source_refs": self.source_refs,
+                "genre": self.genre,
+            }
+        )
 
 
 class ContentGenerateRequest(BaseModel):
@@ -141,6 +247,8 @@ class ContentGenerateRequest(BaseModel):
     research_max_results: int = Field(default=5, ge=1, le=5)
     aspect_ratio: Literal["9:16", "16:9", "1:1"] = "9:16"
     language: str | None = Field(default=None, max_length=100)
+    knowledge_brief: KnowledgeBrief | None = None
+    content_brief: ContentBrief | None = None
     prompt_versions: dict[str, str] | None = None
 
 
@@ -230,6 +338,33 @@ class StructuredSceneScript(BaseModel):
     narration_text: str = Field(description="该分镜的旁白配音台词，简明精练、口语化")
     visual_prompt: str = Field(description="该分镜对应的可直接用于人工智能画面生成的详细中文提示词")
     badge_text: str = Field(default="", description="画面卡片上的角标或小标题")
+    visual_role: VisualRole = Field(
+        default=VisualRole.CONCEPT,
+        description="知识或商业视觉角色；Commerce 支持 product_shot/context/benefit/proof/cta",
+    )
+    claim_refs: list[str] = Field(
+        default_factory=list,
+        max_length=20,
+        description="该分镜解释的 KnowledgeBrief claim id 列表",
+    )
+    source_refs: list[str] = Field(
+        default_factory=list,
+        max_length=20,
+        description="该分镜直接使用的来源 ref_id 列表",
+    )
+    production_metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Knowledge Mode 分镜生产元数据，不参与旧版 layout_params",
+    )
+
+    @field_validator("visual_role", mode="before")
+    @classmethod
+    def normalize_visual_role(cls, value: Any) -> VisualRole:
+        normalized = str(value or VisualRole.CONCEPT.value).strip().lower().replace("-", "_")
+        try:
+            return VisualRole(normalized)
+        except ValueError:
+            return VisualRole.CONCEPT
 
     @field_validator("narration_text", "visual_prompt", mode="before")
     @classmethod
@@ -245,6 +380,7 @@ class VisualPromptBatchItem(BaseModel):
 
     sequence_index: int = Field(default=0, ge=0)
     visual_prompt: str | None = Field(default=None, description="该分镜的中文画面提示词")
+    visual_role: VisualRole = VisualRole.CONCEPT
 
 
 class VisualPromptBatch(BaseModel):
@@ -258,6 +394,10 @@ class StructuredScript(BaseModel):
     hook: str = Field(description="视频前3秒吸睛钩子文案")
     narration: str = Field(description="完整的旁白口播文案")
     scenes: list[StructuredSceneScript] = Field(min_length=1, description="有序分镜序列")
+    knowledge_brief: KnowledgeBrief = Field(
+        default_factory=KnowledgeBrief,
+        description="Knowledge Mode 的受众、主张、观众收获与来源关系",
+    )
     metadata: PlatformMetadata = Field(
         default_factory=PlatformMetadata,
         description="面向抖音等平台的发布标题、描述、话题标签与内容声明",
@@ -294,7 +434,9 @@ class ScriptGenerateRequest(BaseModel):
     research_max_queries: int = Field(default=3, ge=1, le=3)
     research_max_results: int = Field(default=5, ge=1, le=5)
     research_context: str | None = Field(default=None, max_length=RESEARCH_CONTEXT_MAX_CHARS)
+    research_sources: list[ResearchSource] = Field(default_factory=list, max_length=20)
     target_scene_count: int = Field(default=8, ge=8, le=20, description="期望分镜数量")
+    knowledge_brief: KnowledgeBrief | None = None
     content_brief: ContentBrief | None = None
     content_mode: ContentMode | None = None
     aspect_ratio: Literal["9:16", "16:9", "1:1"] = "9:16"

@@ -7,7 +7,7 @@ def test_offline_baseline_is_green_and_separates_manual_metrics():
     report = run_baseline(DEFAULT_FIXTURES)
 
     assert report["offline"] is True
-    assert report["counts"] == {"pass": 5, "known_gap": 6, "fail": 0}
+    assert report["counts"] == {"pass": 6, "known_gap": 6, "fail": 0}
     gaps = {
         gap
         for result in report["results"]

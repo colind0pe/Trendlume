@@ -7,9 +7,11 @@ from sqlalchemy import JSON, DateTime, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.core.database import Base
+from src.domain.enums import ProductionMode
 
 if TYPE_CHECKING:
     from src.models.asset import AssetModel
+    from src.models.drama import DramaBibleModel
     from src.models.task import TaskModel
     from src.models.template import ProjectTemplateModel
 
@@ -21,6 +23,9 @@ class ProjectModel(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
     aspect_ratio: Mapped[str] = mapped_column(String(10), default="9:16", nullable=False)
+    primary_production_mode: Mapped[str] = mapped_column(
+        String(20), default=ProductionMode.KNOWLEDGE.value, nullable=False
+    )
     status: Mapped[str] = mapped_column(String(20), default="draft", nullable=False)
     cover_asset_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     default_voice_id: Mapped[str | None] = mapped_column(
@@ -56,5 +61,12 @@ class ProjectModel(Base):
     assets: Mapped[list[AssetModel]] = relationship(
         "AssetModel",
         back_populates="project",
+        lazy="selectin",
+    )
+    drama_bibles: Mapped[list[DramaBibleModel]] = relationship(
+        "DramaBibleModel",
+        back_populates="project",
+        cascade="all, delete-orphan",
+        order_by="DramaBibleModel.updated_at.desc()",
         lazy="selectin",
     )

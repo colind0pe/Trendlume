@@ -5,8 +5,10 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.core.database import async_session_factory
+from src.core.exceptions import ValidationException
+from src.models.task import TaskModel
 from src.models.workflow import WorkflowJobModel
-from src.services.durable_pipeline import DurableVideoPipeline
+from src.services.production_pipeline import production_pipeline_registry
 from src.services.rendering_service import RenderingService
 from src.tasks.job import Job
 
@@ -20,7 +22,15 @@ class VideoWorkflowExecutor:
 
     async def execute(self, job: Job) -> dict[str, Any]:
         async with self.session_factory() as session:
-            pipeline = DurableVideoPipeline(session, job, self.rendering_service_factory)
+            task = await session.get(TaskModel, job.task_id)
+            if task is None:
+                raise ValidationException("任务不存在")
+            pipeline = production_pipeline_registry.create(
+                getattr(task, "production_mode", None),
+                session,
+                job,
+                self.rendering_service_factory,
+            )
             try:
                 result = await pipeline.execute()
             except BaseException:

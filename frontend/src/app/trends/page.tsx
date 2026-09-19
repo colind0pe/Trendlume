@@ -28,6 +28,7 @@ import { api, ApiError } from "@/lib/api-client";
 import type {
   Asset,
   ContentMode,
+  KnowledgeBrief,
   Project,
   TemplateCatalogItem,
   TrendItem,
@@ -314,6 +315,9 @@ function TrendDetailSheet({
   const [contentMode, setContentMode] = React.useState<ContentMode>("generated_image");
   const [selectedTemplateId, setSelectedTemplateId] = React.useState("");
   const [taskGenre, setTaskGenre] = React.useState("auto");
+  const [knowledgeAudience, setKnowledgeAudience] = React.useState("");
+  const [knowledgeThesis, setKnowledgeThesis] = React.useState("");
+  const [knowledgeViewerTakeaway, setKnowledgeViewerTakeaway] = React.useState("");
   const [taskHookType, setTaskHookType] = React.useState("auto");
   const [taskStylePreset, setTaskStylePreset] = React.useState("stick_figure");
   const [customPromptPrefix, setCustomPromptPrefix] = React.useState("");
@@ -422,6 +426,11 @@ function TrendDetailSheet({
         : selectedProject?.default_voice_id || "";
 
       setAngle(createdProposal.angle || "");
+      const brief = createdProposal.knowledge_brief;
+      const legacyBrief = createdProposal.content_brief;
+      setKnowledgeAudience(brief?.audience || legacyBrief?.audience || "");
+      setKnowledgeThesis(brief?.thesis || legacyBrief?.thesis || legacyBrief?.angle || "");
+      setKnowledgeViewerTakeaway(brief?.viewer_takeaway || legacyBrief?.viewer_takeaway || legacyBrief?.goal || "");
       setSceneCount(Number.isFinite(count) ? Math.max(8, Math.min(20, count)) : 8);
       setEnableResearch(options.enable_research !== false);
       setContentMode(isContentMode(options.content_mode) ? options.content_mode : "generated_image");
@@ -496,10 +505,40 @@ function TrendDetailSheet({
         },
         current.generation_options,
       );
-      if (angle.trim() !== current.angle || JSON.stringify(nextOptions) !== JSON.stringify(current.generation_options)) {
+      const currentBrief = current.knowledge_brief || current.content_brief;
+      const legacyCurrentBrief = current.content_brief;
+      const currentKnowledgeBrief = current.knowledge_brief;
+      const nextKnowledgeBrief: KnowledgeBrief = {
+        audience: knowledgeAudience.trim(),
+        thesis: knowledgeThesis.trim() || angle.trim(),
+        viewer_takeaway: knowledgeViewerTakeaway.trim(),
+        key_claims: currentBrief?.key_claims || [],
+        source_refs: currentBrief?.source_refs || [],
+        genre: taskGenre,
+      };
+      const existingKnowledgeBrief = currentKnowledgeBrief
+        ? {
+            audience: currentKnowledgeBrief.audience || "",
+            thesis: currentKnowledgeBrief.thesis || "",
+            viewer_takeaway: currentKnowledgeBrief.viewer_takeaway || "",
+            key_claims: currentKnowledgeBrief.key_claims || [],
+            source_refs: currentKnowledgeBrief.source_refs || [],
+            genre: currentKnowledgeBrief.genre || "auto",
+          }
+        : {
+            audience: legacyCurrentBrief?.audience || "",
+            thesis: legacyCurrentBrief?.thesis || legacyCurrentBrief?.angle || "",
+            viewer_takeaway: legacyCurrentBrief?.viewer_takeaway || legacyCurrentBrief?.goal || "",
+            key_claims: legacyCurrentBrief?.key_claims || [],
+            source_refs: legacyCurrentBrief?.source_refs || [],
+            genre: legacyCurrentBrief?.genre || "auto",
+          };
+      const briefChanged = JSON.stringify(nextKnowledgeBrief) !== JSON.stringify(existingKnowledgeBrief);
+      if (angle.trim() !== current.angle || JSON.stringify(nextOptions) !== JSON.stringify(current.generation_options) || briefChanged) {
         current = await api.updateTrendProposal(current.id, {
           expected_revision: current.revision,
           angle: angle.trim() || current.angle,
+          knowledge_brief: nextKnowledgeBrief,
           generation_options: nextOptions,
         });
         setLocalProposal(current);
@@ -569,7 +608,7 @@ function TrendDetailSheet({
         </div>
         <SheetTitle>{item.title}</SheetTitle>
         <SheetDescription>
-          确认选题角度与参数后，即可创建任务或开始生成。
+          热点只是输入源；确认受众、主张和观众价值后，创建一条知识视频任务。
         </SheetDescription>
       </SheetHeader>
 
@@ -717,8 +756,47 @@ function TrendDetailSheet({
               />
             </div>
 
-            {/* 创作角度编辑 */}
-            <Field label="创作角度" htmlFor="proposal-angle-input">
+            {/* Knowledge Brief */}
+            <div className="space-y-3 rounded-lg border border-primary/20 bg-primary/5 p-3">
+              <div>
+                <p className="text-xs font-semibold text-foreground">知识视频 Brief</p>
+                <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">
+                  这些字段会沿着脚本和分镜保存，帮助画面服务于信息逻辑。
+                </p>
+              </div>
+              <Field label="面向谁" htmlFor="proposal-audience-input">
+                <Input
+                  id="proposal-audience-input"
+                  value={knowledgeAudience}
+                  onChange={(event) => setKnowledgeAudience(event.target.value)}
+                  disabled={proposalClosed || isWorking}
+                  placeholder="例如：第一次接触这个话题的普通观众"
+                />
+              </Field>
+              <Field label="核心主张" htmlFor="proposal-thesis-input">
+                <Textarea
+                  id="proposal-thesis-input"
+                  value={knowledgeThesis}
+                  onChange={(event) => setKnowledgeThesis(event.target.value)}
+                  rows={2}
+                  disabled={proposalClosed || isWorking}
+                  placeholder="一句话说清这条视频希望观众理解什么"
+                />
+              </Field>
+              <Field label="观众看完带走什么" htmlFor="proposal-takeaway-input">
+                <Textarea
+                  id="proposal-takeaway-input"
+                  value={knowledgeViewerTakeaway}
+                  onChange={(event) => setKnowledgeViewerTakeaway(event.target.value)}
+                  rows={2}
+                  disabled={proposalClosed || isWorking}
+                  placeholder="例如：能用一个例子解释热点背后的机制"
+                />
+              </Field>
+            </div>
+
+            {/* Angle remains a compatibility field and feeds the thesis when needed. */}
+            <Field label="知识切入角度" htmlFor="proposal-angle-input">
               <Textarea
                 id="proposal-angle-input"
                 value={angle}
@@ -746,7 +824,7 @@ function TrendDetailSheet({
             {/* 生成规划 */}
             <div className="space-y-2.5 rounded-lg border border-border/60 bg-secondary/20 p-3">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-xs font-semibold text-foreground">生成规划</span>
+                <span className="text-xs font-semibold text-foreground">知识视频生成规划</span>
                 <span className="font-mono text-[11px] font-medium text-primary">
                   目标 {sceneCount} 镜 · 约 {sceneCount * 4} 秒
                 </span>
@@ -790,10 +868,10 @@ function TrendDetailSheet({
               </label>
             </div>
 
-            {/* 与新建视频任务共用的生成设置 */}
+            {/* 与知识视频任务共用的生成设置 */}
             <div className="space-y-3 rounded-lg border border-primary/20 bg-primary/5 p-3">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-xs font-semibold text-foreground">视频设置</span>
+                <span className="text-xs font-semibold text-foreground">知识视频设置</span>
               </div>
 
               <div className="grid gap-3 sm:grid-cols-2">
@@ -857,7 +935,7 @@ function TrendDetailSheet({
                   ) : null}
                 </Field>
 
-                <Field label="题材方向" htmlFor="trend-genre">
+                <Field label="知识方向" htmlFor="trend-genre">
                   <Select
                     id="trend-genre"
                     value={taskGenre}

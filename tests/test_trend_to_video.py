@@ -61,6 +61,8 @@ async def test_proposal_revision_and_task_are_idempotent(
     assert proposal["generation_options"]["content_mode"] == "generated_image"
     assert proposal["generation_options"]["genre"] == "auto"
     assert proposal["generation_options"]["bgm_enabled"] is True
+    assert proposal["knowledge_brief"]["thesis"]
+    assert proposal["knowledge_brief"]["source_refs"] == ["https://example.com/trend"]
     again = await client.post(
         "/api/v1/trends/proposals",
         json={"project_id": project.id, "trend_item_id": trend_item_id},
@@ -87,6 +89,7 @@ async def test_proposal_revision_and_task_are_idempotent(
     assert approved.status_code == 200
     action = approved.json()["data"]
     assert action["task"]["id"]
+    assert action["task"]["production_mode"] == "knowledge"
     assert action["proposal"]["status"] == "task_created"
     task_id = action["task"]["id"]
     assert (
@@ -96,6 +99,7 @@ async def test_proposal_revision_and_task_are_idempotent(
     assert action["task"]["input_payload"]["enable_research"] is True
     assert action["task"]["input_payload"]["content_mode"] == "generated_image"
     assert action["task"]["input_payload"]["voice_speed"] == 1.0
+    assert action["task"]["input_payload"]["knowledge_brief"]["thesis"]
     script_inputs = build_script_generation_inputs(
         action["task"]["input_payload"], topic=action["task"]["title"]
     )

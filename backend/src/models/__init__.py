@@ -1,5 +1,22 @@
 from src.core.database import Base
 from src.models.asset import AssetModel
+from src.models.creative_plan import CreativePlanModel
+from src.models.drama import (
+    Character,
+    DialogueLine,
+    DramaBible,
+    DramaBibleModel,
+    DramaCharacterModel,
+    DramaDialogueLineModel,
+    DramaEpisodeModel,
+    DramaLocationModel,
+    DramaSceneModel,
+    DramaShotModel,
+    Episode,
+    Location,
+    Shot,
+)
+from src.models.product import ProductAssetModel, ProductModel
 from src.models.project import ProjectModel
 from src.models.prompt_observation import PromptCallObservationModel
 from src.models.provider_config import ProviderConfigModel
@@ -27,6 +44,22 @@ from src.models.workflow import (
 __all__ = [
     "Base",
     "ProjectModel",
+    "ProductModel",
+    "ProductAssetModel",
+    "CreativePlanModel",
+    "DramaBibleModel",
+    "DramaCharacterModel",
+    "DramaLocationModel",
+    "DramaEpisodeModel",
+    "DramaSceneModel",
+    "DramaShotModel",
+    "DramaDialogueLineModel",
+    "DramaBible",
+    "Character",
+    "Location",
+    "Episode",
+    "Shot",
+    "DialogueLine",
     "ProjectTemplateModel",
     "TaskModel",
     "SceneModel",

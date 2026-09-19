@@ -1,8 +1,8 @@
 # 🎬 Trendlume
 
-> Trendlume 是一个专为创作者设计的 AI 短视频制作与发布工作台。
+> Trendlume 是一个面向不同内容赛道的 AI 视频生产工作台。
 
-你可以从全网热点捕获灵感并生成选题提案，也可以直接输入主题让 AI 联网调研，或者粘贴现成文案快速成片。每个镜头都可以在故事板中单独调整，修改局部不需要全盘重新渲染，最后直接推送到抖音发布。
+同一个本地工作台内，Knowledge、Commerce 与 Drama 使用各自的策划入口和生产流程，再复用媒体生成、配音、字幕、渲染与持久化能力。Project 保存默认 Production Mode，单个 Task 可在适合的入口中覆盖；`ContentMode` 只表示“画面来源”，不再承担内容赛道的职责。
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=flat-square)](LICENSE) [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/) [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/) [![Next.js 14](https://img.shields.io/badge/Next.js-14-black?style=flat-square&logo=next.js&logoColor=white)](https://nextjs.org/) [![React 18](https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react&logoColor=black)](https://react.dev/) [![SQLite](https://img.shields.io/badge/SQLite-3-003B57?style=flat-square&logo=sqlite&logoColor=white)](https://www.sqlite.org/) [![FFmpeg](https://img.shields.io/badge/FFmpeg-6.0+-007808?style=flat-square&logo=ffmpeg&logoColor=white)](https://ffmpeg.org/)
 
@@ -11,28 +11,39 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/trendlume-readme-hero.png" alt="Trendlume AI 短视频创作与发布工作台" />
+  <img src="docs/assets/trendlume-readme-hero.png" alt="Trendlume 面向不同内容赛道的 AI 视频生产工作台" />
 </p>
+
+## 三种 Production Mode
+
+| 模式 | 从哪里开始 | 专属流程 |
+| --- | --- | --- |
+| **Knowledge** | 主题、热点提案或现成文案 | 来源调研、Knowledge Brief、知识脚本、分镜与镜头级调整 |
+| **Commerce** | 商品事实卡与已选择的 Creative Plan | Truth Sheet、事实约束、商业分镜、真实商品素材锁定与发布前 QA |
+| **Drama** | 故事想法或已有剧本 | Drama Bible、角色与场景、Episode、逐 Shot Storyboard、批准后制作 |
+
+三条赛道共用已配置的 LLM、图像/视频、TTS、素材与渲染 Provider；实际生成能力取决于本地服务、网络和凭据配置。Drama 只有在 Storyboard、Scene 与 Shot 完成批准后才会创建媒体生产 Task。
 
 ## ✨ 它能为你做什么
 
-- **三维创作起点**：支持全网热点发现（聚合 7 大平台公开热榜并生成选题提案）、主题定向扩写（联网查资料并规划分镜）、已有文案导入（直接拆解分镜），按你的习惯进入创作。
+- **按内容赛道进入生产**：Project 先选择 Knowledge、Commerce 或 Drama；每条赛道只展示与自身业务有关的输入、检查点和工作区。
+- **Knowledge 的多种起点**：支持全网热点提案、主题定向扩写与已有文案导入；热点仍沿用 `Trend → Proposal → Knowledge Task`，不会创建另一套任务系统。
+- **Commerce 的事实约束**：从商品 Truth Sheet 和已审阅 Creative Plan 进入商业分镜；商品主体镜头优先使用锁定的真实素材，缺失时明确失败，不静默重绘商品。
+- **Drama 的批准门槛**：故事、Bible、角色/场景、Episode 与逐 Shot Storyboard 保持独立；只有批准内容进入后续媒体、对白音频与 Episode 合成。
 - **镜头级可视化微调**：生成的视频不是黑盒。在故事板中，你可以逐个镜头预览画面、调整时长或修改台词。换一张图或重写一句话，不会打乱其他镜头的节奏。
 - **按来源选择画面**：支持 AI 生图、AI 视频、Pexels 素材库视频、纯文字排版卡片，也支持直接绑定自己的图片或视频。
 - **音画字幕自动对齐**：内置免费的 Edge-TTS，也可以接入火山引擎豆包语音。系统会根据音频时长自动排布画面，并生成双语或单语字幕，支持 9:16 竖屏、16:9 横屏和 1:1 方形画幅（内置 19 种排版模板）。
 - **随时暂停与局部重试**：每一步骤自动存盘。网络抖动或渲染中断后随时继续；修改第 3 个镜头的素材，不需要重新合成前面已经满意的场景。
 - **直连抖音发布**：手机扫码即可授权绑定抖音创作者中心，在后台直接填写标题、话题标签、挑选封面，支持即时发布与定时排期。
 
-## 创作工作流
+## 生产工作流
 
 ```text
-全网热点 ──> 选题提案 ──┐
-                         ├──> 分镜脚本 ──> 故事板精修（换图/调词）
-输入主题 ──> 资料调研 ──┤                          │
-                         │                          │
-粘贴已有文案 ────────────┘                          │
-                                                    │
-成片导出 / 抖音发布 <── 视频渲染合成 <── 配音与字幕生成 <───┘
+Knowledge：热点 / 主题 / 文案 → 调研与知识策划 → 分镜 → 媒体 / 配音 / 字幕 → 合成
+Commerce：商品事实 → Creative Plan → 商业分镜 → 商品与辅助素材 → QA → 合成
+Drama：故事 / 剧本 → Bible → 角色与场景 → Episode → Shot Storyboard → 批准 → 制作
+                                                        │
+                    共用 Provider、持久化产物、局部重试与渲染能力 ──────────┘
 ```
 
 - **全网热点**：通过公开接口获取 7 大平台实时热榜，由大模型匹配项目偏好生成切入点与大纲，确认后一键转为标准视频任务。
@@ -194,7 +205,7 @@ npm run dev
   - 画面生成：拓展 Midjourney、可灵 AI等更多视频与图像生成服务
   - 语音合成：拓展更多拟真且支持多情感表达的 TTS 服务
 - [ ] **适配更多社交媒体平台**：增加对 TikTok、Youtube、B站 (Bilibili)、小红书、微信视频号等平台的封面适配、话题管理与一键/定时发布。
-- [ ] **AI 短剧生成**：支持多集连续剧本规划、角色人物形象与服装一致性保持、分机位分镜调度以及长篇短剧连续生成。
+- [x] **Drama Production Mode（当前 checkout）**：提供 Bible、角色/场景、Episode、逐 Shot Storyboard、批准门槛与 Episode production；生成效果仍取决于已配置的媒体与 TTS Provider。
 
 ## 📂 项目结构
 

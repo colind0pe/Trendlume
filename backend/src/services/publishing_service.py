@@ -8,7 +8,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.exceptions import NotFoundException, ValidationException
 from src.core.security import redact_sensitive_text, secret_cipher
-from src.domain.enums import AssetType, CredentialType, PlatformType, PublishJobStatus
+from src.domain.enums import (
+    AssetType,
+    CredentialType,
+    PlatformType,
+    ProductionMode,
+    PublishJobStatus,
+)
 from src.models.asset import AssetModel
 from src.models.provider_config import ProviderConfigModel
 from src.models.publishing import CredentialModel, PublishingJobModel, SocialAccountModel
@@ -34,6 +40,7 @@ from src.schemas.publishing import (
     QRCompleteRequest,
     SocialAccountCreate,
 )
+from src.services.commerce_preflight import CommercePreflightService
 from src.services.rendering_service import RenderingService
 from src.storage.local_storage import LocalStorageService, local_storage
 from src.tasks.broadcaster import event_broadcaster
@@ -70,6 +77,26 @@ class PublishingService:
             ProviderConfigModel.enabled.is_(True),
         )
         return (await self.session.execute(stmt)).scalars().first()
+
+    async def _assert_commerce_preflight(
+        self,
+        task_id: str,
+        *,
+        require_media: bool,
+    ) -> None:
+        result = await CommercePreflightService(self.session).run(
+            task_id,
+            require_media=require_media,
+        )
+        if result.blocking:
+            messages = [
+                item.message
+                for item in result.findings
+                if item.severity == "error"
+            ]
+            raise ValidationException(
+                "Commerce Preflight QA 未通过：" + "；".join(messages[:3])
+            )
 
     # ========================================================================
     # Credential methods
@@ -502,6 +529,9 @@ class PublishingService:
         if not task:
             raise NotFoundException("Task", task_id)
 
+        if task.production_mode == ProductionMode.COMMERCE.value:
+            await self._assert_commerce_preflight(task_id, require_media=False)
+
         # 1. Resolve Account
         if not account_id:
             accounts = await self.list_accounts(PlatformType.DOUYIN.value)
@@ -514,6 +544,9 @@ class PublishingService:
         if not video_asset_id:
             composed_asset = await self.rendering_service.compose_task_video(task_id)
             video_asset_id = composed_asset.id
+
+        if task.production_mode == ProductionMode.COMMERCE.value:
+            await self._assert_commerce_preflight(task_id, require_media=True)
 
         # 3. Reuse the metadata generated with the storyboard.  Explicit
         # publish-form values still win, while old tasks fall back to the
@@ -606,6 +639,18 @@ class PublishingService:
             raise ValidationException("待发布视频文件不存在或为空。")
         if getattr(self.provider, "name", "") != "mock":
             await self.rendering_service._validate_media_file(video_path, require_audio=True)
+
+        task_id = (job.custom_params or {}).get("task_id")
+        linked_task = await self.task_repo.get_by_id(task_id) if task_id else None
+        if linked_task and linked_task.production_mode == ProductionMode.COMMERCE.value:
+            try:
+                await self._assert_commerce_preflight(task_id, require_media=True)
+            except ValidationException as exc:
+                job.status = PublishJobStatus.FAILED.value
+                job.error_message = str(exc)
+                await self.job_repo.update(job)
+                await self.session.commit()
+                raise
 
         job.status = PublishJobStatus.PUBLISHING.value
         job.attempt_count += 1

@@ -278,7 +278,7 @@ async def test_online_asset_main_prompt_omits_ai_visual_rules_and_consumes_brief
     assert "FLUX" not in call["system_prompt"]
     assert "visual_prompt 使用固定兼容值" in call["system_prompt"]
     assert "&lt;/content_brief&gt;" in call["prompt"]
-    assert call["prompt"].count("<content_brief>") == 1
+    assert call["prompt"].count("<knowledge_brief>") == 1
     assert "事实与来源一致性 > 不确定性表达 > 旁白自然度 > 结构 > 吸引力" in call["system_prompt"]
     assert "无可靠来源" in call["system_prompt"] and "具体统计" in call["system_prompt"]
     assert_no_unqualified_hype(call["system_prompt"])
