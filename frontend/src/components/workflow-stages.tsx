@@ -83,7 +83,6 @@ export function getStageIcon(status: string, validity?: string) {
   if (["completed", "reused", "skipped"].includes(status)) return CheckCircle2;
   return Circle;
 }
-
 export function getStageStatusColor(status: string, validity?: string) {
   if (status === "running") return "text-primary border-primary/40 bg-primary/10";
   if (validity === "corrupt" || status === "failed" || status === "interrupted") {
@@ -98,7 +97,6 @@ export function getStageStatusColor(status: string, validity?: string) {
   }
   return "text-muted-foreground/60 border-border/60 bg-secondary/20";
 }
-
 export function getStageDotColor(status: string, validity?: string) {
   if (status === "running") return "bg-primary animate-pulse";
   if (validity === "corrupt" || status === "failed" || status === "interrupted") {
@@ -263,7 +261,6 @@ export function WorkflowMiniRail({
     </div>
   );
 }
-
 /**
  * 生产流水线详情抽屉/弹窗 (Workflow Inspector Dialog)
  * 收纳原本占满首屏的所有 10 阶段详细日志、制品下载、SHA-256 哈希校验与阶段重试。
@@ -570,7 +567,6 @@ export function ScenePipelineStatus({
   onGenerateTTS,
   onGenerateImage,
   onGenerateVideo,
-  onGenerateOnlineMaterial,
   isGeneratingTTS,
   isGeneratingImage,
   isGeneratingVideo,
@@ -595,7 +591,6 @@ export function ScenePipelineStatus({
   onGenerateTTS?: () => void;
   onGenerateImage?: () => void;
   onGenerateVideo?: () => void;
-  onGenerateOnlineMaterial?: () => void;
   isGeneratingTTS?: boolean;
   isGeneratingImage?: boolean;
   isGeneratingVideo?: boolean;
@@ -634,7 +629,6 @@ export function ScenePipelineStatus({
   const visualReady = hasVisual || assetsRun?.status === "completed" || assetsRun?.status === "reused";
   const assetRefreshAction = resolveSceneAssetRefreshAction(
     contentMode,
-    Boolean(onGenerateOnlineMaterial),
     Boolean(onRetryUnit),
     Boolean(sceneId),
   );
@@ -647,10 +641,6 @@ export function ScenePipelineStatus({
   const canRefreshVisual = canRegenerate || sourceMaterialMode;
   const sourceMaterialLabel = contentModeSpec?.label || "素材";
   const refreshAsset = () => {
-    if (assetRefreshAction === "online_material") {
-      onGenerateOnlineMaterial?.();
-      return;
-    }
     if (assetRefreshAction === "workflow_unit" && sceneId) {
       onRetryUnit?.("assets", sceneId);
       return;
@@ -873,43 +863,6 @@ export function ScenePipelineStatus({
           </span>
         )}
       </div>
-    </div>
-  );
-}
-
-/**
- * 兼容旧导出
- */
-export function WorkflowStages({
-  taskId,
-  busy,
-  requireSaved,
-}: {
-  taskId: string;
-  busy: boolean;
-  requireSaved: () => boolean;
-}) {
-  const [open, setOpen] = React.useState(false);
-  const query = useQuery({
-    queryKey: ["task-workflow", taskId],
-    queryFn: () => api.getWorkflow(taskId),
-    refetchInterval: busy ? 3000 : false,
-  });
-
-  return (
-    <div className="space-y-2">
-      <WorkflowMiniRail
-        workflow={query.data}
-        busy={busy}
-        onOpenDetails={() => setOpen(true)}
-      />
-      <WorkflowInspectorDialog
-        open={open}
-        onClose={() => setOpen(false)}
-        taskId={taskId}
-        busy={busy}
-        requireSaved={requireSaved}
-      />
     </div>
   );
 }

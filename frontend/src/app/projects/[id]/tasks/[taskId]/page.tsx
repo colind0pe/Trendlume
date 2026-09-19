@@ -103,7 +103,7 @@ const JOB_LIFECYCLE_EVENTS = new Set([
   "job.uncertain",
 ]);
 const canonicalTemplateId = (id?: string | null) =>
-  id === "default_portrait" ? "image_default" : id || "image_default";
+  id || "image_gallery_matted";
 
 const researchContextForScript = (research: ResearchResponse | null) => {
   if (!research || research.status !== "completed" || research.sources.length === 0) {
@@ -193,9 +193,7 @@ export default function TaskStoryboardPage() {
   const llmConfigured = !["not_configured", "disabled"].includes(llmStatus);
   const searchConfigured = !["not_configured", "disabled"].includes(searchStatus);
 
-  const configuredContentMode = task?.input_payload?.content_mode || (
-    task?.input_payload?.visual_mode === "video" ? "generated_video" : "generated_image"
-  );
+  const configuredContentMode = task?.input_payload?.content_mode || "generated_image";
   const configuredContentModeSpec = getContentModeSpec(configuredContentMode);
   const isOnlineAssetMode = configuredContentModeSpec?.sourceKind === "online";
   const isGeneratedImageMode =
@@ -346,7 +344,7 @@ export default function TaskStoryboardPage() {
 
   // Render settings are kept in the task input snapshot so that composition
   // and render-only rerender use the same values after a page refresh.
-  const [renderTemplateId, setRenderTemplateId] = React.useState("image_default");
+  const [renderTemplateId, setRenderTemplateId] = React.useState("image_gallery_matted");
   const [renderParams, setRenderParams] = React.useState<Record<string, any>>({});
   const [bgmEnabled, setBgmEnabled] = React.useState(false);
   const [bgmAssetId, setBgmAssetId] = React.useState("");
@@ -383,7 +381,7 @@ export default function TaskStoryboardPage() {
   const [publishMode, setPublishMode] = React.useState<"now" | "schedule">("now");
   const [scheduledAt, setScheduledAt] = React.useState("");
   const [isRerenderOpen, setIsRerenderOpen] = React.useState(false);
-  const [rerenderTemplateId, setRerenderTemplateId] = React.useState("image_default");
+  const [rerenderTemplateId, setRerenderTemplateId] = React.useState("image_gallery_matted");
   const [rerenderParams, setRerenderParams] = React.useState<Record<string, any>>({});
   const [rerenderBgmEnabled, setRerenderBgmEnabled] = React.useState(false);
   const [rerenderBgmAssetId, setRerenderBgmAssetId] = React.useState("");

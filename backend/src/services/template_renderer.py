@@ -401,9 +401,6 @@ class TemplateRenderer:
         source = template_catalog.resolve_path(item["id"])
         template = source.read_text(encoding="utf-8")
 
-        # The only bundled template with a remote default background gets a
-        # local preview asset at render time.  This keeps production renders
-        # deterministic and prevents Chromium from making network requests.
         values = {
             "title": title or "",
             "text": text or "",
@@ -419,10 +416,6 @@ class TemplateRenderer:
             "index": 1,
             "image": cls._file_uri(image_path),
         }
-        if item["id"] in {"static_default"}:
-            fallback = template_catalog.root / "previews" / "1080x1920" / "static_default.jpg"
-            if fallback.exists():
-                values["background"] = fallback.resolve().as_uri()
         values.update(custom_params or {})
         rendered = render_template_html(template, values)
         rendered = cls._strip_external_resources(rendered)

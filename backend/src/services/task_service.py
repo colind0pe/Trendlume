@@ -49,6 +49,38 @@ def _coerce_bool(value: object, default: bool) -> bool:
     return bool(value)
 
 
+_KNOWLEDGE_PAYLOAD_KEYS = (
+    "knowledge_brief",
+    "genre",
+    "hook_type",
+    "enable_research",
+    "research_max_queries",
+    "research_max_results",
+    "target_scene_count",
+)
+
+
+def _normalize_production_payload(
+    payload: dict,
+    production_mode: ProductionMode,
+    *,
+    title: str,
+) -> dict:
+    """Keep mode-specific inputs in the Task payload owned by that mode."""
+    normalized = dict(payload)
+    if production_mode == ProductionMode.KNOWLEDGE:
+        brief = KnowledgeBrief.from_payload(normalized.get("knowledge_brief"))
+        if not brief.thesis:
+            brief.thesis = title.strip()[:500]
+        if not brief.genre or brief.genre == "auto":
+            brief.genre = str(normalized.get("genre") or "auto")[:100]
+        normalized["knowledge_brief"] = brief.model_dump()
+    else:
+        for key in _KNOWLEDGE_PAYLOAD_KEYS:
+            normalized.pop(key, None)
+    return normalized
+
+
 class TaskService:
     """Application service for Video Tasks"""
 
@@ -121,7 +153,8 @@ class TaskService:
 
         task_id = f"task_{uuid.uuid4().hex[:12]}"
         payload = dict(data.input_payload or {})
-        requested_production_mode = payload.get("production_mode", data.production_mode)
+        payload.pop("production_mode", None)
+        requested_production_mode = data.production_mode
         if requested_production_mode is None:
             requested_production_mode = getattr(
                 project, "primary_production_mode", ProductionMode.KNOWLEDGE.value
@@ -159,42 +192,25 @@ class TaskService:
             product_id = creative_plan_id = creative_angle = None
             for key in ("product_id", "creative_plan_id", "creative_plan_snapshot", "creative_angle"):
                 payload.pop(key, None)
-
-        if production_mode == ProductionMode.KNOWLEDGE:
-            brief_input = payload.get("knowledge_brief", data.knowledge_brief)
-            if brief_input is None:
-                brief_input = payload.get("content_brief")
-            knowledge_brief = KnowledgeBrief.from_payload(brief_input)
-            if not knowledge_brief.thesis:
-                knowledge_brief.thesis = str(payload.get("topic") or data.title).strip()[:500]
-            if not knowledge_brief.genre or knowledge_brief.genre == "auto":
-                knowledge_brief.genre = str(payload.get("genre") or "auto")[:100]
-            payload["knowledge_brief"] = knowledge_brief.model_dump()
-        else:
-            for key in ("knowledge_brief", "content_brief", "genre", "hook_type", "enable_research", "research_max_queries", "research_max_results", "target_scene_count"):
-                payload.pop(key, None)
+        if production_mode == ProductionMode.KNOWLEDGE and data.knowledge_brief is not None:
+            payload.setdefault("knowledge_brief", data.knowledge_brief.model_dump())
         requested_template_id = payload.get("template_id", data.template_id)
-        if requested_template_id == "default_portrait" and "template_id" not in payload:
+        if requested_template_id == "image_gallery_matted" and "template_id" not in payload:
             project_template = getattr(project, "template", None)
             requested_template_id = getattr(project_template, "template_id", None) or requested_template_id
         template = template_catalog.get(requested_template_id)
         if not template:
             raise NotFoundException("Template", requested_template_id)
 
-        legacy_visual_mode = payload.get("visual_mode", data.visual_mode)
+        payload.pop("visual_mode", None)
         content_mode = resolve_content_mode(
             payload.get("content_mode", data.content_mode),
             template_type=template["template_type"],
-            visual_mode=legacy_visual_mode,
         )
         if not is_content_mode_supported(content_mode, template["template_type"]):
             raise ValidationException(
                 f"模板 {requested_template_id} 不支持内容模式 {content_mode}"
             )
-        # Content mode is the single source of truth.  Keep visual_mode only
-        # as a backwards-compatible alias for older clients and tasks.
-        legacy_visual_mode = "video" if content_mode == "generated_video" else "image"
-
         source_asset_id = payload.get("source_asset_id", data.source_asset_id)
         if content_mode == "uploaded_asset":
             if not source_asset_id:
@@ -295,8 +311,6 @@ class TaskService:
         )
         input_payload = {
             **payload,
-            "production_mode": production_mode.value,
-            "visual_mode": legacy_visual_mode,
             "content_mode": content_mode,
             "target_scene_count": target_scene_count,
             "template_id": requested_template_id,
@@ -321,18 +335,11 @@ class TaskService:
             "image_workflow_snapshot": image_workflow_snapshot,
             "video_workflow_snapshot": video_workflow_snapshot,
         }
-        if production_mode != ProductionMode.KNOWLEDGE:
-            for key in (
-                "knowledge_brief",
-                "content_brief",
-                "genre",
-                "hook_type",
-                "enable_research",
-                "research_max_queries",
-                "research_max_results",
-                "target_scene_count",
-            ):
-                input_payload.pop(key, None)
+        input_payload = _normalize_production_payload(
+            input_payload,
+            production_mode,
+            title=data.title,
+        )
         if product_id:
             input_payload["product_id"] = str(product_id)
         if creative_angle is not None:
@@ -407,11 +414,11 @@ class TaskService:
 
             new_payload = {key: value for key, value in data.input_payload.items() if not is_internal(key)}
             new_payload.update({key: value for key, value in old_payload.items() if is_internal(key)})
+            new_payload.pop("production_mode", None)
+            new_payload.pop("visual_mode", None)
             changed = {key for key in old_payload.keys() | new_payload.keys()
                        if old_payload.get(key) != new_payload.get(key)}
         requested_production_mode = data.production_mode
-        if requested_production_mode is None and new_payload is not None:
-            requested_production_mode = new_payload.get("production_mode")
         if requested_production_mode is not None:
             try:
                 production_mode = ProductionMode(str(requested_production_mode))
@@ -424,8 +431,8 @@ class TaskService:
             if task.production_mode != production_mode.value:
                 changed.add("production_mode")
                 task.production_mode = production_mode.value
-            if new_payload is not None:
-                new_payload["production_mode"] = production_mode.value
+        if new_payload is not None:
+            new_payload.pop("production_mode", None)
         final_production_mode = ProductionMode(task.production_mode)
         requested_product_id = data.product_id
         if requested_product_id is None and new_payload is not None:
@@ -490,37 +497,43 @@ class TaskService:
             else:
                 new_payload.pop("creative_plan_id", None)
                 new_payload.pop("creative_plan_snapshot", None)
-            if final_production_mode != ProductionMode.KNOWLEDGE:
-                for key in (
-                    "knowledge_brief",
-                    "content_brief",
-                    "genre",
-                    "hook_type",
-                    "enable_research",
-                    "research_max_queries",
-                    "research_max_results",
-                    "target_scene_count",
-                ):
-                    new_payload.pop(key, None)
+            new_payload = _normalize_production_payload(
+                new_payload,
+                final_production_mode,
+                title=data.title or task.title,
+            )
+        workflow = get_production_workflow(task.production_mode)
         steps = set()
         if changed & {"bgm_enabled", "bgm_asset_id", "bgm_volume"}:
-            steps.update({"composition", "export"})
+            steps.update(stage for stage in ("composition", "export") if workflow.has_stage(stage))
         if changed & {"voice_id", "speed", "voice_speed"}:
-            steps.update({"planning", "voice", "subtitles", "composition", "export"})
+            steps.update(
+                stage
+                for stage in ("planning", "voice", "subtitles", "composition", "export")
+                if workflow.has_stage(stage)
+            )
         if changed & {"template_id", "template_version", "template_params", "custom_css"}:
-            steps.update({"planning", "composition", "export"})
-        if changed & {"content_mode", "visual_mode", "source_asset_id", "image_workflow_id", "video_workflow_id"}:
-            steps.update({"planning", "assets", "composition", "export"})
+            steps.update(
+                stage
+                for stage in ("planning", "composition", "export")
+                if workflow.has_stage(stage)
+            )
+        if changed & {"content_mode", "source_asset_id", "image_workflow_id", "video_workflow_id"}:
+            steps.update(
+                stage
+                for stage in ("planning", "assets", "composition", "export")
+                if workflow.has_stage(stage)
+            )
         handled = {"bgm_enabled", "bgm_asset_id", "bgm_volume", "voice_id", "speed", "voice_speed",
                    "template_id", "template_version", "template_params", "custom_css", "content_mode",
-                   "visual_mode", "source_asset_id", "image_workflow_id", "video_workflow_id",
+                   "source_asset_id", "image_workflow_id", "video_workflow_id",
                    "production_mode", "product_id", "creative_plan_id", "creative_angle"}
         if "production_mode" in changed:
-            steps.update(get_production_workflow(task.production_mode).stage_keys)
+            steps.update(workflow.stage_keys)
         if changed & {"product_id", "creative_plan_id", "creative_angle"}:
-            steps.update(get_production_workflow(task.production_mode).stage_keys)
+            steps.update(workflow.stage_keys)
         if changed - handled or (data.title is not None and data.title != task.title):
-            steps.update(get_production_workflow(task.production_mode).stage_keys)
+            steps.update(workflow.stage_keys)
         if steps:
             await mark_steps_stale(self.session, task_id, steps, "任务输入已修改")
         if data.title is not None:
@@ -531,9 +544,14 @@ class TaskService:
             task.status = data.status.value
         if data.input_payload is not None:
             task.input_payload = new_payload
-        elif changed & {"product_id", "creative_plan_id", "creative_angle"}:
+        elif changed & {"product_id", "creative_plan_id", "creative_angle"} or "production_mode" in changed:
+            normalized_payload = _normalize_production_payload(
+                dict(task.input_payload or {}),
+                final_production_mode,
+                title=data.title or task.title,
+            )
             task.input_payload = {
-                **(task.input_payload or {}),
+                **normalized_payload,
                 **({"product_id": task.product_id} if task.product_id else {}),
                 **({"creative_angle": task.creative_angle} if task.creative_angle else {}),
                 **({"creative_plan_id": task.creative_plan_id} if task.creative_plan_id else {}),
@@ -574,7 +592,7 @@ class TaskService:
             input_payload={
                 key: value
                 for key, value in deepcopy(source.input_payload or {}).items()
-                if key != "scheduled_publish"
+                if key not in {"production_mode", "scheduled_publish"}
             },
             result_payload=None,
             error_message=None,
@@ -616,15 +634,13 @@ class TaskService:
         await assert_task_editable(self.session, task_id)
         task = await self.get_task(task_id)
         payload = deepcopy(task.input_payload or {})
-        old_template_id = payload.get("template_id", "default_portrait")
-        selected_id = template_id or payload.get("template_id", "default_portrait")
+        old_template_id = payload.get("template_id", "image_gallery_matted")
+        selected_id = template_id or payload.get("template_id", "image_gallery_matted")
         item = template_catalog.get(selected_id)
         if not item:
             raise NotFoundException("Template", selected_id)
         content_mode = resolve_content_mode(
-            payload.get("content_mode"),
-            template_type=item["template_type"],
-            visual_mode=payload.get("visual_mode"),
+            payload.get("content_mode"), template_type=item["template_type"]
         )
         if not is_content_mode_supported(content_mode, item["template_type"]):
             raise ValidationException(f"模板 {selected_id} 不支持内容模式 {content_mode}")

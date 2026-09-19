@@ -1,20 +1,16 @@
 import pytest
 from pydantic import ValidationError
+
 from src.core.exceptions import ValidationException
 from src.domain.enums import JobType
-from src.schemas.generation import ContentGenerateRequest, ScriptGenerateRequest
+from src.schemas.generation import ScriptGenerateRequest
 from src.schemas.project import ProjectCreate
 from src.schemas.task import TaskCreate
-from src.services.durable_pipeline import (
-    _LegacyScriptGenerateRequest,
-    _script_request_model_for_persisted_count,
-)
 from src.services.generation_service import GenerationService, get_genre_instruction
 from src.services.project_service import ProjectService
 from src.services.task_service import TaskService
 
 _PUBLIC_REQUEST_FACTORIES = (
-    lambda count: ContentGenerateRequest(topic="主题", target_scene_count=count),
     lambda count: ScriptGenerateRequest(topic="主题", target_scene_count=count),
     lambda count: TaskCreate(
         title="边界测试任务", job_type=JobType.VIDEO_COMPOSITION, target_scene_count=count
@@ -36,7 +32,7 @@ def test_public_scene_count_boundaries_are_consistent_across_request_models(coun
 
 
 @pytest.mark.asyncio
-async def test_task_service_persists_twenty_scenes_and_rejects_payload_legacy_count(test_session):
+async def test_task_service_persists_twenty_scenes_and_rejects_noncanonical_count(test_session):
     project = await ProjectService(test_session).create_project(ProjectCreate(name="分镜范围测试"))
     service = TaskService(test_session)
 
@@ -125,17 +121,6 @@ async def test_auto_genre_guidance_and_explicit_genre_instruction(test_session, 
 
     monkeypatch.setattr(service, "_get_llm_provider", get_provider)
 
-    await service.generate_narration(
-        ContentGenerateRequest(
-            topic="城市夜间交通",
-            genre="auto",
-            target_scene_count=8,
-            enable_research=False,
-        )
-    )
-    _assert_auto_genre_guidance(llm.text_calls[0]["system_prompt"])
-    assert len(llm.text_calls) == 1
-
     await service.generate_script(
         ScriptGenerateRequest(topic="城市夜间交通", genre="auto", target_scene_count=8)
     )
@@ -152,19 +137,12 @@ async def test_auto_genre_guidance_and_explicit_genre_instruction(test_session, 
     )
     metadata_call = next(call for call in llm.text_calls if "发布元数据输入" in call["prompt"])
     _assert_auto_genre_guidance(metadata_call["system_prompt"] + metadata_call["prompt"])
-    assert len(llm.text_calls) == 3  # narration, fixed title, fixed metadata
+    assert len(llm.text_calls) == 2  # fixed title, fixed metadata
     explicit_instruction = get_genre_instruction("science_tech")
     assert explicit_instruction.startswith("科普解说与前沿科技：")
     assert "自动匹配" not in explicit_instruction
 
 
-def test_legacy_scene_count_model_is_internal_only_and_preserves_persisted_value():
-    assert _script_request_model_for_persisted_count({"target_scene_count": 6}) is _LegacyScriptGenerateRequest
-    assert _script_request_model_for_persisted_count({}, fallback_scene_count=6) is _LegacyScriptGenerateRequest
-    assert _LegacyScriptGenerateRequest(target_scene_count=6).target_scene_count == 6
-    request = _LegacyScriptGenerateRequest(topic="旧任务", target_scene_count=6)
-    assert request.target_scene_count == 6
-    assert _script_request_model_for_persisted_count({"target_scene_count": 8}) is ScriptGenerateRequest
-
+def test_public_script_request_rejects_unsupported_scene_count():
     with pytest.raises(ValidationError):
         ScriptGenerateRequest(topic="公开请求", target_scene_count=6)

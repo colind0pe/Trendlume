@@ -248,7 +248,6 @@ class DramaShotModel(Base):
     )
     sequence_index: Mapped[int] = mapped_column(Integer, nullable=False)
     action: Mapped[str] = mapped_column(Text, default="", nullable=False)
-    dialogue: Mapped[str] = mapped_column(Text, default="", nullable=False)
     character_ids: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     location_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("drama_locations.id", ondelete="SET NULL"), nullable=True
@@ -281,8 +280,16 @@ class DramaShotModel(Base):
     )
 
     @property
+    def dialogue(self) -> str:
+        """Render the normalized dialogue lines for API and review consumers."""
+        return "\n".join(
+            f"{line.speaker_name}: {line.text}" if line.speaker_name != "旁白" else line.text
+            for line in self.dialogue_lines
+        )
+
+    @property
     def characters(self) -> list[str]:
-        """Compatibility name used by the domain/API for the character ids."""
+        """Return character IDs for the domain/API representation."""
 
         return list(self.character_ids or [])
 
@@ -312,14 +319,3 @@ class DramaDialogueLineModel(Base):
     character: Mapped[DramaCharacterModel | None] = relationship(
         "DramaCharacterModel", foreign_keys=[character_id], lazy="joined"
     )
-
-
-# Domain-facing aliases keep the requested names available without changing the
-# repository's existing `*Model` naming convention.
-DramaBible = DramaBibleModel
-Character = DramaCharacterModel
-Location = DramaLocationModel
-Episode = DramaEpisodeModel
-DramaScene = DramaSceneModel
-Shot = DramaShotModel
-DialogueLine = DramaDialogueLineModel

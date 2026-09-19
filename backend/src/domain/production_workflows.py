@@ -32,11 +32,8 @@ class ProductionWorkflow:
     def has_stage(self, key: str) -> bool:
         return key in self.stage_keys
 
-    def stage_label(self, key: str) -> str:
-        return next(stage.label for stage in self.stages if stage.key == key)
-
     def progress_for(self, key: str, *, running: bool) -> int:
-        """Return a compatible coarse progress value for a stage update."""
+        """Return a coarse progress value for a stage update."""
         index = self.stage_keys.index(key)
         slot = max(1, 100 // len(self.stages))
         offset = 1 if running else max(1, min(9, slot - 1))
@@ -78,19 +75,6 @@ COMMERCE_PRODUCTION_WORKFLOW = ProductionWorkflow(
 )
 
 
-DRAMA_PREPRODUCTION_WORKFLOW = ProductionWorkflow(
-    mode=ProductionMode.DRAMA,
-    stages=(
-        ProductionStage("story", "故事"),
-        ProductionStage("bible", "Drama Bible"),
-        ProductionStage("assets", "角色与场景"),
-        ProductionStage("episode", "单集剧本"),
-        ProductionStage("storyboard", "逐 Shot Storyboard"),
-        ProductionStage("approval", "批准进入制作"),
-    ),
-)
-
-
 DRAMA_PRODUCTION_WORKFLOW = ProductionWorkflow(
     mode=ProductionMode.DRAMA,
     stages=(
@@ -120,15 +104,13 @@ def normalize_production_mode(
 ) -> ProductionMode:
     if isinstance(mode, ProductionMode):
         return mode
-    try:
-        return ProductionMode(str(mode or ProductionMode.KNOWLEDGE.value))
-    except ValueError:
+    if mode is None or not str(mode).strip():
         return ProductionMode.KNOWLEDGE
+    return ProductionMode(str(mode))
 
 
 def get_production_workflow(
     mode: str | ProductionMode | None,
 ) -> ProductionWorkflow:
-    """Resolve a workflow while keeping legacy or incomplete rows on Knowledge."""
-    normalized = normalize_production_mode(mode)
-    return PRODUCTION_WORKFLOWS.get(normalized, KNOWLEDGE_PRODUCTION_WORKFLOW)
+    """Resolve the workflow for an explicit mode or the default Knowledge mode."""
+    return PRODUCTION_WORKFLOWS[normalize_production_mode(mode)]

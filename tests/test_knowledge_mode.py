@@ -4,7 +4,6 @@ import pytest
 
 from src.domain.enums import VisualRole
 from src.schemas.generation import (
-    ContentBrief,
     KnowledgeBrief,
     ResearchSource,
     ScriptGenerateRequest,
@@ -20,15 +19,15 @@ from src.services.scene_service import SceneService
 from src.services.task_service import TaskService
 
 
-def test_legacy_content_brief_is_available_as_a_knowledge_brief():
+def test_knowledge_brief_normalizes_claims_and_sources():
     brief = KnowledgeBrief.from_payload(
-        ContentBrief(
-            audience="普通观众",
-            goal="解释一个现象",
-            angle="先定义，再说明机制",
-            key_points=["机制需要证据"],
-            source_refs=["source-old"],
-        )
+        {
+            "audience": "普通观众",
+            "thesis": "先定义，再说明机制",
+            "viewer_takeaway": "解释一个现象",
+            "key_claims": [{"statement": "机制需要证据", "source_refs": ["source-old"]}],
+            "source_refs": ["source-old"],
+        }
     )
 
     assert brief.audience == "普通观众"

@@ -130,11 +130,10 @@ async def test_commerce_prefix_resumes_without_rebuilding_completed_stages(test_
         creative_angle=CreativeAngle.DEMO.value,
         title="Commerce pipeline",
         input_payload={
-            "production_mode": ProductionMode.COMMERCE.value,
             "product_id": product.id,
             "creative_angle": CreativeAngle.DEMO.value,
             "content_mode": "static",
-            "template_id": "static_default",
+            "template_id": "static_editorial_quote",
             "target_scene_count": 8,
             "enable_research": False,
             "bgm_enabled": False,
@@ -155,7 +154,9 @@ async def test_commerce_prefix_resumes_without_rebuilding_completed_stages(test_
     runs = list((await test_session.scalars(select(WorkflowStepRunModel))).all())
     prefix = {run.step_key: run for run in runs if run.step_key in {"product_ingest", "product_truth", "creative_strategy", "script", "storyboard"}}
     assert set(prefix) == {"product_ingest", "product_truth", "creative_strategy", "script", "storyboard"}
-    assert (await test_session.get(TaskModel, task.id)).input_payload["_commerce_prepared"] is True
+    prepared_task = await test_session.get(TaskModel, task.id)
+    assert prepared_task.input_payload["_commerce_prepared"] is True
+    assert "knowledge_brief" not in prepared_task.input_payload
 
     await executor.execute(Job(task_id=task.id, params={"single_step": "assets"}))
     rerun = list((await test_session.scalars(select(WorkflowStepRunModel))).all())
@@ -193,11 +194,10 @@ async def test_commerce_product_scenes_reuse_locked_asset_without_redraw(
         creative_angle=CreativeAngle.DIRECT.value,
         title="锁定真实商品素材",
         input_payload={
-            "production_mode": ProductionMode.COMMERCE.value,
             "product_id": product.id,
             "creative_angle": CreativeAngle.DIRECT.value,
             "content_mode": "generated_image",
-            "template_id": "image_default",
+            "template_id": "image_gallery_matted",
             "target_scene_count": 8,
             "enable_research": False,
             "bgm_enabled": False,

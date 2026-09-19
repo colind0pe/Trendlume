@@ -49,7 +49,7 @@ class TaskManager:
         self.num_workers = num_workers
         self.session_factory = session_factory or async_session_factory
         self.executor = executor or workflow_executor
-        # Kept as a wake-up queue for compatibility; durable state lives in SQLite.
+        # The queue only wakes workers; durable state lives in SQLite.
         self.queue: asyncio.Queue[Job] = asyncio.Queue()
         self.workers: list[asyncio.Task] = []
         self.poller: asyncio.Task | None = None
@@ -111,18 +111,6 @@ class TaskManager:
                         if pub:
                             pub.status = PublishJobStatus.MISSED.value
                             pub.error_message = job.error_message
-                # Keep compatibility for tasks created by older versions before
-                # durable jobs existed: an orphaned running task is failed and
-                # can be explicitly resumed by the user.
-                all_job_tasks_res = await session.execute(select(WorkflowJobModel.task_id).distinct())
-                all_job_task_ids = {row[0] for row in all_job_tasks_res.all()}
-                legacy_filters = [TaskModel.status == TaskStatus.RUNNING.value]
-                if all_job_task_ids:
-                    legacy_filters.append(~TaskModel.id.in_(all_job_task_ids))
-                legacy_tasks = await session.execute(select(TaskModel).where(*legacy_filters))
-                for task in legacy_tasks.scalars().all():
-                    task.status = TaskStatus.FAILED.value
-                    task.error_message = "服务重启时未找到可恢复的任务检查点"
                 await session.commit()
         except Exception as exc:
             logger.exception(f"Error recovering durable jobs: {exc}")
@@ -337,7 +325,7 @@ class TaskManager:
         return None
 
     async def run_inline(self, task_id: str, params: dict[str, Any], session_factory=None) -> dict[str, Any]:
-        """Run a legacy synchronous API operation under a durable exclusive lease."""
+        """Run one durable workflow operation under an exclusive lease."""
         from sqlalchemy.ext.asyncio import async_sessionmaker
         factory = session_factory or self.session_factory
         async with factory() as session:

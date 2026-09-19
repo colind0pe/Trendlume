@@ -23,12 +23,13 @@ class TaskModel(Base):
         String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
     )
     product_id: Mapped[str | None] = mapped_column(
-        String(36), ForeignKey("products.id", ondelete="RESTRICT"), nullable=True
+        String(36), ForeignKey("products.id", ondelete="RESTRICT"), nullable=True, index=True
     )
     creative_plan_id: Mapped[str | None] = mapped_column(
         String(36),
         ForeignKey("commerce_creative_plans.id", ondelete="SET NULL"),
         nullable=True,
+        index=True,
     )
     title: Mapped[str] = mapped_column(String(255), default="新视频生成任务", nullable=False)
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)

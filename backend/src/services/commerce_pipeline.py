@@ -13,14 +13,12 @@ from src.repositories.scene_repository import SceneRepository
 from src.repositories.task_repository import TaskRepository
 from src.schemas.creative_plan import CreativePlanResponse, CreativeSceneOutline
 from src.schemas.generation import (
-    KnowledgeBrief,
-    KnowledgeClaim,
     PlatformMetadata,
     StructuredSceneScript,
     StructuredScript,
 )
 from src.schemas.product import ProductTruthSheet
-from src.services.durable_pipeline import DurableVideoPipeline, scene_snapshot
+from src.services.durable_pipeline import DurableProductionPipeline, scene_snapshot
 from src.services.product_service import ProductService
 
 
@@ -28,7 +26,7 @@ def _text(value: Any, limit: int = 240) -> str:
     return " ".join(str(value or "").split()).strip()[:limit]
 
 
-class CommerceProductionPipeline(DurableVideoPipeline):
+class CommerceProductionPipeline(DurableProductionPipeline):
     """Build product facts and commercial editorial artifacts before shared media work."""
 
     production_mode = ProductionMode.COMMERCE
@@ -192,7 +190,6 @@ class CommerceProductionPipeline(DurableVideoPipeline):
             raise ValidationException("Creative Plan 缺少 scene outline，无法进入 storyboard。")
 
         scenes: list[StructuredSceneScript] = []
-        all_source_refs: list[str] = []
         for index, item in enumerate(outline):
             claim_refs = [ref for ref in item.claim_refs if ref in claim_map]
             source_refs = list(
@@ -202,7 +199,6 @@ class CommerceProductionPipeline(DurableVideoPipeline):
                     for source_ref in claim_map[claim_ref].evidence_refs
                 )
             )
-            all_source_refs.extend(source_refs)
             role = item.visual_role
             asset_locked = item.asset_strategy == "product_asset" or role in {
                 VisualRole.PRODUCT_SHOT,
@@ -240,14 +236,6 @@ class CommerceProductionPipeline(DurableVideoPipeline):
                 )
             )
 
-        claims = [
-            KnowledgeClaim(
-                id=claim.id,
-                statement=claim.text,
-                source_refs=list(claim.evidence_refs),
-            )
-            for claim in plan_payload.claims
-        ]
         product_title = _text(product.title, 80)
         return StructuredScript(
             title=_text(f"{product.brand} {product_title} · {plan.variant_label}", 80)
@@ -255,14 +243,6 @@ class CommerceProductionPipeline(DurableVideoPipeline):
             hook=plan_payload.hook,
             narration=" ".join(scene.narration_text for scene in scenes),
             scenes=scenes,
-            knowledge_brief=KnowledgeBrief(
-                audience=plan_payload.audience,
-                thesis=plan_payload.core_message,
-                viewer_takeaway=plan_payload.cta,
-                key_claims=claims,
-                source_refs=list(dict.fromkeys(all_source_refs))[:20],
-                genre="product_review",
-            ),
             metadata=PlatformMetadata(
                 title=_text(product_title, 30),
                 description=_text(plan_payload.core_message, 1000),
@@ -420,7 +400,7 @@ class CommerceProductionPipeline(DurableVideoPipeline):
         variant_selection_payload = {
             "product_id": product.id,
             "creative_plan_id": plan.id if plan else None,
-            "status": plan.status if plan else "legacy_compatibility",
+            "status": plan.status if plan else "unselected",
             "variant_label": plan.variant_label if plan else None,
             "source_plan_id": plan.source_plan_id if plan else None,
             "media_generation": "deferred_until_after_selection",
@@ -463,27 +443,11 @@ class CommerceProductionPipeline(DurableVideoPipeline):
                 )
                 for index in range(target_count)
             ]
-            brief = KnowledgeBrief(
-                audience="正在评估商品是否适合自己的潜在购买者",
-                thesis=f"围绕{product.title}，只呈现商品 Truth Sheet 中已有证据的信息。",
-                viewer_takeaway="看完后能区分已确认事实、待确认信息和下一步了解动作。",
-                key_claims=[
-                    KnowledgeClaim(
-                        id=claim["id"],
-                        statement=claim["text"],
-                        source_refs=list(claim.get("evidence_refs") or []),
-                    )
-                    for claim in claims
-                ],
-                source_refs=evidence_refs,
-                genre="product_review",
-            )
             script = StructuredScript(
                 title=_text(f"{product.brand} {product.title}".strip(), 80) or "商品介绍",
                 hook=str(strategy["hook"]),
                 narration=" ".join(scene.narration_text for scene in scenes),
                 scenes=scenes,
-                knowledge_brief=brief,
                 metadata=PlatformMetadata(
                     title=_text(product.title, 30),
                     description=_text(product.description or strategy["hook"], 1000),
@@ -491,7 +455,7 @@ class CommerceProductionPipeline(DurableVideoPipeline):
                     declaration="商品信息以商品库 Truth Sheet 为准",
                 ),
             )
-        script_payload = script.model_dump(mode="json")
+        script_payload = script.model_dump(mode="json", exclude_none=True)
         _, script_artifacts = await self.json_stage(
             "script",
             {

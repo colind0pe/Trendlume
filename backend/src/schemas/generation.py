@@ -180,92 +180,17 @@ class KnowledgeBrief(BaseModel):
     def from_payload(cls, value: Any) -> "KnowledgeBrief":
         if isinstance(value, cls):
             return value
-        if isinstance(value, ContentBrief):
-            return value.to_knowledge_brief()
         if isinstance(value, dict):
-            if {"goal", "angle", "key_points", "claims"} & value.keys():
-                return ContentBrief.model_validate(value).to_knowledge_brief()
             return cls.model_validate(value)
         return cls()
-
-
-class ContentBrief(KnowledgeBrief):
-    """Legacy content brief accepted by existing clients and Trend proposals."""
-
-    goal: str | None = Field(default=None, max_length=500)
-    angle: str | None = Field(default=None, max_length=500)
-    tone: str | None = Field(default=None, max_length=200)
-    language: str | None = Field(default=None, max_length=100)
-    key_points: list[str] = Field(default_factory=list, max_length=20)
-    claims: list[str] = Field(default_factory=list, max_length=20)
-    uncertainty: str | None = Field(default=None, max_length=1000)
-    production_constraints: list[str] = Field(default_factory=list, max_length=20)
-
-    @model_validator(mode="after")
-    def normalize_legacy_fields(self) -> "ContentBrief":
-        if not self.thesis:
-            self.thesis = (self.angle or self.goal or "").strip()[:500]
-        if not self.viewer_takeaway:
-            self.viewer_takeaway = (self.goal or self.thesis or "").strip()[:500]
-        if not self.key_claims:
-            legacy_claims = self.claims or self.key_points
-            self.key_claims = [
-                KnowledgeClaim(
-                    id=f"claim-{index + 1}",
-                    statement=claim,
-                    source_refs=list(self.source_refs),
-                )
-                for index, claim in enumerate(legacy_claims)
-                if str(claim).strip()
-            ]
-        return self
-
-    def to_knowledge_brief(self) -> KnowledgeBrief:
-        return KnowledgeBrief.model_validate(
-            {
-                "audience": self.audience,
-                "thesis": self.thesis or self.angle or self.goal or "",
-                "viewer_takeaway": self.viewer_takeaway or self.goal or "",
-                "key_claims": [claim.model_dump() for claim in self.key_claims],
-                "source_refs": self.source_refs,
-                "genre": self.genre,
-            }
-        )
-
-
-class ContentGenerateRequest(BaseModel):
-    topic: str = Field(default="", max_length=500)
-    raw_script: str | None = Field(default=None, max_length=10000)
-    narration: str | None = Field(default=None, max_length=5000)
-    context: str | None = Field(default=None, max_length=5000)
-    style_preset: str = "stick_figure"
-    genre: str = "science_tech"
-    target_scene_count: int = Field(default=8, ge=8, le=20)
-    enable_research: bool = True
-    search_provider_id: str | None = None
-    research_max_queries: int = Field(default=3, ge=1, le=3)
-    research_max_results: int = Field(default=5, ge=1, le=5)
-    aspect_ratio: Literal["9:16", "16:9", "1:1"] = "9:16"
-    language: str | None = Field(default=None, max_length=100)
-    knowledge_brief: KnowledgeBrief | None = None
-    content_brief: ContentBrief | None = None
-    prompt_versions: dict[str, str] | None = None
-
-
-class ContentGenerateResponse(BaseModel):
-    title: str | None = None
-    narrations: list[str] = Field(default_factory=list)
-    prompt: str | None = None
-    research: ResearchResponse | None = None
 
 
 class PlatformMetadata(BaseModel):
     """Publishable metadata generated alongside a video storyboard.
 
     The current publishing adapter targets Douyin, while the shape keeps a
-    small platform/custom-params escape hatch for future adapters.  Defaults
-    make older structured-script responses and manually authored scripts
-    backwards compatible.
+    small platform/custom-params escape hatch for future adapters. Defaults
+    keep provider output and manually authored scripts valid.
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -394,8 +319,8 @@ class StructuredScript(BaseModel):
     hook: str = Field(description="视频前3秒吸睛钩子文案")
     narration: str = Field(description="完整的旁白口播文案")
     scenes: list[StructuredSceneScript] = Field(min_length=1, description="有序分镜序列")
-    knowledge_brief: KnowledgeBrief = Field(
-        default_factory=KnowledgeBrief,
+    knowledge_brief: KnowledgeBrief | None = Field(
+        default=None,
         description="Knowledge Mode 的受众、主张、观众收获与来源关系",
     )
     metadata: PlatformMetadata = Field(
@@ -437,7 +362,6 @@ class ScriptGenerateRequest(BaseModel):
     research_sources: list[ResearchSource] = Field(default_factory=list, max_length=20)
     target_scene_count: int = Field(default=8, ge=8, le=20, description="期望分镜数量")
     knowledge_brief: KnowledgeBrief | None = None
-    content_brief: ContentBrief | None = None
     content_mode: ContentMode | None = None
     aspect_ratio: Literal["9:16", "16:9", "1:1"] = "9:16"
     language: str | None = Field(default=None, max_length=100)

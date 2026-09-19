@@ -24,7 +24,7 @@ export function isGenerationLifecycleEvent(event: string): boolean {
   return /^(task[._](queued|started|completed|failed|cancelled)|job\.(started|retrying|completed|failed|cancelled|uncertain))$/.test(event);
 }
 
-export type SceneAssetRefreshAction = "online_material" | "workflow_unit" | "none";
+export type SceneAssetRefreshAction = "workflow_unit" | "none";
 
 export interface GenerationOptionsInput {
   targetSceneCount: number;
@@ -79,11 +79,9 @@ export function isSourceMaterialMode(contentMode: string | undefined): boolean {
 
 export function resolveSceneAssetRefreshAction(
   contentMode: string | undefined,
-  hasOnlineMaterialHandler: boolean,
   hasRetryUnit: boolean,
   hasSceneId: boolean,
 ): SceneAssetRefreshAction {
-  if (isSourceMaterialMode(contentMode) && hasOnlineMaterialHandler) return "online_material";
   if (isContentMode(contentMode) && CONTENT_MODE_SPECS[contentMode].supportsSceneRetry && hasRetryUnit && hasSceneId) {
     return "workflow_unit";
   }

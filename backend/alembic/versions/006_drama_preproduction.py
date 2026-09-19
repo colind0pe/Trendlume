@@ -6,7 +6,6 @@ import sqlalchemy as sa
 
 from alembic import op
 
-
 revision: str = "006_drama_preproduction"
 down_revision: str | None = "005_creative_planning"
 branch_labels: str | Sequence[str] | None = None

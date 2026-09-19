@@ -25,7 +25,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter }
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { CreateTaskDialog } from "@/components/projects/create-task-dialog";
+import { ProductionTaskDialog } from "@/components/projects/production-task-dialog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Select } from "@/components/ui/field";
 import { IconButton } from "@/components/ui/icon-button";
@@ -49,10 +49,8 @@ import {
   ProjectTemplateUpdate,
   TemplateCatalogItem,
 } from "@/lib/types";
-// ``default_portrait`` remains a backend compatibility alias, while the
-// gallery intentionally exposes the canonical ``image_default`` entry once.
 const canonicalTemplateId = (id?: string | null) =>
-  id === "default_portrait" ? "image_default" : id || "image_default";
+  id || "image_gallery_matted";
 const assetFileUrl = (filePath: string) =>
   `/api/v1/assets/files/${filePath.split("/").map(encodeURIComponent).join("/")}`;
 const PROJECT_TASK_REFRESH_EVENTS = new Set([
@@ -803,7 +801,7 @@ export default function ProjectDetailPage() {
       </Tabs>
       {/* Two-Column Studio Task Creation Modal */}
       {project && (
-        <CreateTaskDialog
+        <ProductionTaskDialog
           open={isCreateTaskOpen}
           onOpenChange={setIsCreateTaskOpen}
           projectId={projectId}

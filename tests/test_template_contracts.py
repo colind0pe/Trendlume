@@ -79,22 +79,21 @@ def test_template_catalog_supports_multi_resolution_catalog_and_aliases_are_stab
     assert template_catalog.get_default_for_aspect("1:1", "generated_video") == "video_square_full"
 
     # Aliases
-    assert template_catalog.get("default_portrait")["html_path"].endswith("image_gallery_matted.html")
-    assert template_catalog.get("default_landscape")["html_path"].endswith("image_wide_minimal.html")
-    assert template_catalog.get("default_square")["html_path"].endswith("image_square_matted.html")
-    assert template_catalog.get("video_default_portrait")["html_path"].endswith("video_full_overlay.html")
-    assert template_catalog.get("video_default_landscape")["html_path"].endswith("video_wide_full.html")
-    assert template_catalog.get("video_default_square")["html_path"].endswith("video_square_full.html")
-    assert template_catalog.get("image_default")["html_path"].endswith("image_gallery_matted.html")
-    assert template_catalog.get("static_default")["html_path"].endswith("static_editorial_quote.html")
+    assert template_catalog.get("image_gallery_matted")["html_path"].endswith("image_gallery_matted.html")
+    assert template_catalog.get("image_wide_minimal")["html_path"].endswith("image_wide_minimal.html")
+    assert template_catalog.get("image_square_matted")["html_path"].endswith("image_square_matted.html")
+    assert template_catalog.get("video_full_overlay")["html_path"].endswith("video_full_overlay.html")
+    assert template_catalog.get("video_wide_full")["html_path"].endswith("video_wide_full.html")
+    assert template_catalog.get("video_square_full")["html_path"].endswith("video_square_full.html")
+    assert template_catalog.get("static_editorial_quote")["html_path"].endswith("static_editorial_quote.html")
 
     # Demo media contract used by generation
-    assert template_catalog.get("image_default")["media_width"] == 1024
-    assert template_catalog.get("image_default")["media_height"] == 1024
-    assert template_catalog.get("video_default_portrait")["media_width"] == 1080
-    assert template_catalog.get("video_default_portrait")["media_height"] == 1920
-    assert template_catalog.get_media_aspect_ratio("image_default") == "1:1"
-    assert template_catalog.get_media_aspect_ratio("video_default_portrait") == "9:16"
+    assert template_catalog.get("image_gallery_matted")["media_width"] == 1024
+    assert template_catalog.get("image_gallery_matted")["media_height"] == 1024
+    assert template_catalog.get("video_full_overlay")["media_width"] == 1080
+    assert template_catalog.get("video_full_overlay")["media_height"] == 1920
+    assert template_catalog.get_media_aspect_ratio("image_gallery_matted") == "1:1"
+    assert template_catalog.get_media_aspect_ratio("video_full_overlay") == "9:16"
     assert parse_media_size(
         '<meta content="512" name="template:media-width">'
         '<meta name="template:media-height" content="288">'
@@ -197,7 +196,7 @@ async def test_task_duplicate_and_rerender_api(client: AsyncClient):
     project_id = project.json()["data"]["id"]
     task = await client.post(
         f"/api/v1/projects/{project_id}/tasks",
-        json={"title": "原始任务", "template_id": "image_default", "content_mode": "generated_image"},
+        json={"title": "原始任务", "template_id": "image_gallery_matted", "content_mode": "generated_image"},
     )
     task_id = task.json()["data"]["id"]
     scenes = await client.put(
@@ -216,7 +215,7 @@ async def test_task_duplicate_and_rerender_api(client: AsyncClient):
     # Incompatible content mode is rejected
     rerender = await client.post(
         f"/api/v1/tasks/{task_id}/rerender",
-        json={"template_id": "static_default"},
+        json={"template_id": "static_editorial_quote"},
     )
     assert rerender.status_code == 422
 

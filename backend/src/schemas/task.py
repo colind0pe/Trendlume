@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -28,8 +28,7 @@ class TaskCreate(BaseModel):
     creative_angle: CreativeAngle | None = None
     knowledge_brief: KnowledgeBrief | None = None
     input_payload: dict[str, Any] = Field(default_factory=dict)
-    visual_mode: Literal["image", "video"] = "image"
-    template_id: str = "default_portrait"
+    template_id: str = "image_gallery_matted"
     bgm_asset_id: str | None = None
     bgm_enabled: bool = True
     bgm_volume: float = Field(default=0.20, ge=0.0, le=0.5)

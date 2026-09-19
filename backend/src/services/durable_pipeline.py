@@ -1,4 +1,4 @@
-"""Dependency-aware video production, with verified, immutable stage outputs."""
+"""Dependency-aware production execution with verified, immutable stage outputs."""
 from __future__ import annotations
 
 import asyncio
@@ -8,13 +8,12 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from loguru import logger
-from pydantic import Field
 from sqlalchemy import select
 
 from src.core.exceptions import ValidationException
 from src.domain.content_modes import resolve_content_mode
 from src.domain.enums import ProductionMode
-from src.domain.production_workflows import get_production_workflow, normalize_production_mode
+from src.domain.production_workflows import KNOWLEDGE_PRODUCTION_WORKFLOW
 from src.models.asset import AssetModel
 from src.models.workflow import WorkflowJobModel, WorkflowStepRunModel
 from src.repositories.project_repository import ProjectRepository
@@ -23,7 +22,7 @@ from src.repositories.task_repository import TaskRepository
 from src.schemas.generation import ResearchResponse, ScriptGenerateRequest, StructuredScript
 from src.services.generation_service import PROMPT_CALL_BUDGETS, GenerationService
 from src.services.material_service import MaterialService
-from src.services.production_pipeline import BaseProductionPipeline, production_pipeline_registry
+from src.services.production_pipeline import BaseProductionPipeline
 from src.services.prompt_registry import prompt_selection_snapshot, prompt_version_map
 from src.services.provider_manager import ProviderManager
 from src.services.rendering_service import RenderingService
@@ -43,36 +42,14 @@ from src.services.workflow_service import workflow_service
 from src.tasks.broadcaster import event_broadcaster
 
 
-class _LegacyScriptGenerateRequest(ScriptGenerateRequest):
-    """Internal-only request model for tasks created before the 8-scene minimum."""
-
-    target_scene_count: int = Field(default=8, ge=2, le=20, description="期望分镜数量")
-
-
-def _script_request_model_for_persisted_count(
-    script_inputs: dict,
-    *,
-    fallback_scene_count: int | None = None,
-) -> type[ScriptGenerateRequest]:
-    """Keep a persisted 2–7 scene target intact during an internal retry."""
-    raw_count = script_inputs.get("target_scene_count")
-    if raw_count is None:
-        raw_count = fallback_scene_count
-    try:
-        count = int(raw_count)
-    except (TypeError, ValueError):
-        return ScriptGenerateRequest
-    return _LegacyScriptGenerateRequest if 2 <= count < 8 else ScriptGenerateRequest
-
-
 def build_script_generation_inputs(payload: dict, *, topic: str, project=None) -> dict:
     """Return every task/project field that can change script output."""
     project_settings = dict(getattr(project, 'settings', None) or {})
-    content_brief = payload.get('content_brief')
-    if content_brief is None:
-        content_brief = project_settings.get('content_brief')
-    if content_brief is None and str(getattr(project, 'description', '') or '').strip():
-        content_brief = {'goal': str(project.description).strip()}
+    knowledge_brief = payload.get('knowledge_brief')
+    if knowledge_brief is None:
+        knowledge_brief = project_settings.get('knowledge_brief')
+    if knowledge_brief is None and str(getattr(project, 'description', '') or '').strip():
+        knowledge_brief = {'thesis': str(project.description).strip()}
     aspect_ratio = payload.get('aspect_ratio') or getattr(project, 'aspect_ratio', None) or '9:16'
     language = payload.get('language') or project_settings.get('language')
     keys = (
@@ -82,16 +59,15 @@ def build_script_generation_inputs(payload: dict, *, topic: str, project=None) -
     result = {key: payload.get(key) for key in keys}
     result.update(
         topic=topic,
-        knowledge_brief=payload.get('knowledge_brief') or content_brief,
-        content_brief=content_brief,
+        knowledge_brief=knowledge_brief,
         research_sources=(payload.get('research') or {}).get('sources') or [],
         aspect_ratio=aspect_ratio,
         language=language,
-        content_brief_hash=(
+        knowledge_brief_hash=(
             hashlib.sha256(
-                json.dumps(content_brief, ensure_ascii=False, sort_keys=True).encode()
+                json.dumps(knowledge_brief, ensure_ascii=False, sort_keys=True).encode()
             ).hexdigest()
-            if content_brief is not None
+            if knowledge_brief is not None
             else None
         ),
         prompt_call_budgets=PROMPT_CALL_BUDGETS,
@@ -134,9 +110,9 @@ def subtitle_documents(timeline):
     return '\n'.join(srt), header + '\n'.join(dialogues) + '\n'
 
 
-class DurableVideoPipeline(BaseProductionPipeline):
+class DurableProductionPipeline(BaseProductionPipeline):
     production_mode = ProductionMode.KNOWLEDGE
-    workflow = get_production_workflow(ProductionMode.KNOWLEDGE)
+    workflow = KNOWLEDGE_PRODUCTION_WORKFLOW
     retry_delays = (30, 120, 300)
 
     def __init__(self, session, job, rendering_service_factory=None):
@@ -316,14 +292,13 @@ class DurableVideoPipeline(BaseProductionPipeline):
         renderer.execution_context, renderer.durable = self.context, True
         renderer.asset_service.execution_context = self.context
         self.storage = renderer.storage
-        self.runtime = WorkflowRuntime(self.db, self.storage.base_dir, self.job.id, token)
+        self.runtime = WorkflowRuntime(
+            self.db, self.storage.base_dir, self.job.id, token, self.workflow
+        )
         await self.runtime.assert_lease()
         task = await TaskRepository(self.db).get_by_id(self.job.task_id)
         if not task:
             raise ValidationException('任务不存在')
-        self.production_mode = normalize_production_mode(getattr(task, 'production_mode', None))
-        self.workflow = get_production_workflow(self.production_mode)
-        self.runtime.workflow = self.workflow
         project = await ProjectRepository(self.db).get_by_id(task.project_id)
         task.status = 'running'
         task.started_at = task.started_at or datetime.now(UTC)
@@ -377,12 +352,11 @@ class DurableVideoPipeline(BaseProductionPipeline):
             payload['content_mode'] = 'generated_' + self.params['media_kind']
         if single == 'assets' and self.params.get('content_mode_override'):
             payload['content_mode'] = self.params['content_mode_override']
-        template_id = payload.get('template_id') or 'default_portrait'
+        template_id = payload.get('template_id') or 'image_gallery_matted'
         template_item = template_catalog.get(template_id)
         mode = resolve_content_mode(
             payload.get('content_mode'),
             template_type=(template_item or {}).get('template_type'),
-            visual_mode=payload.get('visual_mode'),
         )
         if payload.get('content_mode') != mode:
             payload['content_mode'] = mode
@@ -413,8 +387,7 @@ class DurableVideoPipeline(BaseProductionPipeline):
                 task_id,
             )
         manual = manual_marker and has_storyboard
-        legacy = has_storyboard and prior_script is None
-        adopted_script = legacy or (
+        adopted_script = (
             has_storyboard
             and bool(prior_script and (prior_script.output_payload or {}).get('adopted'))
         )
@@ -502,9 +475,9 @@ class DurableVideoPipeline(BaseProductionPipeline):
             resolved_script_inputs['research_sources'] = [
                 source.model_dump() for source in research.sources
             ]
-            plan = {k: payload.get(k) for k in ('style_preset', 'target_scene_count', 'template_id', 'template_params', 'content_mode', 'visual_mode', 'material_provider_id', 'voice_id', 'speed')}
+            plan = {k: payload.get(k) for k in ('style_preset', 'target_scene_count', 'template_id', 'template_params', 'content_mode', 'material_provider_id', 'voice_id', 'speed')}
             plan.update(
-                content_brief=resolved_script_inputs.get('content_brief'),
+                knowledge_brief=resolved_script_inputs.get('knowledge_brief'),
                 aspect_ratio=resolved_script_inputs['aspect_ratio'],
                 language=resolved_script_inputs.get('language'),
             )
@@ -530,21 +503,12 @@ class DurableVideoPipeline(BaseProductionPipeline):
                     current_task = await TaskRepository(self.db).get_by_id(task_id)
                     current_scenes = await SceneRepository(self.db).list_by_task_id(task_id)
                     data = {'adopted': True, 'scenes': [scene_snapshot(s) for s in current_scenes], 'title': current_task.title}
-                    source = 'manual' if manual else 'legacy'
+                    source = 'manual' if manual else 'adopted'
                 else:
                     request = {k: v for k, v in script_inputs.items() if k in ScriptGenerateRequest.model_fields and v is not None}
                     request['research_context'] = research.format_for_prompt() if research.status == 'completed' and research.sources else None
                     request['enable_research'] = False
-                    fallback_scene_count = len(scenes)
-                    request_model = _script_request_model_for_persisted_count(
-                        request, fallback_scene_count=fallback_scene_count
-                    )
-                    if (
-                        "target_scene_count" not in request
-                        and request_model is _LegacyScriptGenerateRequest
-                    ):
-                        request["target_scene_count"] = fallback_scene_count
-                    data = (await gen.generate_script(request_model(**request))).model_dump()
+                    data = (await gen.generate_script(ScriptGenerateRequest(**request))).model_dump()
                     source = 'generated'
                 path = await self.runtime.write_json(run, 'script.json', data)
                 return [ArtifactSpec(path, 'script', source=source)], data, None, False
@@ -604,10 +568,10 @@ class DurableVideoPipeline(BaseProductionPipeline):
             media_source = layout_params.get('media_source')
             production_metadata = scene.production_metadata or {}
             media_policy = production_metadata.get('media') or {}
-            legacy_commerce = production_metadata.get('commerce') or {}
+            commerce_metadata = production_metadata.get('commerce') or {}
             locked_media = bool(
                 media_policy.get('locked')
-                or legacy_commerce.get('asset_locked')
+                or commerce_metadata.get('asset_locked')
                 or layout_params.get('commerce_asset_locked')
             )
             locked_media_id = (
@@ -656,7 +620,7 @@ class DurableVideoPipeline(BaseProductionPipeline):
                 # refreshes include the current ID in their fingerprint.
                 'excluded_external_ids': sorted(online_external_ids) if mode == 'online_asset' and single == 'assets' else None,
                 'duration_seconds': scene.duration_seconds if mode in {'generated_video', 'online_asset'} else None,
-                'locked_media_source': media_policy.get('source') or ('product' if legacy_commerce else None),
+                'locked_media_source': media_policy.get('source') or ('product' if commerce_metadata else None),
                 'locked_media': locked_media,
                 'locked_media_id': existing_id if locked_media else None}
             async def visual_action(
@@ -680,7 +644,7 @@ class DurableVideoPipeline(BaseProductionPipeline):
                     raise ValidationException(
                         '商业商品镜头缺少可用的真实商品素材，请先上传或下载商品素材；不会自动重绘商品主体。'
                     )
-                elif (legacy or render_only) and single != 'assets':
+                elif render_only and single != 'assets':
                     try:
                         adopted, _ = await self.asset(existing_id)
                     except Exception:
@@ -695,7 +659,7 @@ class DurableVideoPipeline(BaseProductionPipeline):
                         if user_media
                         else 'generated'
                         if generated_media
-                        else 'legacy'
+                        else 'existing'
                     )
                 elif mode == 'online_asset':
                     if material_service is None:
@@ -757,14 +721,14 @@ class DurableVideoPipeline(BaseProductionPipeline):
                     if not current_scene.audio_asset_id:
                         raise ValidationException('手工或上传分镜缺少配音素材。')
                     adopted, _ = await self.asset(current_scene.audio_asset_id)
-                elif (legacy or render_only) and current_scene.audio_asset_id and single != 'voice':
+                elif render_only and current_scene.audio_asset_id and single != 'voice':
                     try:
                         adopted, _ = await self.asset(current_scene.audio_asset_id)
                     except Exception:
                         if user_audio or render_only:
                             raise
                 if adopted is not None:
-                    asset, source = adopted, 'manual' if user_audio else 'legacy'
+                    asset, source = adopted, 'manual' if user_audio else 'existing'
                 elif render_only and single != 'voice':
                     raise ValidationException('配音缺失，请先生成配音再重新渲染。')
                 else:
@@ -892,10 +856,3 @@ class DurableVideoPipeline(BaseProductionPipeline):
         for event in ('video.preview_ready', 'task.completed'):
             await event_broadcaster.broadcast(event, {**task.result_payload, 'task_id': task_id, 'job_id': job_id, 'status': 'completed', 'progress': 100, 'preview_url': task.result_payload['final_video_url']}, task_id=task_id, job_id=job_id, lease_token=token)
         return task.result_payload
-
-
-production_pipeline_registry.register(
-    ProductionMode.KNOWLEDGE,
-    DurableVideoPipeline,
-    replace=True,
-)

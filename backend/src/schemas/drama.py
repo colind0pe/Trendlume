@@ -256,7 +256,7 @@ class DramaProductionStartRequest(BaseModel):
 
     episode_id: str | None = Field(default=None, max_length=36)
     visual_mode: Literal["image", "video"] = "image"
-    template_id: str = Field(default="default_portrait", min_length=1, max_length=120)
+    template_id: str = Field(default="image_gallery_matted", min_length=1, max_length=120)
     template_params: dict[str, Any] = Field(default_factory=dict)
     voice_id: str | None = Field(default=None, max_length=120)
     speed: float = Field(default=1.0, ge=0.5, le=2.0)

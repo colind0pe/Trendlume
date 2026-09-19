@@ -12,9 +12,6 @@ class ContentMode(StrEnum):
     STATIC = "static"
 
 
-LEGACY_CONTENT_MODE = "trend_asset"
-
-
 @dataclass(frozen=True)
 class ContentModeCapability:
     """Runtime contract for one visual source mode."""
@@ -51,16 +48,9 @@ def resolve_content_mode(
     mode: str | ContentMode | None,
     *,
     template_type: str | None = None,
-    visual_mode: str | None = None,
 ) -> str:
-    """Resolve current and legacy task fields to one content-mode value."""
+    """Resolve the explicit content source and template defaults."""
 
-    if mode == LEGACY_CONTENT_MODE:
-        return (
-            ContentMode.GENERATED_VIDEO.value
-            if template_type == "video"
-            else ContentMode.GENERATED_IMAGE.value
-        )
     if isinstance(mode, ContentMode):
         return mode.value
     if mode:
@@ -69,11 +59,7 @@ def resolve_content_mode(
         return ContentMode.STATIC.value
     if template_type == "asset":
         return ContentMode.UPLOADED_ASSET.value
-    return (
-        ContentMode.GENERATED_VIDEO.value
-        if visual_mode == "video"
-        else ContentMode.GENERATED_IMAGE.value
-    )
+    return ContentMode.GENERATED_IMAGE.value
 
 
 def get_content_mode_capability(

@@ -8,7 +8,6 @@ import {
   ProjectTemplate,
   ProjectTemplateUpdate,
   Product,
-  ProductTruthSheet,
   CreativePlan,
   DramaApprovalResponse,
   DramaBible,
@@ -43,7 +42,6 @@ import {
   VoiceInfo,
   WorkflowJob,
   WorkflowSnapshot,
-  VisualMode,
   QRStartResponse,
   QRStatusResponse,
   TrendFeedResponse,
@@ -413,12 +411,6 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
-  updateProductTruthSheet: (productId: string, truthSheet: ProductTruthSheet) =>
-    request<Product>(`/products/${encodeURIComponent(productId)}/truth-sheet`, {
-      method: "PUT",
-      body: JSON.stringify({ truth_sheet: truthSheet }),
-    }),
-
   uploadProductAsset: async (productId: string, file: File, assetType: "image" | "video", role = "gallery") => {
     const formData = new FormData();
     formData.append("file", file);
@@ -447,12 +439,6 @@ export const api = {
 
   deleteProductAsset: (productId: string, productAssetId: string) =>
     request<boolean>(`/products/${encodeURIComponent(productId)}/assets/${encodeURIComponent(productAssetId)}`, { method: "DELETE" }),
-
-  updateProductAsset: (productId: string, productAssetId: string, data: { role?: string; source_url?: string | null; alt_text?: string; sort_order?: number }) =>
-    request<Product>(`/products/${encodeURIComponent(productId)}/assets/${encodeURIComponent(productAssetId)}`, {
-      method: "PATCH",
-      body: JSON.stringify(data),
-    }),
 
   updateProject: (id: string, data: Partial<Project>) =>
     request<Project>(`/projects/${id}`, {
@@ -526,7 +512,6 @@ export const api = {
       creative_angle?: CreativeAngle | string | null;
       knowledge_brief?: KnowledgeBrief;
       input_payload?: Record<string, any>;
-      visual_mode?: VisualMode;
       template_id?: string;
       bgm_asset_id?: string | null;
       bgm_enabled?: boolean;

@@ -147,7 +147,7 @@ class WorkflowService:
         Supports:
         1. Exact relative path (e.g. 'image/image_flux.json')
         2. Subfolder filename match (e.g. 'image_flux.json')
-        3. Legacy path backward compatibility (e.g. 'selfhost/image_flux.json' -> finds 'image/image_flux.json')
+        3. Filename match within the workflow catalog (e.g. 'image_flux.json')
         """
         if not workflow_target or not workflow_target.strip():
             return None

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.core.database import Base
@@ -34,6 +34,7 @@ class ProductModel(Base):
         default=lambda: datetime.now(UTC),
         onupdate=lambda: datetime.now(UTC),
         nullable=False,
+        index=True,
     )
 
     assets: Mapped[list[ProductAssetModel]] = relationship(
@@ -47,6 +48,8 @@ class ProductModel(Base):
 
 class ProductAssetModel(Base):
     __tablename__ = "product_assets"
+
+    __table_args__ = (Index("ix_product_assets_product_order", "product_id", "sort_order"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     product_id: Mapped[str] = mapped_column(

@@ -65,13 +65,13 @@ class ProjectService:
         # 2. Automatically create 1:1 ProjectTemplate
         aspect = data.aspect_ratio.value
         if aspect == "16:9":
-            default_tid = "default_landscape"
+            default_tid = "image_wide_minimal"
             default_frame = "1920x1080/image_wide_minimal.html"
         elif aspect == "1:1":
-            default_tid = "default_square"
+            default_tid = "image_square_matted"
             default_frame = "1080x1080/image_square_matted.html"
         else:
-            default_tid = "default_portrait"
+            default_tid = "image_gallery_matted"
             default_frame = "1080x1920/image_gallery_matted.html"
 
         template = ProjectTemplateModel(

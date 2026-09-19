@@ -27,7 +27,7 @@ from src.services.drama_render_adapter import (
     RenderSceneDraft,
     adapt_approved_shots_to_render_scenes,
 )
-from src.services.durable_pipeline import DurableVideoPipeline, subtitle_documents
+from src.services.durable_pipeline import DurableProductionPipeline, subtitle_documents
 from src.services.generation_service import GenerationService
 from src.services.media_probe import media_probe_service
 from src.services.provider_manager import ProviderManager
@@ -37,7 +37,7 @@ from src.services.workflow_runtime import ArtifactSpec, WorkflowRuntime, sha256_
 from src.tasks.broadcaster import event_broadcaster
 
 
-class DramaProductionPipeline(DurableVideoPipeline):
+class DramaProductionPipeline(DurableProductionPipeline):
     """Shot → media → mixed audio → episode video durable pipeline."""
 
     production_mode = ProductionMode.DRAMA

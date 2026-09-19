@@ -427,10 +427,9 @@ function TrendDetailSheet({
 
       setAngle(createdProposal.angle || "");
       const brief = createdProposal.knowledge_brief;
-      const legacyBrief = createdProposal.content_brief;
-      setKnowledgeAudience(brief?.audience || legacyBrief?.audience || "");
-      setKnowledgeThesis(brief?.thesis || legacyBrief?.thesis || legacyBrief?.angle || "");
-      setKnowledgeViewerTakeaway(brief?.viewer_takeaway || legacyBrief?.viewer_takeaway || legacyBrief?.goal || "");
+      setKnowledgeAudience(brief?.audience || "");
+      setKnowledgeThesis(brief?.thesis || "");
+      setKnowledgeViewerTakeaway(brief?.viewer_takeaway || "");
       setSceneCount(Number.isFinite(count) ? Math.max(8, Math.min(20, count)) : 8);
       setEnableResearch(options.enable_research !== false);
       setContentMode(isContentMode(options.content_mode) ? options.content_mode : "generated_image");
@@ -505,34 +504,23 @@ function TrendDetailSheet({
         },
         current.generation_options,
       );
-      const currentBrief = current.knowledge_brief || current.content_brief;
-      const legacyCurrentBrief = current.content_brief;
       const currentKnowledgeBrief = current.knowledge_brief;
       const nextKnowledgeBrief: KnowledgeBrief = {
         audience: knowledgeAudience.trim(),
         thesis: knowledgeThesis.trim() || angle.trim(),
         viewer_takeaway: knowledgeViewerTakeaway.trim(),
-        key_claims: currentBrief?.key_claims || [],
-        source_refs: currentBrief?.source_refs || [],
+        key_claims: currentKnowledgeBrief?.key_claims || [],
+        source_refs: currentKnowledgeBrief?.source_refs || [],
         genre: taskGenre,
       };
-      const existingKnowledgeBrief = currentKnowledgeBrief
-        ? {
-            audience: currentKnowledgeBrief.audience || "",
-            thesis: currentKnowledgeBrief.thesis || "",
-            viewer_takeaway: currentKnowledgeBrief.viewer_takeaway || "",
-            key_claims: currentKnowledgeBrief.key_claims || [],
-            source_refs: currentKnowledgeBrief.source_refs || [],
-            genre: currentKnowledgeBrief.genre || "auto",
-          }
-        : {
-            audience: legacyCurrentBrief?.audience || "",
-            thesis: legacyCurrentBrief?.thesis || legacyCurrentBrief?.angle || "",
-            viewer_takeaway: legacyCurrentBrief?.viewer_takeaway || legacyCurrentBrief?.goal || "",
-            key_claims: legacyCurrentBrief?.key_claims || [],
-            source_refs: legacyCurrentBrief?.source_refs || [],
-            genre: legacyCurrentBrief?.genre || "auto",
-          };
+      const existingKnowledgeBrief = {
+        audience: currentKnowledgeBrief?.audience || "",
+        thesis: currentKnowledgeBrief?.thesis || "",
+        viewer_takeaway: currentKnowledgeBrief?.viewer_takeaway || "",
+        key_claims: currentKnowledgeBrief?.key_claims || [],
+        source_refs: currentKnowledgeBrief?.source_refs || [],
+        genre: currentKnowledgeBrief?.genre || "auto",
+      };
       const briefChanged = JSON.stringify(nextKnowledgeBrief) !== JSON.stringify(existingKnowledgeBrief);
       if (angle.trim() !== current.angle || JSON.stringify(nextOptions) !== JSON.stringify(current.generation_options) || briefChanged) {
         current = await api.updateTrendProposal(current.id, {
@@ -795,7 +783,7 @@ function TrendDetailSheet({
               </Field>
             </div>
 
-            {/* Angle remains a compatibility field and feeds the thesis when needed. */}
+            {/* The angle is a reviewable editorial input and feeds the thesis when needed. */}
             <Field label="知识切入角度" htmlFor="proposal-angle-input">
               <Textarea
                 id="proposal-angle-input"
@@ -808,13 +796,13 @@ function TrendDetailSheet({
             </Field>
 
             {/* 关键要点 */}
-            {proposal.content_brief.key_points && proposal.content_brief.key_points.length > 0 && (
+            {proposal.knowledge_brief.key_claims && proposal.knowledge_brief.key_claims.length > 0 && (
               <div className="space-y-1.5 text-xs">
                 <span className="font-medium text-muted-foreground">关键要点：</span>
                 <div className="flex flex-wrap gap-1.5">
-                  {proposal.content_brief.key_points.map((pt, idx) => (
-                    <span key={idx} className="rounded-md border border-border/80 bg-secondary/40 px-2 py-0.5 text-foreground text-[11px]">
-                      {pt}
+                  {proposal.knowledge_brief.key_claims.map((claim) => (
+                    <span key={claim.id} className="rounded-md border border-border/80 bg-secondary/40 px-2 py-0.5 text-foreground text-[11px]">
+                      {claim.statement}
                     </span>
                   ))}
                 </div>

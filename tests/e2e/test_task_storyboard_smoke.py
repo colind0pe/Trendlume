@@ -73,7 +73,7 @@ def _task_payload() -> dict:
         "input_payload": {
             "topic": "量子通信",
             "content_mode": "generated_image",
-            "template_id": "image_default",
+            "template_id": "image_gallery_matted",
             "template_params": {},
             "genre": "auto",
             "target_scene_count": 8,
@@ -118,7 +118,7 @@ def _task_payload() -> dict:
 
 def _template_payload() -> dict:
     return {
-        "id": "image_default",
+        "id": "image_gallery_matted",
         "name": "Image Default",
         "version": "1",
         "width": 1080,

@@ -5,6 +5,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from src.core.exceptions import ValidationException
 from src.domain.enums import JobType
 from src.models.asset import AssetModel
@@ -501,7 +502,14 @@ async def test_workflow_is_snapshotted_and_passed_to_image_provider(
         def __init__(self):
             self.workflows: list[str | None] = []
 
-        async def generate_image(self, prompt: str, aspect_ratio: str, workflow: str | None = None):
+        async def generate_image(
+            self,
+            prompt: str,
+            aspect_ratio: str,
+            workflow: str | None = None,
+            width: int | None = None,
+            height: int | None = None,
+        ):
             self.workflows.append(workflow)
             return ImageResult(
                 image_bytes=create_solid_color_png(10, 10),
@@ -637,23 +645,6 @@ async def test_phase4_api_research_bgm_and_content_helpers(
     assert research.status_code == 200
     assert research.json()["data"]["status"] == "completed"
     assert research.json()["data"]["queries"]
-
-    title = await client.post("/api/v1/generation/title", json={"topic": "API 主题"})
-    narration = await client.post(
-        "/api/v1/generation/narration", json={"raw_script": "第一段\n\n第二段"}
-    )
-    image_prompt = await client.post(
-        "/api/v1/generation/image-prompt", json={"topic": "API 主题"}
-    )
-    video_prompt = await client.post(
-        "/api/v1/generation/video-prompt", json={"topic": "API 主题"}
-    )
-    assert title.status_code == narration.status_code == image_prompt.status_code == video_prompt.status_code == 200
-    assert title.json()["data"]["title"]
-    assert len(narration.json()["data"]["narrations"]) == 2
-    assert image_prompt.json()["data"]["prompt"]
-    assert video_prompt.json()["data"]["prompt"]
-
 
 async def _resolved(value):
     return value

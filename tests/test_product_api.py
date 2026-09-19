@@ -105,7 +105,7 @@ async def test_commerce_task_api_persists_product_reference(client: AsyncClient)
             "product_id": product_id,
             "creative_angle": "demo",
             "content_mode": "static",
-            "template_id": "static_default",
+            "template_id": "static_editorial_quote",
             "enable_research": False,
             "bgm_enabled": False,
         },

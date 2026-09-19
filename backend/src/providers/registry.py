@@ -19,7 +19,7 @@ from src.providers.video.protocol import VideoProvider
 
 
 class ProviderRegistry:
-    """Legacy runtime registry for LLM/search and local media fallbacks."""
+    """In-memory provider bootstrap for offline and test fallback paths."""
 
     def __init__(self):
         self._search_provider: SearchProvider | None = None
@@ -105,7 +105,7 @@ class ProviderRegistry:
         # 3. TTS Provider (Default zero-cost Microsoft EdgeTTS)
         self._tts_provider = EdgeTTSProvider()
 
-        # 4. Image & Video Provider (legacy local ComfyUI fallback)
+        # 4. Image & Video Provider (local ComfyUI fallback)
         if comfyui_base_url is not None:
             comfy_url = comfyui_base_url.strip() if comfyui_base_url.strip() else None
         else:

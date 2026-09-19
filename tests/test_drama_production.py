@@ -176,7 +176,13 @@ async def test_drama_production_retries_one_failed_shot_only(test_session, tmp_p
                 failed["prompt"] = prompt
             if failed["prompt"] == prompt and not failed["allow_success"]:
                 raise RuntimeError("one shot failed")
-            return await original.generate_image(prompt, **kwargs)
+            return await original.generate_image(
+                prompt,
+                aspect_ratio=kwargs.get("aspect_ratio", "9:16"),
+                workflow=kwargs.get("workflow"),
+                width=kwargs.get("width"),
+                height=kwargs.get("height"),
+            )
 
     monkeypatch.setattr(provider_registry, "_image_provider", FailOnceImage())
     executor = VideoWorkflowExecutor(

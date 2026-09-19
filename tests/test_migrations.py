@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -15,7 +16,7 @@ from src.models import Base
 ROOT_DIR = Path(__file__).resolve().parent.parent
 BACKEND_DIR = ROOT_DIR / "backend"
 BASELINE_REVISION = "001_release_baseline"
-RELEASE_REVISION = "006_drama_preproduction"
+RELEASE_REVISION = "010_normalize_drama_dialogue"
 
 
 def _migration_database(tmp_path: Path, filename: str) -> tuple[Path, str]:
@@ -70,9 +71,10 @@ def test_head_creates_current_schema(tmp_path: Path):
             "last_test_latency_ms",
         } <= _table_columns(connection, "provider_configs")
         assert {
-            "content_brief",
+            "knowledge_brief",
             "generation_options",
         } <= _table_columns(connection, "topic_proposals")
+        assert "content_brief" not in _table_columns(connection, "topic_proposals")
         assert "primary_production_mode" in _table_columns(connection, "projects")
         assert "production_mode" in _table_columns(connection, "tasks")
         assert {"product_id", "creative_angle"} <= _table_columns(connection, "tasks")
@@ -86,6 +88,7 @@ def test_head_creates_current_schema(tmp_path: Path):
             "drama_shots",
             "drama_dialogue_lines",
         } <= _table_names(connection)
+        assert "dialogue" not in _table_columns(connection, "drama_shots")
         assert "creative_plan_id" in _table_columns(connection, "tasks")
         assert {
             "visual_role",
@@ -109,7 +112,16 @@ def test_existing_release_database_upgrades_and_downgrades_trend_center(tmp_path
                 (id, name, description, aspect_ratio, status, settings, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            ("project_legacy", "Legacy", "", "9:16", "draft", "{}", "2026-09-18", "2026-09-18"),
+            (
+                "project_legacy",
+                "Legacy",
+                "",
+                "9:16",
+                "draft",
+                json.dumps({"content_brief": {"goal": "旧目标", "key_points": ["旧主张"]}}),
+                "2026-09-18",
+                "2026-09-18",
+            ),
         )
         connection.execute(
             """
@@ -126,7 +138,12 @@ def test_existing_release_database_upgrades_and_downgrades_trend_center(tmp_path
                 "video_composition",
                 "pending",
                 0,
-                "{}",
+                json.dumps(
+                    {
+                        "content_brief": {"angle": "先定义", "key_points": ["旧主张"]},
+                        "template_id": "default_portrait",
+                    }
+                ),
                 "2026-09-18",
                 "2026-09-18",
             ),
@@ -163,6 +180,18 @@ def test_existing_release_database_upgrades_and_downgrades_trend_center(tmp_path
         assert connection.execute(
             "SELECT production_mode FROM tasks WHERE id = 'task_legacy'"
         ).fetchone() == ("knowledge",)
+        settings_value, payload_value = connection.execute(
+            "SELECT settings, input_payload FROM projects "
+            "JOIN tasks ON tasks.project_id = projects.id WHERE projects.id = 'project_legacy'"
+        ).fetchone()
+        settings = json.loads(settings_value)
+        payload = json.loads(payload_value)
+        assert "content_brief" not in settings
+        assert settings["knowledge_brief"]["viewer_takeaway"] == "旧目标"
+        assert "content_brief" not in payload
+        assert payload["knowledge_brief"]["thesis"] == "先定义"
+        assert payload["knowledge_brief"]["key_claims"][0]["statement"] == "旧主张"
+        assert payload["template_id"] == "image_gallery_matted"
 
     _run_migration(database_url, BASELINE_REVISION, downgrade=True)
     with sqlite3.connect(database_file) as connection:

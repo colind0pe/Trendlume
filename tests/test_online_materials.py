@@ -503,7 +503,6 @@ async def test_online_pipeline_preserves_generated_scene_override(test_session, 
         input_payload={
             "topic": "generated override",
             "content_mode": "online_asset",
-            "visual_mode": "video",
             "material_provider_id": "prov_material_pexels",
             "template_id": "video_full_overlay",
             "enable_research": False,
@@ -582,7 +581,6 @@ async def test_online_single_scene_refresh_replaces_generated_override(test_sess
         title="Online refresh task",
         input_payload={
             "content_mode": "online_asset",
-            "visual_mode": "video",
             "material_provider_id": "prov_material_pexels",
             "template_id": "video_full_overlay",
             "enable_research": False,
@@ -656,12 +654,12 @@ async def test_online_material_pipeline_binds_distinct_video_assets(test_session
         input_payload={
             "topic": "online footage",
             "content_mode": "online_asset",
-            "visual_mode": "video",
             "material_provider_id": "prov_material_pexels",
-            "template_id": "video_full_overlay",
-            "enable_research": False,
-            "target_scene_count": 2,
-        },
+                "template_id": "video_full_overlay",
+                "enable_research": False,
+                "target_scene_count": 2,
+                "manual_storyboard_version": "fixture-v1",
+            },
     )
     scenes = [
         SceneModel(
@@ -780,7 +778,6 @@ async def test_online_pipeline_initializes_mode_before_new_script_stage(
         input_payload={
             "topic": "city footage",
             "content_mode": "online_asset",
-            "visual_mode": "video",
             "material_provider_id": "prov_material_pexels",
             "template_id": "video_full_overlay",
             "enable_research": False,

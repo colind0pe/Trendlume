@@ -134,7 +134,9 @@ class MockImageProvider:
 class MockTTSProvider:
     name = "mock"
 
-    async def synthesize(self, text: str, voice_id: str = "mock-voice-1") -> TTSResult:
+    async def synthesize(
+        self, text: str, voice_id: str = "mock-voice-1", speed: float = 1.0
+    ) -> TTSResult:
         sample_rate = 16_000
         frames = b"\x00\x00" * int(sample_rate * 3.5)
         wav_buffer = io.BytesIO()
@@ -165,6 +167,7 @@ class MockVideoProvider:
     async def generate_video(
         self,
         prompt: str,
+        image_url: str | None = None,
         aspect_ratio: str = "9:16",
         duration_seconds: float = 4.0,
         workflow: str | None = None,

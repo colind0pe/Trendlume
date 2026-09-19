@@ -61,36 +61,6 @@ TEMPLATE_NAMES_ZH = {
     "video_square_full": "正方全景画幅",
     "video_square_card": "正方杂志动效",
 
-    # 别名与历史模板
-    "default_portrait": "画廊留白展卡",
-    "default_landscape": "横屏极简视窗",
-    "default_square": "正方雅致留白",
-    "video_default_portrait": "沉浸全屏字幕",
-    "video_default_landscape": "横屏全景沉浸",
-    "video_default_square": "正方全景画幅",
-    "image_default": "画廊留白展卡",
-    "video_default": "数字演播视窗",
-    "static_default": "质感金句引言",
-    "video_studio_stream": "数字演播视窗",
-    "video_split_stack": "双层分屏视窗",
-    "video_healing": "治愈舒缓视窗",
-    "asset_default": "通用素材展卡",
-    "image_modern": "现代先锋版式",
-    "image_purple": "霓虹夜幕紫调",
-    "image_neon": "赛博霓虹幻彩",
-    "image_elegant": "雅致典藏版式",
-    "image_cartoon": "活力卡通动漫",
-    "image_book": "书卷人文质感",
-    "image_blur_card": "毛玻璃质感卡",
-    "image_full": "纯粹全屏原画",
-    "image_healing": "治愈插画卡片",
-    "image_simple_black": "极简玄黑版式",
-    "image_simple_line_drawing": "极简线条画风",
-    "image_studio_aurora": "极光工坊视效",
-    "static_ambient_manifesto": "氛围宣言大字",
-    "static_frosted_insight": "磨砂深度洞察",
-    "static_landscape_card": "横屏画卡语录",
-    "static_square_card": "正方语录画卡",
 }
 
 TEMPLATE_PARAM_LABELS_ZH = {
@@ -133,7 +103,7 @@ class _MediaMetaParser(HTMLParser):
 
 
 def parse_media_size(template: str) -> tuple[int, int]:
-    """Return the media size declared in a template, matching the Demo fallback."""
+    """Return the media size declared in a template, with a safe default."""
     parser = _MediaMetaParser()
     try:
         parser.feed(template)
@@ -270,22 +240,9 @@ class TemplateCatalog:
 
     SUPPORTED_SIZES = ("1080x1920", "1920x1080", "1080x1080")
 
-    ALIASES = {
-        "default_portrait": "image_gallery_matted",
-        "default_landscape": "image_wide_minimal",
-        "default_square": "image_square_matted",
-        "video_default_portrait": "video_full_overlay",
-        "video_default_landscape": "video_wide_full",
-        "video_default_square": "video_square_full",
-        "image_default": "image_gallery_matted",
-        "video_default": "video_studio_stream",
-        "static_default": "static_editorial_quote",
-    }
-
     def __init__(self, root: Path | None = None):
         self.root = root or Path(__file__).resolve().parent.parent.parent / "templates"
         self._cache: dict[str, dict[str, Any]] | None = None
-        self._legacy_cache: dict[str, dict[str, Any]] = {}
         self._video_frames: dict[str, tuple[int, int, int, int]] = {}
 
     @staticmethod
@@ -309,57 +266,19 @@ class TemplateCatalog:
             candidate = size_preview_dir / f"{stem}{suffix}"
             if candidate.is_file():
                 return f"previews/{size}/{candidate.name}"
-        if stem in self.ALIASES:
-            target = self.ALIASES[stem]
-            for suffix in (".png", ".jpg", ".jpeg", ".webp"):
-                candidate = size_preview_dir / f"{target}{suffix}"
-                if candidate.is_file():
-                    return f"previews/{size}/{candidate.name}"
         # Fallback to root previews or 1080x1920
         fallback_dir = self.root / "previews" / "1080x1920"
         for suffix in (".png", ".jpg", ".jpeg", ".webp"):
             candidate = fallback_dir / f"{stem}{suffix}"
             if candidate.is_file():
                 return f"previews/1080x1920/{candidate.name}"
-        if stem == "asset_default":
-            return "cache/template_preview_asset_default_1.png"
         return None
-
-    def _get_legacy(self, template_id: str) -> dict[str, Any] | None:
-        legacy_path = self.root / "legacy_archive" / "1080x1920" / f"{template_id}.html"
-        if not legacy_path.is_file():
-            return None
-        content = legacy_path.read_text(encoding="utf-8")
-        template_type = self._template_type(template_id)
-        media_width, media_height = parse_media_size(content)
-        if template_type == "video":
-            self._video_frames[template_id] = parse_video_frame(content)
-        template_name = TEMPLATE_NAMES_ZH.get(template_id, template_id.replace("_", " ").title())
-        return {
-            "id": template_id,
-            "name": template_name,
-            "version": "2" if template_type == "video" else "1",
-            "width": 1080,
-            "height": 1920,
-            "aspect_ratio": "9:16",
-            "media_width": media_width,
-            "media_height": media_height,
-            "template_type": template_type,
-            "html_path": f"legacy_archive/1080x1920/{legacy_path.name}",
-            "preview_path": self._find_preview(template_id, "1080x1920"),
-            "parameter_schema": parse_parameters(content),
-            "default_params": {
-                parameter["name"]: parameter["default"]
-                for parameter in parse_parameters(content)
-            },
-            "supported_content_modes": self._supported_modes(template_type),
-        }
 
     def scan(
         self, aspect_ratio: str | None = None, content_mode: str | None = None
     ) -> list[dict[str, Any]]:
         if self._cache is not None:
-            active_items = [item for key, item in self._cache.items() if key not in self.ALIASES]
+            active_items = list(self._cache.values())
             if aspect_ratio:
                 active_items = [item for item in active_items if item.get("aspect_ratio") == aspect_ratio]
             if content_mode:
@@ -409,21 +328,9 @@ class TemplateCatalog:
                 }
                 items[item["id"]] = item
 
-        # Inject compatibility aliases so get() resolves them transparently
-        for alias, target in self.ALIASES.items():
-            if target in items:
-                items[alias] = {**items[target], "id": alias}
-                if target in self._video_frames:
-                    self._video_frames[alias] = self._video_frames[target]
-            else:
-                legacy_item = self._get_legacy(target)
-                if legacy_item:
-                    items[alias] = {**legacy_item, "id": alias}
-                    if target in self._video_frames:
-                        self._video_frames[alias] = self._video_frames[target]
         self._cache = items
 
-        active_items = [item for key, item in items.items() if key not in self.ALIASES]
+        active_items = list(items.values())
         if aspect_ratio:
             active_items = [item for item in active_items if item.get("aspect_ratio") == aspect_ratio]
         if content_mode:
@@ -462,12 +369,6 @@ class TemplateCatalog:
             self.scan()
         if self._cache and template_id in self._cache:
             return self._cache[template_id]
-        if template_id in self._legacy_cache:
-            return self._legacy_cache[template_id]
-        legacy_item = self._get_legacy(template_id)
-        if legacy_item:
-            self._legacy_cache[template_id] = legacy_item
-            return legacy_item
         return None
 
     def resolve_path(self, template_id: str | None) -> Path:
@@ -510,16 +411,12 @@ class TemplateCatalog:
         if not item:
             return fallback
         tid = item["id"]
-        target = self.ALIASES.get(tid, tid)
         if tid in self._video_frames:
             return self._video_frames[tid]
-        if target in self._video_frames:
-            return self._video_frames[target]
         return (0, 0, int(item.get("width") or fallback[2]), int(item.get("height") or fallback[3]))
 
     def invalidate(self) -> None:
         self._cache = None
-        self._legacy_cache = {}
         self._video_frames = {}
 
 

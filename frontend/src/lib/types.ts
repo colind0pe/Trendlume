@@ -167,7 +167,6 @@ export interface TrendProposalCreateRequest {
   project_id: string;
   trend_item_id: string;
   angle?: string;
-  content_brief?: Record<string, any>;
   knowledge_brief?: KnowledgeBrief;
   generation_options?: Record<string, any>;
 }
@@ -176,7 +175,6 @@ export interface TrendProposalUpdateRequest {
   expected_revision: number;
   title?: string;
   angle?: string;
-  content_brief?: Record<string, any>;
   knowledge_brief?: KnowledgeBrief;
   generation_options?: Record<string, any>;
 }
@@ -217,19 +215,6 @@ export interface KnowledgeBrief {
   genre?: string | null;
 }
 
-export interface ContentBrief extends KnowledgeBrief {
-  audience?: string | null;
-  goal?: string | null;
-  angle?: string | null;
-  tone?: string | null;
-  language?: string | null;
-  key_points: string[];
-  claims: string[];
-  uncertainty?: string | null;
-  source_refs: string[];
-  production_constraints: string[];
-}
-
 export type TrendProposalStatus = "draft" | "approving" | "task_created" | "queue_failed" | "rejected";
 
 export interface TrendProposal {
@@ -246,8 +231,7 @@ export interface TrendProposal {
   match_reason: string;
   matched_keywords: string[];
   trend_snapshot: Record<string, any>;
-  content_brief: ContentBrief;
-  knowledge_brief?: KnowledgeBrief | null;
+  knowledge_brief: KnowledgeBrief;
   generation_options: Record<string, any>;
   created_at: string;
   updated_at: string;

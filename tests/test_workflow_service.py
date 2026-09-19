@@ -27,7 +27,7 @@ def test_resolve_workflow_file_various_formats():
     assert p2.exists()
     assert p2.name == "image_flux.json"
 
-    # 3. Legacy path backward compatibility
+    # Filename lookup remains deterministic when only a workflow filename is stored.
     p3 = workflow_service.resolve_workflow_file("selfhost/video_wan2.1_fusionx.json")
     assert p3 is not None
     assert p3.exists()

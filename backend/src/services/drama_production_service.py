@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -542,7 +542,6 @@ class DramaProductionService:
                 scene_id=scene.id,
                 sequence_index=current_scene_shot_index,
                 action=str(block.get("action") or "推进剧情"),
-                dialogue=dialogue,
                 character_ids=character_ids,
                 location_id=location.id,
                 camera=str(block.get("camera") or "固定机位"),
@@ -721,6 +720,15 @@ class DramaProductionService:
         bible = await self.get_bible(drama_id)
         shot = await self._get_shot(bible.id, shot_id)
         changes = payload.model_dump(exclude_unset=True)
+        if "dialogue" in changes:
+            characters_result = await self.session.execute(
+                select(DramaCharacterModel).where(DramaCharacterModel.bible_id == bible.id)
+            )
+            characters = {_key(character.name): character for character in characters_result.scalars().all()}
+            await self.session.execute(
+                delete(DramaDialogueLineModel).where(DramaDialogueLineModel.shot_id == shot.id)
+            )
+            self._add_dialogue_lines(shot, str(changes.pop("dialogue") or ""), characters)
         if "character_ids" in changes:
             await self._validate_character_ids(bible.id, changes["character_ids"] or [])
         if changes.get("location_id"):
@@ -1145,7 +1153,6 @@ class DramaProductionService:
             default_voice = await ProviderManager(self.session).get_default_tts_voice()
         content_mode = "generated_video" if payload.visual_mode == "video" else "generated_image"
         input_payload = {
-            "production_mode": ProductionMode.DRAMA.value,
             "drama_id": bible.id,
             "episode_id": episode.id,
             "drama_revision": bible.revision,

@@ -2,9 +2,6 @@ from src.core.database import Base
 from src.models.asset import AssetModel
 from src.models.creative_plan import CreativePlanModel
 from src.models.drama import (
-    Character,
-    DialogueLine,
-    DramaBible,
     DramaBibleModel,
     DramaCharacterModel,
     DramaDialogueLineModel,
@@ -12,9 +9,6 @@ from src.models.drama import (
     DramaLocationModel,
     DramaSceneModel,
     DramaShotModel,
-    Episode,
-    Location,
-    Shot,
 )
 from src.models.product import ProductAssetModel, ProductModel
 from src.models.project import ProjectModel
@@ -54,12 +48,6 @@ __all__ = [
     "DramaSceneModel",
     "DramaShotModel",
     "DramaDialogueLineModel",
-    "DramaBible",
-    "Character",
-    "Location",
-    "Episode",
-    "Shot",
-    "DialogueLine",
     "ProjectTemplateModel",
     "TaskModel",
     "SceneModel",

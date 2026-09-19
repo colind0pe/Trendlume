@@ -58,7 +58,7 @@ interface ComfyUIWorkflowItem {
   workflow_type?: string;
 }
 
-export interface CreateTaskDialogProps {
+export interface ProductionTaskDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   projectId: string;
@@ -78,7 +78,7 @@ export interface CreateTaskDialogProps {
 const assetFileUrl = (filePath: string) =>
   `/api/v1/assets/files/${filePath.split("/").map(encodeURIComponent).join("/")}`;
 
-export function CreateTaskDialog({
+export function ProductionTaskDialog({
   open,
   onOpenChange,
   projectId,
@@ -93,7 +93,7 @@ export function CreateTaskDialog({
   isVoicesError,
   refetchVoices,
   canonicalTemplateId,
-}: CreateTaskDialogProps) {
+}: ProductionTaskDialogProps) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -266,7 +266,6 @@ export function CreateTaskDialog({
           }
         : null;
 
-      const selectedVisualMode = contentMode === "generated_video" ? "video" : "image";
       const generationOptions = buildGenerationOptions({
         targetSceneCount,
         enableResearch,
@@ -308,7 +307,6 @@ export function CreateTaskDialog({
           },
         } : {}),
         input_payload: {
-          production_mode: productionMode,
           ...(isCommerce ? { product_id: productId, creative_plan_id: creativePlanId, creative_angle: creativeAngle } : {}),
           mode: creationMode,
           topic: finalTitle,
@@ -325,13 +323,11 @@ export function CreateTaskDialog({
             },
           } : {}),
           ...generationOptions,
-          visual_mode: selectedVisualMode,
           template_params: templateParams,
           scheduled_publish: scheduledPublish,
           image_workflow_id: imageWorkflowId || null,
           video_workflow_id: videoWorkflowId || null,
         },
-        visual_mode: selectedVisualMode,
         template_id: selectedTemplateId,
         bgm_asset_id: bgmEnabled ? bgmAssetId || null : null,
         bgm_enabled: bgmEnabled,

@@ -195,7 +195,7 @@ class TopicProposalModel(Base):
     match_reason: Mapped[str] = mapped_column(Text, default="", nullable=False)
     matched_keywords: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     trend_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
-    content_brief: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    knowledge_brief: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     generation_options: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(UTC), nullable=False

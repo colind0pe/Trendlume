@@ -156,7 +156,6 @@ async def produce_from_creative_plan(
             creative_plan_id=plan.id,
             creative_angle=CreativeAngle(plan.angle),
             input_payload={
-                "production_mode": ProductionMode.COMMERCE.value,
                 "product_id": product_id,
                 "creative_plan_id": plan.id,
                 "creative_angle": plan.angle,

@@ -103,7 +103,7 @@ async def test_proposal_revision_and_task_are_idempotent(
     script_inputs = build_script_generation_inputs(
         action["task"]["input_payload"], topic=action["task"]["title"]
     )
-    assert script_inputs["content_brief"]["key_points"] == ["AI 热点"]
+    assert script_inputs["knowledge_brief"]["key_claims"][0]["statement"] == "AI 热点"
 
     repeated = await client.post(
         f"/api/v1/trends/proposals/{proposal['id']}/approve-and-create-task",

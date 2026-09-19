@@ -31,7 +31,13 @@ async def test_pipeline_real_media_reuse_corruption_and_manifest(test_session, t
     test_session.add(project)
     await test_session.flush()
     task = TaskModel(id=str(uuid4()), project_id=project.id, title='Fixed',
-        input_payload={'topic': 'Fixed', 'enable_research': False, 'content_mode': 'static', 'template_id': 'static_default'})
+        input_payload={
+            'topic': 'Fixed',
+            'enable_research': False,
+            'content_mode': 'static',
+            'template_id': 'static_editorial_quote',
+            'manual_storyboard_version': 'fixture-v1',
+        })
     test_session.add(task)
     await test_session.flush()
     scene = SceneModel(id=str(uuid4()), task_id=task.id, narration_text='', duration_seconds=.4)

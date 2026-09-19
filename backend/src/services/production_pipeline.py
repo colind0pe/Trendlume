@@ -2,19 +2,11 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import Any, Protocol, runtime_checkable
+from typing import Any
 
 from src.core.exceptions import ValidationException
 from src.domain.enums import ProductionMode
 from src.domain.production_workflows import ProductionWorkflow, normalize_production_mode
-
-
-@runtime_checkable
-class ProductionPipeline(Protocol):
-    production_mode: ProductionMode
-    workflow: ProductionWorkflow
-
-    async def execute(self) -> dict[str, Any]: ...
 
 
 class BaseProductionPipeline(ABC):
@@ -26,7 +18,7 @@ class BaseProductionPipeline(ABC):
         raise NotImplementedError
 
 
-PipelineFactory = Callable[..., ProductionPipeline]
+PipelineFactory = Callable[..., BaseProductionPipeline]
 
 
 class ProductionPipelineRegistry:
@@ -52,10 +44,10 @@ class ProductionPipelineRegistry:
         # implementation and can be used by TaskService during test setup.
         from src.services.commerce_pipeline import CommerceProductionPipeline
         from src.services.drama_production_pipeline import DramaProductionPipeline
-        from src.services.durable_pipeline import DurableVideoPipeline
+        from src.services.durable_pipeline import DurableProductionPipeline
 
         builtins = {
-            ProductionMode.KNOWLEDGE: DurableVideoPipeline,
+            ProductionMode.KNOWLEDGE: DurableProductionPipeline,
             ProductionMode.COMMERCE: CommerceProductionPipeline,
             ProductionMode.DRAMA: DramaProductionPipeline,
         }
@@ -65,7 +57,11 @@ class ProductionPipelineRegistry:
 
     def is_registered(self, mode: str | ProductionMode | None) -> bool:
         self._ensure_builtin_pipelines()
-        return normalize_production_mode(mode) in self._factories
+        try:
+            normalized = normalize_production_mode(mode)
+        except ValueError:
+            return False
+        return normalized in self._factories
 
     def available_modes(self) -> tuple[ProductionMode, ...]:
         self._ensure_builtin_pipelines()
@@ -77,9 +73,12 @@ class ProductionPipelineRegistry:
         session,
         job,
         rendering_service_factory: Callable | None = None,
-    ) -> ProductionPipeline:
+    ) -> BaseProductionPipeline:
         self._ensure_builtin_pipelines()
-        normalized = normalize_production_mode(mode)
+        try:
+            normalized = normalize_production_mode(mode)
+        except ValueError as exc:
+            raise ValidationException("不支持的生产模式。") from exc
         factory = self._factories.get(normalized)
         if factory is None:
             raise ValidationException(f"生产模式 {normalized.value} 暂未开放。")

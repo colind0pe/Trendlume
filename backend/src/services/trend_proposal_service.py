@@ -20,7 +20,7 @@ from src.models.trend import (
     TrendRunModel,
     TrendSourceRunModel,
 )
-from src.schemas.generation import ContentBrief, KnowledgeBrief
+from src.schemas.generation import KnowledgeBrief
 from src.schemas.task import TaskCreate
 from src.schemas.trend import (
     TrendProposalApproveRequest,
@@ -92,7 +92,7 @@ class TrendProposalServiceMixin:
         proposal_title = item.title.strip()[:255]
         angle = (payload.angle or "").strip() or self._default_angle(proposal_title, relation)
         options = self._normalize_generation_options(payload.generation_options)
-        brief = payload.knowledge_brief or payload.content_brief or self._default_content_brief(
+        brief = payload.knowledge_brief or self._default_knowledge_brief(
             proposal_title, angle, observation.source_url
         )
         if not getattr(brief, "genre", None) or brief.genre == "auto":
@@ -111,7 +111,7 @@ class TrendProposalServiceMixin:
             match_reason=match_reason,
             matched_keywords=matched_keywords,
             trend_snapshot=source_snapshot,
-            content_brief=brief.model_dump(),
+            knowledge_brief=brief.model_dump(),
             generation_options=options,
             created_at=now,
             updated_at=now,
@@ -148,23 +148,21 @@ class TrendProposalServiceMixin:
 
         next_title = proposal.title
         next_angle = proposal.angle
-        next_content_brief = dict(proposal.content_brief or {})
+        next_knowledge_brief = dict(proposal.knowledge_brief or {})
         next_options = dict(proposal.generation_options or {})
         if payload.title is not None and payload.title.strip() != proposal.title:
             next_title = payload.title.strip()
         if payload.angle is not None and payload.angle.strip() != proposal.angle:
             next_angle = payload.angle.strip()
         if payload.knowledge_brief is not None:
-            next_content_brief = payload.knowledge_brief.model_dump()
-        elif payload.content_brief is not None:
-            next_content_brief = payload.content_brief.model_dump()
+            next_knowledge_brief = payload.knowledge_brief.model_dump()
         if payload.generation_options is not None:
             next_options = self._normalize_generation_options(payload.generation_options)
 
         values = {
             "title": next_title,
             "angle": next_angle,
-            "content_brief": next_content_brief,
+            "knowledge_brief": next_knowledge_brief,
             "generation_options": next_options,
             "revision": TopicProposalModel.revision + 1,
             "updated_at": datetime.now(UTC),
@@ -253,13 +251,10 @@ class TrendProposalServiceMixin:
         )
         target_scene_count = options["target_scene_count"]
         enable_research = options["enable_research"]
-        brief = ContentBrief.model_validate(proposal.content_brief or {})
-        knowledge_brief = KnowledgeBrief.from_payload(brief)
+        knowledge_brief = KnowledgeBrief.model_validate(proposal.knowledge_brief or {})
         task_payload = {
             "topic": proposal.title,
-            "content_brief": brief.model_dump(),
             "knowledge_brief": knowledge_brief.model_dump(),
-            "production_mode": ProductionMode.KNOWLEDGE.value,
             "trend_provenance": {
                 "proposal_id": proposal.id,
                 "proposal_revision": proposal.revision,
@@ -419,17 +414,13 @@ class TrendProposalServiceMixin:
         return f"核验“{title}”的事实边界，再给出克制的背景解读"
 
     @staticmethod
-    def _default_content_brief(title: str, angle: str, source_url: str | None) -> ContentBrief:
-        return ContentBrief(
+    def _default_knowledge_brief(title: str, angle: str, source_url: str | None) -> KnowledgeBrief:
+        return KnowledgeBrief(
             audience="对科技和热点感兴趣的普通用户",
-            goal=f"围绕“{title}”制作一条有来源、有边界的短视频",
-            angle=angle,
-            tone="清晰、克制、易懂",
-            language="zh-CN",
-            key_points=[title],
-            uncertainty="热点信息可能快速变化，生成后请核验原始来源。",
+            thesis=angle or title,
+            viewer_takeaway=f"围绕“{title}”理解一个有来源、有边界的关键事实",
+            key_claims=[{"id": "claim-1", "statement": title}],
             source_refs=[source_url] if source_url else [],
-            production_constraints=["保留来源核验提示", "避免未经证实的绝对化结论"],
         )
 
     @staticmethod
@@ -535,8 +526,7 @@ class TrendProposalServiceMixin:
             match_reason=proposal.match_reason,
             matched_keywords=list(proposal.matched_keywords or []),
             trend_snapshot=dict(proposal.trend_snapshot or {}),
-            content_brief=ContentBrief.model_validate(proposal.content_brief or {}),
-            knowledge_brief=KnowledgeBrief.from_payload(proposal.content_brief or {}),
+            knowledge_brief=KnowledgeBrief.model_validate(proposal.knowledge_brief or {}),
             generation_options=TrendProposalServiceMixin._normalize_generation_options(
                 proposal.generation_options
             ),

@@ -106,8 +106,8 @@ def _adapt_shot(bible: DramaBibleModel, shot: DramaShotModel, sequence: int) -> 
         source_shot_id=shot.id,
         sequence_index=sequence,
         narration_text=narration,
-        # Keep the original shot anchor as the final line for compatibility
-        # with the pre-production review contract and existing callers.
+        # Keep the original shot anchor as the final line for review and
+        # deterministic continuity.
         visual_prompt="\n".join(part for part in prompt_parts if part).strip() + f"\n{anchor_line}",
         duration_seconds=shot.duration_hint,
         layout_params={

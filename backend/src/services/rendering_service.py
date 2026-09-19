@@ -111,14 +111,13 @@ class RenderingService:
         )
 
         input_payload = (task.input_payload if task else {}) or {}
-        template_id = input_payload.get("template_id", "default_portrait")
+        template_id = input_payload.get("template_id", "image_gallery_matted")
         template_item = template_catalog.get(template_id)
         if not template_item:
             raise ValidationException(f"模板不存在: {template_id}")
         content_mode = resolve_content_mode(
             input_payload.get("content_mode"),
             template_type=template_item["template_type"],
-            visual_mode=input_payload.get("visual_mode"),
         )
         if not is_content_mode_supported(content_mode, template_item["template_type"]):
             raise ValidationException(f"模板 {template_id} 不支持内容模式 {content_mode}")
@@ -271,7 +270,7 @@ class RenderingService:
                     if media_is_video
                     else "online_template_image"
                     if content_mode == "online_asset"
-                    else "legacy_full_canvas"
+                    else "template_full_canvas"
                 ),
                 "media_frame": {
                     "x": frame_x,
@@ -404,12 +403,11 @@ class RenderingService:
 
         input_payload = (task.input_payload or {})
         explicit_bgm_override = bgm_asset_id is not None
-        template_id = input_payload.get("template_id", "default_portrait")
+        template_id = input_payload.get("template_id", "image_gallery_matted")
         template_item = template_catalog.get(template_id)
         content_mode = resolve_content_mode(
             input_payload.get("content_mode"),
             template_type=(template_item or {}).get("template_type"),
-            visual_mode=input_payload.get("visual_mode"),
         )
         expected_scene_render_version = (
             self.ONLINE_SCENE_RENDER_FORMAT_VERSION
@@ -558,8 +556,7 @@ class RenderingService:
         )
 
         # 4b. Optionally mix project/task BGM below the narration volume.
-        # Missing bgm_enabled means a legacy task: keep its historical output
-        # unchanged and do not silently introduce the new system asset.
+        # Missing BGM settings mean that this render has no task-level BGM.
         project = await self.project_repo.get_by_id(task.project_id)
         raw_bgm_enabled = input_payload.get("bgm_enabled", False)
         if isinstance(raw_bgm_enabled, str):
@@ -643,13 +640,13 @@ class RenderingService:
                 "task_id": task_id,
                 "type": "final_composition",
                 "ffmpeg_commands": list(self.commands),
-                "template_id": (task.input_payload or {}).get("template_id", "default_portrait"),
+                "template_id": (task.input_payload or {}).get("template_id", "image_gallery_matted"),
                 "template_version": (task.input_payload or {}).get("template_version", "1"),
                 "content_mode": content_mode,
                 "layout_strategy": (
                     "online_cover_blurred_background"
                     if content_mode == "online_asset"
-                    else "legacy_full_canvas"
+                    else "template_full_canvas"
                 ),
                 "scene_render_format_version": expected_scene_render_version,
                 "bgm_enabled": bool(bgm_asset),
@@ -670,7 +667,7 @@ class RenderingService:
             "final_video_asset_id": final_asset.id,
             "final_video_url": self.storage.get_url(final_asset.file_path),
             "final_video_path": final_asset.file_path,
-            "template_id": (task.input_payload or {}).get("template_id", "default_portrait"),
+            "template_id": (task.input_payload or {}).get("template_id", "image_gallery_matted"),
             "template_version": (task.input_payload or {}).get("template_version", "1"),
             "content_mode": (task.input_payload or {}).get("content_mode", "generated_image"),
             "total_duration": round(actual_final_duration, 2),

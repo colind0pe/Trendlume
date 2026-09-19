@@ -1,9 +1,9 @@
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from src.core.exceptions import ProviderException, ValidationException
 from src.providers.llm.protocol import StructuredOutputException
 from src.schemas.generation import (
-    ContentGenerateRequest,
     ResearchResponse,
     ResearchSource,
     ScriptGenerateRequest,
@@ -254,47 +254,6 @@ async def test_generated_script_rejects_wrong_target_count(test_session: AsyncSe
     monkeypatch.setattr(service, "_get_llm_provider", get_provider)
     with pytest.raises(ValidationException, match="期望 8 个分镜.*实际 1 个"):
         await service.generate_script(ScriptGenerateRequest(topic="主题", target_scene_count=8))
-
-
-@pytest.mark.asyncio
-async def test_narration_rejects_wrong_target_count(test_session: AsyncSession, monkeypatch):
-    class ShortLLM:
-        async def generate_text(self, prompt="", **kwargs):
-            return "只有一段"
-
-    service = GenerationService(test_session)
-
-    async def get_provider():
-        return ShortLLM()
-
-    monkeypatch.setattr(service, "_get_llm_provider", get_provider)
-    monkeypatch.setattr(service, "research_topic", lambda *args, **kwargs: None)
-    with pytest.raises(ValidationException, match="期望 8 段旁白.*实际 1 段"):
-        await service.generate_narration(
-            ContentGenerateRequest(topic="主题", target_scene_count=8, enable_research=False)
-        )
-
-
-@pytest.mark.asyncio
-async def test_narration_default_count_preserves_legacy_truncation(
-    test_session: AsyncSession, monkeypatch
-):
-    class LongLLM:
-        async def generate_text(self, prompt="", **kwargs):
-            return "\n".join(f"第 {index} 段" for index in range(1, 11))
-
-    service = GenerationService(test_session)
-
-    async def get_provider():
-        return LongLLM()
-
-    monkeypatch.setattr(service, "_get_llm_provider", get_provider)
-    result = await service.generate_narration(
-        ContentGenerateRequest(topic="主题", enable_research=False)
-    )
-
-    assert len(result.narrations) == 8
-    assert result.narrations[-1] == "第 8 段"
 
 
 @pytest.mark.asyncio

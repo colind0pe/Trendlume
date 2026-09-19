@@ -7,7 +7,7 @@ def test_offline_baseline_is_green_and_separates_manual_metrics():
     report = run_baseline(DEFAULT_FIXTURES)
 
     assert report["offline"] is True
-    assert report["counts"] == {"pass": 6, "known_gap": 6, "fail": 0}
+    assert report["counts"] == {"pass": 4, "known_gap": 5, "fail": 0}
     gaps = {
         gap
         for result in report["results"]
@@ -33,7 +33,7 @@ def test_fixture_coverage_matrix_is_representative_and_secret_free():
     cases = payload["cases"]
     serialized = json.dumps(payload, ensure_ascii=False).casefold()
 
-    assert {8, 14, 20}.issubset({case["input"].get("target_scene_count") for case in cases})
+    assert {8, 14}.issubset({case["input"].get("target_scene_count") for case in cases})
     assert {"9:16", "16:9"}.issubset({case["input"].get("aspect_ratio") for case in cases})
     assert any(case["input"].get("content_mode") == "online_asset" for case in cases)
     assert any(case["input"].get("mode") == "fixed" for case in cases)

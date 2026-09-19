@@ -65,7 +65,7 @@ class EventBroadcaster:
         task_id: str | None = None,
         job_id: str | None = None,
     ) -> dict[str, Any]:
-        """Keep task events on one small, backwards-compatible payload contract."""
+        """Keep task events on one small, stable payload contract."""
         payload = dict(data or {})
         if task_id:
             payload.setdefault("task_id", task_id)

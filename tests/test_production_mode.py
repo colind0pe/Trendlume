@@ -6,7 +6,8 @@ from src.domain.enums import CreativeAngle, ProductionMode
 from src.domain.production_workflows import get_production_workflow
 from src.schemas.product import ProductCreate
 from src.schemas.project import ProjectCreate
-from src.schemas.task import TaskCreate
+from src.schemas.task import TaskCreate, TaskUpdate
+from src.services.product_service import ProductService
 from src.services.production_pipeline import ProductionPipelineRegistry
 from src.services.project_service import ProjectService
 from src.services.task_service import TaskService
@@ -47,7 +48,7 @@ async def test_project_and_task_persist_knowledge_production_mode_by_default(tes
 
     assert project.primary_production_mode == ProductionMode.KNOWLEDGE.value
     assert task.production_mode == ProductionMode.KNOWLEDGE.value
-    assert task.input_payload["production_mode"] == ProductionMode.KNOWLEDGE.value
+    assert "production_mode" not in task.input_payload
 
 
 @pytest.mark.asyncio
@@ -100,7 +101,7 @@ async def test_task_can_override_project_mode_without_mutating_project(test_sess
 
     assert project.primary_production_mode == ProductionMode.COMMERCE.value
     assert task.production_mode == ProductionMode.KNOWLEDGE.value
-    assert task.input_payload["production_mode"] == ProductionMode.KNOWLEDGE.value
+    assert "production_mode" not in task.input_payload
     assert task.input_payload["knowledge_brief"]["genre"] == "auto"
 
 
@@ -112,3 +113,32 @@ async def test_generic_task_creation_cannot_bypass_drama_approval_workspace(test
 
     with pytest.raises(ValidationException, match="Drama workspace"):
         await TaskService(test_session).create_task(project.id, TaskCreate(title="Invalid Drama task"))
+
+
+@pytest.mark.asyncio
+async def test_mode_update_removes_previous_mode_payload(test_session):
+    project = await ProjectService(test_session).create_project(
+        ProjectCreate(name="Mode update project")
+    )
+    task_service = TaskService(test_session)
+    task = await task_service.create_task(
+        project.id,
+        TaskCreate(title="切换模式", knowledge_brief={"thesis": "知识主张"}),
+    )
+    product = await ProductService(test_session).create_product(
+        ProductCreate(title="模式切换商品", brand="Demo")
+    )
+
+    updated = await task_service.update_task(
+        task.id,
+        TaskUpdate(
+            production_mode=ProductionMode.COMMERCE,
+            product_id=product.id,
+            creative_angle=CreativeAngle.DEMO,
+        ),
+    )
+
+    assert updated.production_mode == ProductionMode.COMMERCE.value
+    assert updated.input_payload["product_id"] == product.id
+    assert "knowledge_brief" not in updated.input_payload
+    assert "enable_research" not in updated.input_payload

@@ -36,9 +36,9 @@ test("individual asset, scene and preview updates do not start a generation work
   assert.equal(isGenerationLifecycleEvent("task_failed"), true);
 });
 
-test("online asset refresh uses the dedicated material action before workflow retry", () => {
-  assert.equal(resolveSceneAssetRefreshAction("online_asset", true, true, true), "online_material");
-  assert.equal(resolveSceneAssetRefreshAction("generated_image", true, true, true), "workflow_unit");
-  assert.equal(resolveSceneAssetRefreshAction("generated_video", true, true, true), "workflow_unit");
-  assert.equal(resolveSceneAssetRefreshAction("online_asset", false, true, true), "workflow_unit");
+test("online assets use the same workflow-unit refresh contract", () => {
+  assert.equal(resolveSceneAssetRefreshAction("online_asset", true, true), "workflow_unit");
+  assert.equal(resolveSceneAssetRefreshAction("generated_image", true, true), "workflow_unit");
+  assert.equal(resolveSceneAssetRefreshAction("generated_video", true, true), "workflow_unit");
+  assert.equal(resolveSceneAssetRefreshAction("online_asset", false, true), "none");
 });

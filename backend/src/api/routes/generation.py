@@ -3,8 +3,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from src.api.dependencies import get_generation_service, request_session_factory
 from src.schemas.common import APIResponse
 from src.schemas.generation import (
-    ContentGenerateRequest,
-    ContentGenerateResponse,
     PlatformMetadata,
     ResearchRequest,
     ResearchResponse,
@@ -82,38 +80,6 @@ async def generate_script(
         )
     script = await service.generate_script(payload)
     return APIResponse(data=script)
-
-
-@router.post("/title", response_model=APIResponse[ContentGenerateResponse])
-async def generate_title(
-    payload: ContentGenerateRequest,
-    service: GenerationService = Depends(get_generation_service),
-):
-    return APIResponse(data=await service.generate_title(payload))
-
-
-@router.post("/narration", response_model=APIResponse[ContentGenerateResponse])
-async def generate_narration(
-    payload: ContentGenerateRequest,
-    service: GenerationService = Depends(get_generation_service),
-):
-    return APIResponse(data=await service.generate_narration(payload))
-
-
-@router.post("/image-prompt", response_model=APIResponse[ContentGenerateResponse])
-async def generate_image_prompt(
-    payload: ContentGenerateRequest,
-    service: GenerationService = Depends(get_generation_service),
-):
-    return APIResponse(data=await service.generate_image_prompt(payload))
-
-
-@router.post("/video-prompt", response_model=APIResponse[ContentGenerateResponse])
-async def generate_video_prompt(
-    payload: ContentGenerateRequest,
-    service: GenerationService = Depends(get_generation_service),
-):
-    return APIResponse(data=await service.generate_video_prompt(payload))
 
 
 @router.post("/tasks/{task_id}/research", response_model=APIResponse[ResearchResponse])
