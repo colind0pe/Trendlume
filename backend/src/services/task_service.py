@@ -59,6 +59,33 @@ _KNOWLEDGE_PAYLOAD_KEYS = (
     "target_scene_count",
 )
 
+_TASK_COLUMN_KEYS = frozenset(
+    {
+        "production_mode",
+        "product_id",
+        "creative_plan_id",
+        "creative_angle",
+    }
+)
+
+
+def _without_task_column_keys(payload: dict) -> dict:
+    """Keep task identity in Task columns, not a second JSON representation."""
+    return {key: value for key, value in payload.items() if key not in _TASK_COLUMN_KEYS}
+
+
+def _sync_commerce_snapshot(
+    payload: dict,
+    production_mode: ProductionMode,
+    snapshot: dict | None,
+) -> dict:
+    normalized = _without_task_column_keys(payload)
+    if production_mode == ProductionMode.COMMERCE and snapshot is not None:
+        normalized["creative_plan_snapshot"] = snapshot
+    else:
+        normalized.pop("creative_plan_snapshot", None)
+    return normalized
+
 
 def _normalize_production_payload(
     payload: dict,
@@ -68,6 +95,7 @@ def _normalize_production_payload(
 ) -> dict:
     """Keep mode-specific inputs in the Task payload owned by that mode."""
     normalized = dict(payload)
+    normalized.pop("voice_speed", None)
     if production_mode == ProductionMode.KNOWLEDGE:
         brief = KnowledgeBrief.from_payload(normalized.get("knowledge_brief"))
         if not brief.thesis:
@@ -152,8 +180,7 @@ class TaskService:
             raise NotFoundException("Project", project_id)
 
         task_id = f"task_{uuid.uuid4().hex[:12]}"
-        payload = dict(data.input_payload or {})
-        payload.pop("production_mode", None)
+        payload = _without_task_column_keys(dict(data.input_payload or {}))
         requested_production_mode = data.production_mode
         if requested_production_mode is None:
             requested_production_mode = getattr(
@@ -167,9 +194,10 @@ class TaskService:
             raise ValidationException(f"生产模式 {production_mode.value} 暂未开放。")
         if production_mode == ProductionMode.DRAMA:
             raise ValidationException("Drama Task 必须从 Drama workspace 的已批准 Episode 创建。")
-        product_id = payload.get("product_id", data.product_id)
-        creative_plan_id = payload.get("creative_plan_id", data.creative_plan_id)
-        creative_angle = payload.get("creative_angle", data.creative_angle)
+        product_id = data.product_id
+        creative_plan_id = data.creative_plan_id
+        creative_angle = data.creative_angle
+        payload.pop("creative_plan_snapshot", None)
         if production_mode == ProductionMode.COMMERCE:
             commerce = await resolve_commerce_task_context(
                 self.session,
@@ -181,17 +209,11 @@ class TaskService:
             product_id = commerce.product_id
             creative_plan_id = commerce.creative_plan_id
             creative_angle = commerce.creative_angle
-            payload.update(
-                product_id=product_id,
-                creative_angle=creative_angle.value,
-            )
             if creative_plan_id:
-                payload["creative_plan_id"] = creative_plan_id
                 payload["creative_plan_snapshot"] = commerce.creative_plan_snapshot
         else:
             product_id = creative_plan_id = creative_angle = None
-            for key in ("product_id", "creative_plan_id", "creative_plan_snapshot", "creative_angle"):
-                payload.pop(key, None)
+            payload.pop("creative_plan_snapshot", None)
         if production_mode == ProductionMode.KNOWLEDGE and data.knowledge_brief is not None:
             payload.setdefault("knowledge_brief", data.knowledge_brief.model_dump())
         requested_template_id = payload.get("template_id", data.template_id)
@@ -202,7 +224,6 @@ class TaskService:
         if not template:
             raise NotFoundException("Template", requested_template_id)
 
-        payload.pop("visual_mode", None)
         content_mode = resolve_content_mode(
             payload.get("content_mode", data.content_mode),
             template_type=template["template_type"],
@@ -306,9 +327,7 @@ class TaskService:
         project_params = dict(template.get("default_params") or {})
         project_params.update(getattr(project_template, "params", None) or {})
         project_params.update(data.template_params or {})
-        effective_speed = payload.get(
-            "speed", payload.get("voice_speed", data.voice_speed)
-        )
+        effective_speed = payload.get("speed", data.speed)
         input_payload = {
             **payload,
             "content_mode": content_mode,
@@ -322,7 +341,6 @@ class TaskService:
             "bgm_volume": round(bgm_volume, 3),
             "voice_id": payload.get("voice_id") or data.voice_id or await ProviderManager(self.session).get_default_tts_voice(),
             "speed": effective_speed,
-            "voice_speed": effective_speed,
             "enable_research": bool(enable_research),
             "search_provider_id": search_provider_id,
             "material_provider_id": payload.get(
@@ -340,14 +358,6 @@ class TaskService:
             production_mode,
             title=data.title,
         )
-        if product_id:
-            input_payload["product_id"] = str(product_id)
-        if creative_angle is not None:
-            input_payload["creative_angle"] = (
-                creative_angle.value
-                if isinstance(creative_angle, CreativeAngle)
-                else str(creative_angle)
-            )
         if scheduled_publish is None:
             input_payload.pop("scheduled_publish", None)
         else:
@@ -405,17 +415,19 @@ class TaskService:
     async def update_task(self, task_id: str, data: TaskUpdate) -> TaskModel:
         await assert_task_editable(self.session, task_id)
         task = await self.get_task(task_id)
-        old_payload = task.input_payload or {}
+        old_payload = _without_task_column_keys(task.input_payload or {})
         new_payload = None
         changed = set()
         if data.input_payload is not None:
             def is_internal(key: str) -> bool:
                 return key.startswith("workflow_") or key.startswith("manual_") or key.startswith("_")
 
-            new_payload = {key: value for key, value in data.input_payload.items() if not is_internal(key)}
+            new_payload = {
+                key: value
+                for key, value in data.input_payload.items()
+                if not is_internal(key) and key not in _TASK_COLUMN_KEYS
+            }
             new_payload.update({key: value for key, value in old_payload.items() if is_internal(key)})
-            new_payload.pop("production_mode", None)
-            new_payload.pop("visual_mode", None)
             changed = {key for key in old_payload.keys() | new_payload.keys()
                        if old_payload.get(key) != new_payload.get(key)}
         requested_production_mode = data.production_mode
@@ -431,24 +443,12 @@ class TaskService:
             if task.production_mode != production_mode.value:
                 changed.add("production_mode")
                 task.production_mode = production_mode.value
-        if new_payload is not None:
-            new_payload.pop("production_mode", None)
         final_production_mode = ProductionMode(task.production_mode)
-        requested_product_id = data.product_id
-        if requested_product_id is None and new_payload is not None:
-            requested_product_id = new_payload.get("product_id", task.product_id)
-        if requested_product_id is None:
-            requested_product_id = task.product_id
-        requested_plan_id = data.creative_plan_id
-        if requested_plan_id is None and new_payload is not None:
-            requested_plan_id = new_payload.get("creative_plan_id", task.creative_plan_id)
-        if requested_plan_id is None:
-            requested_plan_id = task.creative_plan_id
-        requested_angle = data.creative_angle
-        if requested_angle is None and new_payload is not None:
-            requested_angle = new_payload.get("creative_angle", task.creative_angle)
-        if requested_angle is None:
-            requested_angle = task.creative_angle
+        requested_product_id = data.product_id if data.product_id is not None else task.product_id
+        requested_plan_id = (
+            data.creative_plan_id if data.creative_plan_id is not None else task.creative_plan_id
+        )
+        requested_angle = data.creative_angle if data.creative_angle is not None else task.creative_angle
         commerce_plan_snapshot = None
         if final_production_mode == ProductionMode.COMMERCE:
             commerce = await resolve_commerce_task_context(
@@ -483,20 +483,11 @@ class TaskService:
             changed.add("creative_plan_id")
             task.creative_plan_id = normalized_plan_id
         if new_payload is not None:
-            if task.product_id:
-                new_payload["product_id"] = task.product_id
-            else:
-                new_payload.pop("product_id", None)
-            if task.creative_angle:
-                new_payload["creative_angle"] = task.creative_angle
-            else:
-                new_payload.pop("creative_angle", None)
-            if task.creative_plan_id:
-                new_payload["creative_plan_id"] = task.creative_plan_id
-                new_payload["creative_plan_snapshot"] = commerce_plan_snapshot
-            else:
-                new_payload.pop("creative_plan_id", None)
-                new_payload.pop("creative_plan_snapshot", None)
+            new_payload = _sync_commerce_snapshot(
+                new_payload,
+                final_production_mode,
+                commerce_plan_snapshot,
+            )
             new_payload = _normalize_production_payload(
                 new_payload,
                 final_production_mode,
@@ -506,7 +497,7 @@ class TaskService:
         steps = set()
         if changed & {"bgm_enabled", "bgm_asset_id", "bgm_volume"}:
             steps.update(stage for stage in ("composition", "export") if workflow.has_stage(stage))
-        if changed & {"voice_id", "speed", "voice_speed"}:
+        if changed & {"voice_id", "speed"}:
             steps.update(
                 stage
                 for stage in ("planning", "voice", "subtitles", "composition", "export")
@@ -524,7 +515,7 @@ class TaskService:
                 for stage in ("planning", "assets", "composition", "export")
                 if workflow.has_stage(stage)
             )
-        handled = {"bgm_enabled", "bgm_asset_id", "bgm_volume", "voice_id", "speed", "voice_speed",
+        handled = {"bgm_enabled", "bgm_asset_id", "bgm_volume", "voice_id", "speed",
                    "template_id", "template_version", "template_params", "custom_css", "content_mode",
                    "source_asset_id", "image_workflow_id", "video_workflow_id",
                    "production_mode", "product_id", "creative_plan_id", "creative_angle"}
@@ -546,16 +537,15 @@ class TaskService:
             task.input_payload = new_payload
         elif changed & {"product_id", "creative_plan_id", "creative_angle"} or "production_mode" in changed:
             normalized_payload = _normalize_production_payload(
-                dict(task.input_payload or {}),
+                _sync_commerce_snapshot(
+                    dict(task.input_payload or {}),
+                    final_production_mode,
+                    commerce_plan_snapshot,
+                ),
                 final_production_mode,
                 title=data.title or task.title,
             )
-            task.input_payload = {
-                **normalized_payload,
-                **({"product_id": task.product_id} if task.product_id else {}),
-                **({"creative_angle": task.creative_angle} if task.creative_angle else {}),
-                **({"creative_plan_id": task.creative_plan_id} if task.creative_plan_id else {}),
-            }
+            task.input_payload = normalized_payload
         if data.result_payload is not None:
             task.result_payload = data.result_payload
         if data.error_message is not None:
@@ -589,11 +579,13 @@ class TaskService:
             creative_angle=source.creative_angle,
             status=TaskStatus.DRAFT.value,
             progress_percentage=0,
-            input_payload={
-                key: value
-                for key, value in deepcopy(source.input_payload or {}).items()
-                if key not in {"production_mode", "scheduled_publish"}
-            },
+            input_payload=_without_task_column_keys(
+                {
+                    key: value
+                    for key, value in deepcopy(source.input_payload or {}).items()
+                    if key != "scheduled_publish"
+                }
+            ),
             result_payload=None,
             error_message=None,
         )

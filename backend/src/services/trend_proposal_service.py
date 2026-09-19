@@ -279,7 +279,6 @@ class TrendProposalServiceMixin:
             "prompt_prefix",
             "voice_id",
             "speed",
-            "voice_speed",
             "bgm_enabled",
             "bgm_asset_id",
             "bgm_volume",
@@ -478,13 +477,7 @@ class TrendProposalServiceMixin:
                 return None
             return str(value)[:maximum]
 
-        speed = bounded_float(
-            "voice_speed",
-            values.get("voice_speed", values.get("speed", 1.0)),
-            1.0,
-            0.5,
-            2.0,
-        )
+        speed = bounded_float("speed", values.get("speed", 1.0), 1.0, 0.5, 2.0)
 
         normalized = {
             "target_scene_count": bounded("target_scene_count", 8, 8, 20),
@@ -498,7 +491,6 @@ class TrendProposalServiceMixin:
             "prompt_prefix": str(values.get("prompt_prefix") or "")[:1000],
             "voice_id": optional_text("voice_id", 100),
             "speed": speed,
-            "voice_speed": speed,
             "bgm_enabled": as_bool(values.get("bgm_enabled"), True),
             "bgm_asset_id": optional_text("bgm_asset_id", 100),
             "bgm_volume": bounded_float("bgm_volume", values.get("bgm_volume", 0.2), 0.2, 0.0, 0.5),

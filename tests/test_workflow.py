@@ -23,9 +23,9 @@ async def test_task_api_generate_and_cancel(client: AsyncClient):
     assert gen_res.status_code == 200
     generated_job = gen_res.json()["data"]
     assert generated_job["task_id"] == task_id
-    assert generated_job["type"] == generated_job["job_type"] == "full_pipeline"
-    assert generated_job["current_step"] == generated_job["current_stage"] == "queued"
-    assert generated_job["error"] is None and generated_job["error_message"] is None
+    assert generated_job["job_type"] == "full_pipeline"
+    assert generated_job["current_stage"] == "queued"
+    assert generated_job["error_message"] is None
     assert generated_job["checkpoint"] == {}
     assert generated_job["available_at"] and generated_job["updated_at"]
     assert generated_job["scheduled_at"] is None

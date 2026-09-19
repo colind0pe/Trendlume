@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+
 from src.core.exceptions import ValidationException
 from src.domain.enums import CreativeAngle, ProductionMode
 from src.domain.production_workflows import get_production_workflow
@@ -80,8 +81,7 @@ async def test_commerce_task_requires_and_persists_product_context(test_session)
 
     assert task.product_id == product.id
     assert task.creative_angle == CreativeAngle.DEMO.value
-    assert task.input_payload["product_id"] == product.id
-    assert task.input_payload["creative_angle"] == CreativeAngle.DEMO.value
+    assert not {"product_id", "creative_plan_id", "creative_angle"} & task.input_payload.keys()
     assert "knowledge_brief" not in task.input_payload
     assert "genre" not in task.input_payload
     assert "enable_research" not in task.input_payload
@@ -139,6 +139,6 @@ async def test_mode_update_removes_previous_mode_payload(test_session):
     )
 
     assert updated.production_mode == ProductionMode.COMMERCE.value
-    assert updated.input_payload["product_id"] == product.id
+    assert not {"product_id", "creative_plan_id", "creative_angle"} & updated.input_payload.keys()
     assert "knowledge_brief" not in updated.input_payload
     assert "enable_research" not in updated.input_payload

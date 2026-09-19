@@ -20,7 +20,7 @@ from src.schemas.drama import (
 )
 from src.schemas.project import ProjectCreate
 from src.services.drama_production_service import DramaProductionService
-from src.services.generation_service import create_solid_color_png
+from src.services.generation_service import GenerationService, create_solid_color_png
 from src.services.project_service import ProjectService
 from src.services.rendering_service import RenderingService
 from src.services.template_renderer import TemplateRenderer
@@ -49,13 +49,25 @@ SCRIPT = """# 标题：夜班之后
 时长：2 秒
 """
 
+NO_DIALOGUE_SCRIPT = """# 标题：无台词的一天
+## 角色
+- 林夏 | 夜班程序员 | 短发、左耳银色耳钉 | 深蓝风衣 | voice-lin
+## 分镜
+### 镜头一
+场景：办公室
+角色：林夏
+动作：窗外天色渐亮，桌上的咖啡还冒着热气。
+画面：安静的办公室迎来清晨的第一束光。
+时长：2 秒
+"""
 
-async def _approved_drama(session):
+
+async def _approved_drama(session, source_text=SCRIPT):
     project = await ProjectService(session).create_project(ProjectCreate(name="Drama production"))
     service = DramaProductionService(session)
     bible = await service.create_bible(
         project.id,
-        DramaBibleCreate(source_type=DramaSourceType.SCRIPT, title="夜班之后", source_text=SCRIPT),
+        DramaBibleCreate(source_type=DramaSourceType.SCRIPT, title="夜班之后", source_text=source_text),
     )
     detail = await service.plan(bible.id, DramaPlanRequest())
     for character in detail.characters:
@@ -91,6 +103,8 @@ def _rendering_factory(storage: LocalStorageService, fixture: Path):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
+        elif output_path.suffix.lower() == ".png":
+            output_path.write_bytes(create_solid_color_png(720, 1280))
         else:
             output_path.write_bytes(fixture.read_bytes())
         return True
@@ -122,12 +136,22 @@ async def test_drama_production_mixes_dialogue_and_creates_timed_subtitles(
 
     assert result["video_status"] == "ready"
     assert result["drama_id"] == detail.id
+    assert result["cover_asset_id"]
+    assert result["cover_url"]
+    assert result["episode_metadata_artifact_id"]
     assert len(result["subtitle_artifact_ids"]) == 2
     status = await service.get_production_status(detail.id, detail.episodes[0].id)
     assert status.status == "completed"
     assert status.final_video_url
     assert all(shot.status == "completed" for shot in status.shots)
     assert sum(len(shot.dialogue_timeline) for shot in status.shots) == 3
+    final_asset = await test_session.get(AssetModel, result["final_video_asset_id"])
+    assert final_asset is not None
+    cover_asset = await test_session.get(AssetModel, result["cover_asset_id"])
+    assert cover_asset is not None
+    assert cover_asset.asset_type == "image"
+    assert final_asset.metadata_json["subtitle_burned"] is True
+    assert final_asset.metadata_json["subtitle_line_count"] == 3
     # The stock mock does not record calls; the persisted line assets still
     # prove that each DialogueLine was synthesized before the shot mix.
     line_assets = (
@@ -135,7 +159,15 @@ async def test_drama_production_mixes_dialogue_and_creates_timed_subtitles(
             select(AssetModel).where(AssetModel.project_id == project.id)
         )
     ).all()
-    assert sum(1 for asset in line_assets if (asset.metadata_json or {}).get("dialogue_line_id")) == 3
+    dialogue_assets = [
+        asset for asset in line_assets if (asset.metadata_json or {}).get("dialogue_line_id")
+    ]
+    assert len(dialogue_assets) == 3
+    assert {asset.metadata_json["voice_id"] for asset in dialogue_assets} == {
+        "voice-lin",
+        "voice-chen",
+        "zh-CN-YunxiNeural",
+    }
     mixed = [asset for asset in line_assets if (asset.metadata_json or {}).get("dialogue_line_ids")]
     assert len(mixed) == 2
 
@@ -150,6 +182,57 @@ async def test_drama_production_mixes_dialogue_and_creates_timed_subtitles(
     assert "她决定今晚不再逃避。" in srt
     assert srt.count(" --> ") == 3
     assert not any("Deterministic continuity anchor" in line for line in srt.splitlines())
+
+
+@pytest.mark.asyncio
+async def test_drama_production_without_dialogue_skips_empty_subtitle_artifacts(
+    test_session, tmp_path, monkeypatch
+):
+    _, service, detail = await _approved_drama(test_session, NO_DIALOGUE_SCRIPT)
+    task = await service.create_production_task(
+        detail.id,
+        DramaProductionStartRequest(episode_id=detail.episodes[0].id),
+    )
+    fixture = Path(__file__).parent / "fixtures" / "mock.mp4"
+    storage = LocalStorageService(tmp_path / "drama-storage")
+    render_frame, rendering_factory = _rendering_factory(storage, fixture)
+    monkeypatch.setattr(TemplateRenderer, "render", render_frame)
+
+    async def unexpected_tts(_self):
+        raise AssertionError("无对白 Episode 不应初始化 TTS Provider")
+
+    monkeypatch.setattr(GenerationService, "_get_tts_provider", unexpected_tts)
+
+    result = await VideoWorkflowExecutor(
+        session_factory=lambda: _session_context(test_session),
+        rendering_service_factory=rendering_factory,
+    ).execute(Job(task_id=task.id))
+
+    assert result["video_status"] == "ready"
+    assert result["subtitle_artifact_ids"] == []
+    status = await service.get_production_status(detail.id, detail.episodes[0].id)
+    assert status.subtitle_artifact_ids == []
+    subtitle_runs = list(
+        (
+            await test_session.scalars(
+                select(WorkflowStepRunModel).where(
+                    WorkflowStepRunModel.task_id == task.id,
+                    WorkflowStepRunModel.step_key == "subtitles",
+                )
+            )
+        ).all()
+    )
+    assert len(subtitle_runs) == 1
+    subtitle_artifacts = list(
+        (
+            await test_session.scalars(
+                select(WorkflowArtifactModel).where(
+                    WorkflowArtifactModel.step_run_id == subtitle_runs[0].id,
+                )
+            )
+        ).all()
+    )
+    assert [artifact.kind for artifact in subtitle_artifacts] == ["timeline"]
 
 
 @pytest.mark.asyncio

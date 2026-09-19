@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 from pydantic import BaseModel
+
 from src.domain.enums import PlatformType
 from src.providers.image.protocol import ImageResult
 from src.providers.publishing.protocol import PublishResult

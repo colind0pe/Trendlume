@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from datetime import UTC, datetime
 from typing import Any
@@ -51,6 +53,7 @@ from src.schemas.drama import (
 from src.services.drama_render_adapter import adapt_approved_shots_to_render_scenes
 from src.services.provider_manager import ProviderManager
 from src.services.template_catalog import template_catalog
+from src.services.workflow_service import workflow_service
 from src.storage.local_storage import local_storage
 
 
@@ -60,6 +63,17 @@ def _now() -> datetime:
 
 def _make_id(prefix: str) -> str:
     return f"{prefix}_{uuid4().hex[:12]}"
+
+
+def _production_config_fingerprint(payload: dict[str, Any]) -> str:
+    canonical = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _key(value: str | None) -> str:
@@ -120,7 +134,7 @@ def _field_key(value: str) -> str:
     return aliases.get(normalized, normalized)
 
 
-def _parse_script(source_text: str, fallback_title: str) -> dict[str, Any]:
+def _parse_script_single(source_text: str, fallback_title: str) -> dict[str, Any]:
     """Parse a small human-friendly screenplay format without an LLM.
 
     The parser intentionally accepts the same lightweight shape used by the
@@ -183,6 +197,7 @@ def _parse_script(source_text: str, fallback_title: str) -> dict[str, Any]:
                         "description": parts[1] if len(parts) > 1 else "",
                         "appearance_lock": parts[2] if len(parts) > 2 else "",
                         "wardrobe": parts[3] if len(parts) > 3 else "",
+                        "voice_id": parts[4] if len(parts) > 4 else "",
                     }
                 )
             continue
@@ -266,8 +281,60 @@ def _parse_script(source_text: str, fallback_title: str) -> dict[str, Any]:
     }
 
 
+def _parse_script(source_text: str, fallback_title: str) -> dict[str, Any]:
+    """Parse one or more episodes while retaining the legacy single-plan shape."""
+
+    lines = source_text.splitlines()
+    episode_matches: list[tuple[int, re.Match[str]]] = []
+    episode_pattern = re.compile(
+        r"^#{1,3}\s*(?:第\s*(\d+)\s*集|(?:ep|episode)\s*(\d+))"
+        r"(?:\s*[:：\-]\s*(.*))?$",
+        re.IGNORECASE,
+    )
+    for index, raw_line in enumerate(lines):
+        match = episode_pattern.match(raw_line.strip())
+        if match:
+            episode_matches.append((index, match))
+
+    if not episode_matches:
+        return _parse_script_single(source_text, fallback_title)
+
+    common_prefix = "\n".join(lines[: episode_matches[0][0]]).strip()
+    episode_plans: list[dict[str, Any]] = []
+    for index, (start, match) in enumerate(episode_matches):
+        end = episode_matches[index + 1][0] if index + 1 < len(episode_matches) else len(lines)
+        episode_number = int(match.group(1) or match.group(2) or index + 1)
+        episode_label = (match.group(3) or f"第{episode_number}集").strip()
+        episode_text = "\n".join(
+            part for part in (common_prefix, "\n".join(lines[start:end]).strip()) if part
+        )
+        parsed = _parse_script_single(episode_text, fallback_title)
+        parsed["episode_number"] = episode_number
+        parsed["episode_label"] = episode_label
+        parsed["episode_source_text"] = "\n".join(lines[start:end]).strip()
+        episode_plans.append(parsed)
+
+    first = episode_plans[0]
+    return {
+        "title": first["title"],
+        "genre": first["genre"],
+        "characters": first["characters"],
+        # Keep callers that only understand one plan compatible.
+        "blocks": first["blocks"],
+        "episodes": episode_plans,
+    }
+
+
 def _idea_plan(bible: DramaBibleModel) -> dict[str, Any]:
     idea = bible.source_text.strip()
+    style = bible.visual_style.strip() or "电影写实摄影"
+    beats = [
+        ("开场钩子", "先让观众看见一个反常细节，建立人物当下的处境。", "特写", "缓慢推进"),
+        ("触发事件", "一个具体的人或事件打断原本的节奏，冲突开始显形。", "中景", "轻微横移"),
+        ("第一次选择", "主角必须在熟悉的逃避和冒险的行动之间做出选择。", "近景", "跟随"),
+        ("行动升级", "主角真正采取行动，关键道具或空间关系发生变化。", "双人中景", "向前推进"),
+        ("情绪落点", "用一个可见的动作留下余味，并为下一集保留悬念。", "中近景", "稳定停留"),
+    ]
     return {
         "title": bible.title,
         "genre": bible.genre,
@@ -281,17 +348,18 @@ def _idea_plan(bible: DramaBibleModel) -> dict[str, Any]:
         ],
         "blocks": [
             {
-                "label": "开场",
+                "label": label,
                 "location": "主要场景",
                 "characters": "主角",
-                "action": idea,
-                "visual_prompt": f"{bible.visual_style}；把故事想法「{idea[:240]}」转成可拍的开场画面。",
+                "action": f"{idea[:180]}；{beat}",
+                "visual_prompt": f"{style}；围绕故事想法「{idea[:240]}」呈现{label}：{beat}",
                 "camera": "固定机位",
-                "framing": "中景",
-                "movement": "缓慢推进",
-                "duration": "5 秒",
+                "framing": framing,
+                "movement": movement,
+                "duration": "4 秒",
                 "dialogue": "",
             }
+            for label, beat, framing, movement in beats
         ],
     }
 
@@ -396,7 +464,7 @@ class DramaProductionService:
         self._set_stage(bible, DramaStage.STORY, "completed", "故事输入已登记")
         self._set_stage(bible, DramaStage.BIBLE, "completed", "Bible 草案已建立")
         self._set_stage(bible, DramaStage.ASSETS, "awaiting_approval", "角色与场景等待人工确认")
-        self._set_stage(bible, DramaStage.EPISODE, "awaiting_approval", "单集剧本等待人工确认")
+        self._set_stage(bible, DramaStage.EPISODE, "awaiting_approval", "分集剧本等待人工确认")
         self._set_stage(bible, DramaStage.STORYBOARD, "awaiting_approval", "逐 Shot Storyboard 等待人工确认")
         self._set_stage(bible, DramaStage.APPROVAL, "pending", "确认后才允许进入后续制作")
         bible.current_stage = DramaStage.APPROVAL.value
@@ -425,6 +493,7 @@ class DramaProductionService:
                     spec.get("appearance_lock") or "待确认：脸型、肤色、发型、体态与标志性特征。"
                 ),
                 wardrobe=str(spec.get("wardrobe") or "待确认：造型阶段、颜色和关键配饰。"),
+                voice_id=str(spec.get("voice_id") or "").strip() or None,
                 prompt_anchor=character_prompt_anchor(
                     name,
                     str(spec.get("appearance_lock") or "待确认"),
@@ -436,8 +505,14 @@ class DramaProductionService:
             self.session.add(character)
             characters[_key(name)] = character
 
+        episode_plans = list(plan.get("episodes") or [plan])
+        all_blocks = [
+            block
+            for episode_plan in episode_plans
+            for block in episode_plan.get("blocks") or []
+        ]
         locations: dict[str, DramaLocationModel] = {}
-        for block in plan["blocks"]:
+        for block in all_blocks:
             name = str(block.get("location") or "主要场景").strip()
             if _key(name) in locations:
                 continue
@@ -461,108 +536,117 @@ class DramaProductionService:
             self.session.add(location)
             locations[_key(name)] = location
 
-        episode = DramaEpisodeModel(
-            id=_make_id("episode"),
-            bible_id=bible.id,
-            episode_number=1,
-            title=f"第一集 · {plan['title'][:180]}",
-            synopsis=bible.logline or bible.source_text[:500],
-            script_text=bible.source_text,
-            continuity_metadata={
-                "rules": bible.continuity_rules,
-                "prop_locks": bible.prop_locks,
-                "checkpoint": "episode_1",
-            },
-            checkpoint={"source_type": bible.source_type, "parsed_shots": len(plan["blocks"])},
-        )
-        self.session.add(episode)
+        for episode_index, episode_plan in enumerate(episode_plans, start=1):
+            blocks = list(episode_plan.get("blocks") or [])
+            episode_number = int(episode_plan.get("episode_number") or episode_index)
+            episode_label = str(episode_plan.get("episode_label") or f"第{episode_number}集")
+            episode_title = str(episode_plan.get("title") or plan.get("title") or bible.title)
+            episode = DramaEpisodeModel(
+                id=_make_id("episode"),
+                bible_id=bible.id,
+                episode_number=episode_number,
+                title=f"{episode_label} · {episode_title[:180]}",
+                synopsis=bible.logline or bible.source_text[:500],
+                script_text=str(episode_plan.get("episode_source_text") or bible.source_text),
+                continuity_metadata={
+                    "rules": bible.continuity_rules,
+                    "prop_locks": bible.prop_locks,
+                    "checkpoint": f"episode_{episode_number}",
+                },
+                checkpoint={"source_type": bible.source_type, "parsed_shots": len(blocks)},
+            )
+            self.session.add(episode)
 
-        scene_models: list[DramaSceneModel] = []
-        previous_location_key = ""
-        previous_shot: DramaShotModel | None = None
-        current_scene_shot_index = 0
-        for shot_index, block in enumerate(plan["blocks"], start=1):
-            location_name = str(block.get("location") or "主要场景").strip()
-            location = locations[_key(location_name)]
-            new_scene = not scene_models or previous_location_key != _key(location_name)
-            if new_scene:
-                scene = DramaSceneModel(
-                    id=_make_id("scene"),
-                    episode_id=episode.id,
-                    sequence_index=len(scene_models) + 1,
-                    title=f"场景 {len(scene_models) + 1} · {location_name}",
-                    summary=str(block.get("action") or block.get("visual_prompt") or "推进剧情"),
-                    beat=str(block.get("label") or "剧情推进"),
-                    location_id=location.id,
-                    script_text=str(block.get("action") or ""),
-                    continuity_metadata={"location_anchor": location.prompt_anchor},
-                )
-                self.session.add(scene)
-                scene_models.append(scene)
-                previous_location_key = _key(location_name)
-                current_scene_shot_index = 0
-            scene = scene_models[-1]
-            current_scene_shot_index += 1
-
-            names = _split_names(block.get("characters"))
-            character_ids: list[str] = []
-            for name in names:
-                character = characters.get(_key(name))
-                if not character:
-                    character = DramaCharacterModel(
-                        id=_make_id("character"),
-                        bible_id=bible.id,
-                        name=name,
-                        description="从镜头字段提取，待补充人物动机。",
-                        appearance_lock="待确认：脸型、肤色、发型、体态与标志性特征。",
-                        wardrobe="待确认：造型阶段、颜色和关键配饰。",
-                        prompt_anchor=character_prompt_anchor(
-                            name,
-                            "待确认",
-                            "待确认",
-                            visual_style=bible.visual_style,
-                        ),
-                        continuity_metadata={"source": "shot_field"},
+            scene_models: list[DramaSceneModel] = []
+            previous_location_key = ""
+            previous_shot: DramaShotModel | None = None
+            current_scene_shot_index = 0
+            for block in blocks:
+                location_name = str(block.get("location") or "主要场景").strip()
+                location = locations[_key(location_name)]
+                new_scene = not scene_models or previous_location_key != _key(location_name)
+                if new_scene:
+                    scene = DramaSceneModel(
+                        id=_make_id("scene"),
+                        episode_id=episode.id,
+                        sequence_index=len(scene_models) + 1,
+                        title=f"场景 {len(scene_models) + 1} · {location_name}",
+                        summary=str(block.get("action") or block.get("visual_prompt") or "推进剧情"),
+                        beat=str(block.get("label") or "剧情推进"),
+                        location_id=location.id,
+                        script_text=str(block.get("action") or ""),
+                        continuity_metadata={"location_anchor": location.prompt_anchor},
                     )
-                    self.session.add(character)
-                    characters[_key(name)] = character
-                if character.id not in character_ids:
-                    character_ids.append(character.id)
+                    self.session.add(scene)
+                    scene_models.append(scene)
+                    previous_location_key = _key(location_name)
+                    current_scene_shot_index = 0
+                scene = scene_models[-1]
+                current_scene_shot_index += 1
 
-            dialogue = str(block.get("dialogue") or "")
-            continuity = {
-                "previous_shot_id": previous_shot.id if previous_shot else None,
-                "props": block.get("props", ""),
-                "gaze": block.get("gaze", ""),
-                "rule": block.get("continuity", ""),
-            }
-            anchors = [characters[_key(name)].prompt_anchor for name in names if _key(name) in characters]
-            shot = DramaShotModel(
-                id=_make_id("shot"),
-                scene_id=scene.id,
-                sequence_index=current_scene_shot_index,
-                action=str(block.get("action") or "推进剧情"),
-                character_ids=character_ids,
-                location_id=location.id,
-                camera=str(block.get("camera") or "固定机位"),
-                framing=str(block.get("framing") or "中景"),
-                movement=str(block.get("movement") or "固定"),
-                duration_hint=_parse_duration(block.get("duration")),
-                visual_prompt=str(block.get("visual_prompt") or block.get("action") or ""),
-                prompt_anchor=shot_prompt_anchor(
-                    visual_style=bible.visual_style,
-                    location_anchor=location.prompt_anchor,
-                    character_anchors=anchors,
+                names = _split_names(block.get("characters"))
+                character_ids: list[str] = []
+                for name in names:
+                    character = characters.get(_key(name))
+                    if not character:
+                        character = DramaCharacterModel(
+                            id=_make_id("character"),
+                            bible_id=bible.id,
+                            name=name,
+                            description="从镜头字段提取，待补充人物动机。",
+                            appearance_lock="待确认：脸型、肤色、发型、体态与标志性特征。",
+                            wardrobe="待确认：造型阶段、颜色和关键配饰。",
+                            prompt_anchor=character_prompt_anchor(
+                                name,
+                                "待确认",
+                                "待确认",
+                                visual_style=bible.visual_style,
+                            ),
+                            continuity_metadata={"source": "shot_field"},
+                        )
+                        self.session.add(character)
+                        characters[_key(name)] = character
+                    if character.id not in character_ids:
+                        character_ids.append(character.id)
+
+                dialogue = str(block.get("dialogue") or "")
+                continuity = {
+                    "previous_shot_id": previous_shot.id if previous_shot else None,
+                    "props": block.get("props", ""),
+                    "gaze": block.get("gaze", ""),
+                    "rule": block.get("continuity", ""),
+                }
+                anchors = [
+                    characters[_key(name)].prompt_anchor
+                    for name in names
+                    if _key(name) in characters
+                ]
+                shot = DramaShotModel(
+                    id=_make_id("shot"),
+                    scene_id=scene.id,
+                    sequence_index=current_scene_shot_index,
+                    action=str(block.get("action") or "推进剧情"),
+                    character_ids=character_ids,
+                    location_id=location.id,
                     camera=str(block.get("camera") or "固定机位"),
                     framing=str(block.get("framing") or "中景"),
                     movement=str(block.get("movement") or "固定"),
+                    duration_hint=_parse_duration(block.get("duration")),
+                    visual_prompt=str(block.get("visual_prompt") or block.get("action") or ""),
+                    prompt_anchor=shot_prompt_anchor(
+                        visual_style=bible.visual_style,
+                        location_anchor=location.prompt_anchor,
+                        character_anchors=anchors,
+                        camera=str(block.get("camera") or "固定机位"),
+                        framing=str(block.get("framing") or "中景"),
+                        movement=str(block.get("movement") or "固定"),
+                        continuity_metadata=continuity,
+                    ),
                     continuity_metadata=continuity,
-                ),
-                continuity_metadata=continuity,
-            )
-            self.session.add(shot)
-            self._add_dialogue_lines(shot, dialogue, characters)
-            previous_shot = shot
+                )
+                self.session.add(shot)
+                self._add_dialogue_lines(shot, dialogue, characters)
+                previous_shot = shot
 
     def _add_dialogue_lines(
         self,
@@ -576,9 +660,19 @@ class DramaProductionService:
         for index, line in enumerate(lines, start=1):
             speaker = "旁白"
             text = line
+            delivery = "自然"
+            timing_hint = ""
             match = re.match(r"^([^:：]{1,40})\s*[:：]\s*(.+)$", line)
             if match:
                 speaker, text = match.group(1).strip(), match.group(2).strip()
+                speaker_match = re.match(
+                    r"^(.*?)(?:[（(]([^）)]+)[）)])?(?:\s*@\s*(.+))?$",
+                    speaker,
+                )
+                if speaker_match:
+                    speaker = speaker_match.group(1).strip() or "旁白"
+                    delivery = (speaker_match.group(2) or "自然").strip()
+                    timing_hint = (speaker_match.group(3) or "").strip()
             character = characters.get(_key(speaker))
             self.session.add(
                 DramaDialogueLineModel(
@@ -588,6 +682,8 @@ class DramaProductionService:
                     character_id=character.id if character else None,
                     speaker_name=speaker,
                     text=text,
+                    delivery=delivery,
+                    timing_hint=timing_hint,
                 )
             )
 
@@ -741,6 +837,11 @@ class DramaProductionService:
         bible.current_stage = DramaStage.STORYBOARD.value
         self._set_stage(bible, DramaStage.STORYBOARD, "awaiting_approval", "Shot 修改后需要重新确认")
         await self.session.flush()
+        if "dialogue" in payload.model_fields_set:
+            # The shot may already have its selectin-loaded relationship in
+            # this session. Expire that collection so the response reflects
+            # the replacement rows rather than the pre-edit identity map.
+            self.session.expire(shot, ["dialogue_lines"])
         return await self.get_detail(drama_id)
 
     async def approve_character(
@@ -1025,6 +1126,26 @@ class DramaProductionService:
             )
             if any(row[0] != ApprovalStatus.APPROVED.value for row in result.all()):
                 raise ValidationException("Shot 所绑定的角色尚未全部确认。")
+        known_names = {
+            _key(row[0])
+            for row in (
+                await self.session.execute(
+                    select(DramaCharacterModel.name).where(DramaCharacterModel.bible_id == bible.id)
+                )
+            ).all()
+        }
+        narrator_names = {"旁白", "narration", "voiceover", "voice-over"}
+        for line in shot.dialogue_lines:
+            if not line.text.strip():
+                raise ValidationException("Shot 中不能存在空对白。")
+            if not line.character_id and _key(line.speaker_name) not in narrator_names:
+                raise ValidationException(
+                    f"对白说话人“{line.speaker_name}”没有对应角色，请先补充角色或改为旁白。"
+                )
+            if line.character_id and _key(line.speaker_name) not in known_names:
+                raise ValidationException(
+                    f"对白说话人“{line.speaker_name}”与角色表不一致，请重新编辑该对白。"
+                )
 
     async def _refresh_shot_anchors(self, bible_id: str) -> None:
         result = await self.session.execute(
@@ -1125,11 +1246,6 @@ class DramaProductionService:
             raise ValidationException("只有已批准的 Scene 和 Shot 才能进入媒体生成。")
 
         checkpoint = dict(episode.checkpoint or {})
-        existing_task_id = checkpoint.get("production_task_id")
-        if existing_task_id and checkpoint.get("production_revision") == bible.revision:
-            existing_task = await self.session.get(TaskModel, existing_task_id)
-            if existing_task and existing_task.production_mode == ProductionMode.DRAMA.value:
-                return existing_task
 
         project = await self.session.get(ProjectModel, bible.project_id)
         if not project:
@@ -1148,29 +1264,91 @@ class DramaProductionService:
         if not drafts:
             raise ValidationException("当前 Episode 没有可制作的已批准 Shot。")
         task_id = _make_id("task")
+        provider_manager = ProviderManager(self.session)
+        workflow_provider_snapshot = await provider_manager.capture_snapshot()
+        try:
+            image_workflow_snapshot = workflow_service.get_workflow_snapshot(
+                payload.image_workflow_id, expected_type="image"
+            )
+            video_workflow_snapshot = workflow_service.get_workflow_snapshot(
+                payload.video_workflow_id, expected_type="video"
+            )
+        except ValueError as exc:
+            raise ValidationException(str(exc)) from exc
+
+        selected_media_provider = workflow_provider_snapshot.get(
+            "video" if payload.content_mode == "generated_video" else "image"
+        )
+        if not selected_media_provider:
+            raise ValidationException(
+                "当前项目没有可用的"
+                + ("视频" if payload.content_mode == "generated_video" else "图片")
+                + " Provider，请先在 Provider 设置中启用一个默认 Provider。"
+            )
+        has_dialogue = any(
+            shot.dialogue_lines for scene in episode.scenes for shot in scene.shots
+        )
+        if has_dialogue and not workflow_provider_snapshot.get("tts"):
+            raise ValidationException(
+                "当前 Episode 包含对白，但没有可用的 TTS Provider，请先配置音频 Provider。"
+            )
+
         default_voice = payload.voice_id or project.default_voice_id
         if not default_voice:
-            default_voice = await ProviderManager(self.session).get_default_tts_voice()
-        content_mode = "generated_video" if payload.visual_mode == "video" else "generated_image"
+            default_voice = await provider_manager.get_default_tts_voice()
         input_payload = {
             "drama_id": bible.id,
             "episode_id": episode.id,
             "drama_revision": bible.revision,
-            "visual_mode": payload.visual_mode,
-            "content_mode": content_mode,
+            "content_mode": payload.content_mode,
             "template_id": payload.template_id,
             "template_version": template["version"],
             "template_params": dict(payload.template_params or {}),
             "voice_id": default_voice,
             "speed": payload.speed,
-            "voice_speed": payload.speed,
             "bgm_enabled": bool(payload.bgm_enabled),
             "bgm_asset_id": payload.bgm_asset_id if payload.bgm_enabled else None,
             "bgm_volume": payload.bgm_volume,
             "image_workflow_id": payload.image_workflow_id,
             "video_workflow_id": payload.video_workflow_id,
+            "image_workflow_snapshot": image_workflow_snapshot,
+            "video_workflow_snapshot": video_workflow_snapshot,
+            "workflow_provider_snapshot": workflow_provider_snapshot,
             "drama_production_version": 1,
         }
+        fingerprint_payload = {
+            key: value
+            for key, value in input_payload.items()
+            if key not in {"drama_id", "episode_id", "drama_revision", "production_config_fingerprint"}
+        }
+        input_payload["production_config_fingerprint"] = _production_config_fingerprint(
+            fingerprint_payload
+        )
+
+        existing_task_id = checkpoint.get("production_task_id")
+        if existing_task_id and checkpoint.get("production_revision") == bible.revision:
+            existing_task = await self.session.get(TaskModel, existing_task_id)
+            if existing_task and existing_task.production_mode == ProductionMode.DRAMA.value:
+                existing_payload = dict(existing_task.input_payload or {})
+                existing_fingerprint = existing_payload.get("production_config_fingerprint")
+                if not existing_fingerprint:
+                    existing_fingerprint = _production_config_fingerprint(
+                        {
+                            key: value
+                            for key, value in existing_payload.items()
+                            if key not in {"drama_id", "episode_id", "drama_revision", "production_config_fingerprint"}
+                        }
+                    )
+                if existing_fingerprint == input_payload["production_config_fingerprint"]:
+                    return existing_task
+                if existing_task.status in {
+                    TaskStatus.PENDING.value,
+                    TaskStatus.RUNNING.value,
+                    TaskStatus.RETRYING.value,
+                }:
+                    raise ValidationException(
+                        "当前 Episode 已有制作任务正在运行；请等待完成或恢复失败任务后再修改制作设置。"
+                    )
         task = TaskModel(
             id=task_id,
             project_id=project.id,
@@ -1340,6 +1518,15 @@ class DramaProductionService:
         status = task.status if task else "not_started"
         if task and job and job.status in {"queued", "running", "retrying"}:
             status = job.status
+        subtitle_artifact_ids = result_payload.get("subtitle_artifact_ids")
+        if subtitle_artifact_ids is None:
+            subtitle_artifact_ids = [artifact.id for artifact in artifacts if artifact.kind in {"srt", "ass"}]
+        cover_asset_id = result_payload.get("cover_asset_id")
+        cover_url = result_payload.get("cover_url")
+        if cover_asset_id and not cover_url:
+            cover_asset = await self.session.get(AssetModel, cover_asset_id)
+            if cover_asset:
+                cover_url = local_storage.get_url(cover_asset.file_path)
         return DramaProductionResponse(
             drama_id=bible.id,
             episode_id=episode.id,
@@ -1353,8 +1540,11 @@ class DramaProductionService:
             qa_after=qa_after,
             final_video_asset_id=result_payload.get("final_video_asset_id"),
             final_video_url=final_url,
-            subtitle_artifact_ids=result_payload.get("subtitle_artifact_ids")
-            or [artifact.id for artifact in artifacts],
+            cover_asset_id=cover_asset_id,
+            cover_url=cover_url,
+            subtitle_artifact_ids=subtitle_artifact_ids,
+            episode_metadata_artifact_id=result_payload.get("episode_metadata_artifact_id"),
+            render_manifest_artifact_id=result_payload.get("render_manifest_artifact_id"),
             total_duration_seconds=result_payload.get("total_duration_seconds"),
             error_message=(task.error_message if task else None) or (job.error_message if job else None),
         )

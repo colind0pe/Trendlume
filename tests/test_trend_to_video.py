@@ -98,7 +98,8 @@ async def test_proposal_revision_and_task_are_idempotent(
     )
     assert action["task"]["input_payload"]["enable_research"] is True
     assert action["task"]["input_payload"]["content_mode"] == "generated_image"
-    assert action["task"]["input_payload"]["voice_speed"] == 1.0
+    assert action["task"]["input_payload"]["speed"] == 1.0
+    assert "voice_speed" not in action["task"]["input_payload"]
     assert action["task"]["input_payload"]["knowledge_brief"]["thesis"]
     script_inputs = build_script_generation_inputs(
         action["task"]["input_payload"], topic=action["task"]["title"]
@@ -167,7 +168,7 @@ async def test_proposal_generation_options_are_carried_into_task(
     assert task_payload["prompt_prefix"] == "低饱和纪实摄影"
     assert task_payload["voice_id"] == "zh-CN-YunxiNeural"
     assert task_payload["speed"] == 1.2
-    assert task_payload["voice_speed"] == 1.2
+    assert "voice_speed" not in task_payload
     assert task_payload["bgm_enabled"] is False
     assert task_payload["bgm_asset_id"] is None
     assert task_payload["bgm_volume"] == 0.1

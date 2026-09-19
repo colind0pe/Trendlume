@@ -280,14 +280,6 @@ class DramaShotModel(Base):
     )
 
     @property
-    def dialogue(self) -> str:
-        """Render the normalized dialogue lines for API and review consumers."""
-        return "\n".join(
-            f"{line.speaker_name}: {line.text}" if line.speaker_name != "旁白" else line.text
-            for line in self.dialogue_lines
-        )
-
-    @property
     def characters(self) -> list[str]:
         """Return character IDs for the domain/API representation."""
 

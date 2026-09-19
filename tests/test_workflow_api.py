@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import pytest
 from httpx import AsyncClient
+
 from src.core.config import settings
 from src.models.project import ProjectModel
 from src.models.scene import SceneModel

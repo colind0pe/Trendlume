@@ -21,7 +21,7 @@ export function generationStatus(task: {
 }
 
 export function isGenerationLifecycleEvent(event: string): boolean {
-  return /^(task[._](queued|started|completed|failed|cancelled)|job\.(started|retrying|completed|failed|cancelled|uncertain))$/.test(event);
+  return /^(task\.(started|completed|failed|cancelled)|job\.(started|retrying|completed|failed|cancelled|uncertain))$/.test(event);
 }
 
 export type SceneAssetRefreshAction = "workflow_unit" | "none";
@@ -65,7 +65,6 @@ export function buildGenerationOptions(
     prompt_prefix: input.promptPrefix,
     voice_id: input.voiceId || null,
     speed,
-    voice_speed: speed,
     bgm_enabled: input.bgmEnabled,
     bgm_asset_id: input.bgmEnabled ? input.bgmAssetId || null : null,
     bgm_volume: bgmVolume,

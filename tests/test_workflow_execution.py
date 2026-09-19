@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import update
+
 from src.core.exceptions import TrendlumeException
 from src.models import ProjectModel, TaskModel
 from src.models.scene import SceneModel

@@ -4,7 +4,7 @@ import pytest
 
 from src.core.exceptions import ValidationException
 from src.domain.drama import ApprovalStatus, DramaSourceType, DramaStage, character_prompt_anchor
-from src.schemas.drama import DramaBibleCreate, DramaPlanRequest
+from src.schemas.drama import DramaBibleCreate, DramaPlanRequest, DramaShotUpdate
 from src.schemas.project import ProjectCreate
 from src.services.drama_production_service import DramaProductionService
 from src.services.drama_render_adapter import adapt_approved_shots_to_render_scenes
@@ -14,8 +14,8 @@ SCRIPT = """# 标题：夜班之后
 # 题材：都市
 
 ## 角色
-- 林夏 | 夜班程序员，敏感但有行动力 | 短发、清晰眉骨、左耳银色耳钉 | 深蓝风衣，银色耳钉
-- 陈默 | 画室老师，克制而温和 | 戴圆框眼镜、深色眼睛 | 灰色针织衫
+- 林夏 | 夜班程序员，敏感但有行动力 | 短发、清晰眉骨、左耳银色耳钉 | 深蓝风衣，银色耳钉 | voice-lin
+- 陈默 | 画室老师，克制而温和 | 戴圆框眼镜、深色眼睛 | 灰色针织衫 | voice-chen
 
 ## 分镜
 ### 镜头一
@@ -54,6 +54,7 @@ async def test_script_entry_builds_explicit_episode_scene_shot_hierarchy(test_se
     assert detail.source_type == DramaSourceType.SCRIPT.value
     assert detail.current_stage == DramaStage.APPROVAL.value
     assert len(detail.characters) == 2
+    assert [character.voice_id for character in detail.characters] == ["voice-lin", "voice-chen"]
     assert len(detail.locations) == 2
     assert len(detail.episodes) == 1
     assert [scene.sequence_index for scene in detail.episodes[0].scenes] == [1, 2]
@@ -106,6 +107,77 @@ async def test_approval_gate_blocks_render_adapter_until_every_shot_is_approved(
     assert approved.episodes[0].scenes[0].approval_status == ApprovalStatus.APPROVED.value
 
     drafts = adapt_approved_shots_to_render_scenes(approved)
-    assert len(drafts) == 1
+    assert len(drafts) == 5
     assert drafts[0].production_metadata["source"] == "drama_shot"
     assert drafts[0].visual_prompt.endswith(f"{approved.episodes[0].scenes[0].shots[0].prompt_anchor}.")
+
+
+@pytest.mark.asyncio
+async def test_shot_editor_rebuilds_dialogue_lines_with_voice_and_timing_metadata(test_session):
+    project = await ProjectService(test_session).create_project(ProjectCreate(name="Dialogue editor"))
+    service = DramaProductionService(test_session)
+    bible = await service.create_bible(
+        project.id,
+        DramaBibleCreate(
+            source_type=DramaSourceType.SCRIPT,
+            title="对白编辑",
+            source_text=SCRIPT,
+        ),
+    )
+    detail = await service.plan(bible.id, DramaPlanRequest())
+    shot = detail.episodes[0].scenes[0].shots[0]
+
+    detail = await service.update_shot(
+        detail.id,
+        shot.id,
+        DramaShotUpdate(dialogue="林夏（低声） @0-2s：别关灯。\n旁白：她停了一秒。"),
+    )
+
+    updated_lines = detail.episodes[0].scenes[0].shots[0].dialogue_lines
+    assert [(line.speaker_name, line.text) for line in updated_lines] == [
+        ("林夏", "别关灯。"),
+        ("旁白", "她停了一秒。"),
+    ]
+    assert updated_lines[0].delivery == "低声"
+    assert updated_lines[0].timing_hint == "0-2s"
+    assert updated_lines[0].character_id == next(
+        character.id for character in detail.characters if character.name == "林夏"
+    )
+
+
+@pytest.mark.asyncio
+async def test_script_entry_preserves_episode_headings(test_session):
+    project = await ProjectService(test_session).create_project(ProjectCreate(name="Multi episode"))
+    service = DramaProductionService(test_session)
+    source = """# 标题：两集短剧
+## 角色
+- 林夏 | 夜班程序员 | 短发 | 深蓝风衣 | voice-lin
+## 第1集：灯还亮着
+### 镜头一
+场景：办公室
+角色：林夏
+动作：林夏盯着屏幕。
+画面：办公室只剩一盏灯。
+台词：林夏：我还不能停。
+时长：3 秒
+## EP2：门外的人
+### 镜头一
+场景：办公室门口
+角色：林夏
+动作：门外传来敲门声。
+画面：林夏回头看向门口。
+台词：旁白：有人来了。
+时长：3 秒
+"""
+    bible = await service.create_bible(
+        project.id,
+        DramaBibleCreate(source_type=DramaSourceType.SCRIPT, title="输入稿", source_text=source),
+    )
+
+    detail = await service.plan(bible.id, DramaPlanRequest())
+
+    assert [(episode.episode_number, episode.title) for episode in detail.episodes] == [
+        (1, "灯还亮着 · 两集短剧"),
+        (2, "门外的人 · 两集短剧"),
+    ]
+    assert [len(episode.scenes[0].shots) for episode in detail.episodes] == [1, 1]

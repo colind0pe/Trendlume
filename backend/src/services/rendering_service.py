@@ -29,7 +29,7 @@ class RenderingService:
     """Independent service for real FFmpeg-based video clip rendering, audio-video merging, and full video composition"""
 
     DURATION_TOLERANCE_SECONDS = 0.25
-    COMPOSITION_FORMAT_VERSION = "3"
+    COMPOSITION_FORMAT_VERSION = "4"
     ONLINE_SCENE_RENDER_FORMAT_VERSION = "online-layout-v1"
 
     def __init__(
@@ -143,6 +143,28 @@ class RenderingService:
         rendered_frame = self.storage.get_path(
             f"cache/template_scene_{scene.id}_{uuid.uuid4().hex[:6]}.png"
         )
+        subtitle_file: Path | None = None
+        subtitle_line_count = 0
+        subtitle_timeline = (scene.layout_params or {}).get("dialogue_timeline") or []
+        subtitle_items: list[dict[str, Any]] = []
+        for item in subtitle_timeline:
+            try:
+                text = str(item.get("text") or "").strip()
+                start = max(0.0, min(duration, float(item.get("start", 0.0))))
+                end = max(start, min(duration, float(item.get("end", duration))))
+            except (AttributeError, TypeError, ValueError):
+                continue
+            if text and end > start:
+                subtitle_items.append({"text": text, "start": start, "end": end})
+        if subtitle_items:
+            subtitle_line_count = len(subtitle_items)
+            subtitle_file = self.storage.get_path(
+                f"cache/scene_subtitles_{scene.id}_{uuid.uuid4().hex[:6]}.ass"
+            )
+            subtitle_file.parent.mkdir(parents=True, exist_ok=True)
+            subtitle_file.write_text(
+                self._ass_subtitles(subtitle_items, duration), encoding="utf-8"
+            )
         if self.execution_context:
             await self.execution_context.fence(self.session)
         await self.session.commit()
@@ -222,9 +244,22 @@ class RenderingService:
                         "eof_action=repeat[media];"
                         "[media][1:v]overlay=0:0:format=auto:eof_action=repeat[v]"
                     )
-                cmd += ["-filter_complex", filter_graph, "-map", "[v]"]
+                if subtitle_file:
+                    filter_graph += (
+                        f";[v]ass=filename='{self._ffmpeg_filter_path(subtitle_file)}'[v_subtitled]"
+                    )
+                    video_map = "[v_subtitled]"
+                cmd += ["-filter_complex", filter_graph, "-map", video_map]
             else:
-                cmd += ["-map", video_map]
+                if subtitle_file:
+                    cmd += [
+                        "-filter_complex",
+                        f"[0:v]ass=filename='{self._ffmpeg_filter_path(subtitle_file)}'[v_subtitled]",
+                        "-map",
+                        "[v_subtitled]",
+                    ]
+                else:
+                    cmd += ["-map", video_map]
             cmd += [
                 "-map", f"{audio_input_index}:a:0",
                 "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
@@ -244,6 +279,8 @@ class RenderingService:
             )
         finally:
             rendered_frame.unlink(missing_ok=True)
+            if subtitle_file:
+                subtitle_file.unlink(missing_ok=True)
 
         # Update scene rendered_segment_asset_id
         clip_asset = await self.asset_service.save_asset(
@@ -289,6 +326,8 @@ class RenderingService:
                     rendered_probe.duration_seconds if rendered_probe else duration
                 ),
                 "duration_source": "ffprobe" if rendered_probe else "scene_duration",
+                "subtitle_burned": subtitle_line_count > 0,
+                "subtitle_line_count": subtitle_line_count,
             },
         )
         scene.rendered_segment_asset_id = clip_asset.id
@@ -345,6 +384,36 @@ class RenderingService:
             "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
             f"Dialogue: 0,0:00:00.00,{cls._ass_timestamp(duration)},Default,,0,0,0,,{safe_text}\n"
         )
+
+    @classmethod
+    def _ass_subtitles(cls, timeline: list[dict[str, Any]], duration: float) -> str:
+        """Build an ASS file for a scene's measured DialogueLine timeline."""
+
+        header = cls._ass_subtitle("", 0).split("Dialogue:", 1)[0]
+        events = []
+        for item in timeline:
+            text = str(item.get("text") or "")
+            start = max(0.0, min(duration, float(item.get("start", 0.0))))
+            end = max(start, min(duration, float(item.get("end", duration))))
+            safe_text = (
+                text.replace("\\", "\\\\")
+                .replace("{", "\\{")
+                .replace("}", "\\}")
+                .replace("\r\n", "\n")
+                .replace("\r", "\n")
+                .replace("\n", r"\N")
+            )
+            events.append(
+                f"Dialogue: 0,{cls._ass_timestamp(start)},{cls._ass_timestamp(end)},"
+                f"Default,,0,0,0,,{safe_text}"
+            )
+        return header + "\n".join(events) + "\n"
+
+    @staticmethod
+    def _ffmpeg_filter_path(path: Path) -> str:
+        """Escape a local path for FFmpeg's filtergraph parser on Windows."""
+
+        return str(path).replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
 
     async def _validate_media_file(
         self,
@@ -439,6 +508,8 @@ class RenderingService:
         clip_paths: list[Path] = []
         clip_durations: list[float] = []
         total_duration = 0.0
+        subtitle_burned = False
+        subtitle_line_count = 0
 
         for sc in scenes:
             existing_clip = (
@@ -473,6 +544,9 @@ class RenderingService:
             if clip_asset:
                 clip_path = self.storage.get_path(clip_asset.file_path)
                 if clip_path.exists():
+                    clip_metadata = clip_asset.metadata_json or {}
+                    subtitle_burned = subtitle_burned or bool(clip_metadata.get("subtitle_burned"))
+                    subtitle_line_count += int(clip_metadata.get("subtitle_line_count") or 0)
                     clip_paths.append(clip_path)
                     clip_probe = await self._validate_media_file(
                         clip_path,
@@ -656,6 +730,8 @@ class RenderingService:
                 "actual_duration_seconds": round(actual_final_duration, 3),
                 "duration_source": "ffprobe" if final_probe else "segment_probe",
                 "segment_durations_seconds": [round(value, 3) for value in clip_durations],
+                "subtitle_burned": subtitle_burned,
+                "subtitle_line_count": subtitle_line_count,
                 "composition_format_version": self.COMPOSITION_FORMAT_VERSION,
             },
         )
@@ -675,6 +751,8 @@ class RenderingService:
             "bgm_enabled": bool(bgm_asset),
             "bgm_asset_id": selected_bgm_id if bgm_asset else None,
             "bgm_volume": round(bgm_volume, 3) if bgm_asset else 0.0,
+            "subtitle_burned": subtitle_burned,
+            "subtitle_line_count": subtitle_line_count,
             "research": (task.input_payload or {}).get("research"),
             "metadata": (task.input_payload or {}).get("metadata"),
             "composed_at": datetime.now(UTC).isoformat(),

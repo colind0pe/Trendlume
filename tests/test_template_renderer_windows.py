@@ -2,6 +2,7 @@ import asyncio
 import sys
 
 import pytest
+
 from src.services.template_renderer import TemplateRenderer
 
 pytestmark = pytest.mark.skipif(

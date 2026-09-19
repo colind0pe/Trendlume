@@ -9,6 +9,7 @@ from src.api.dependencies import (
     get_template_service,
     request_session_factory,
 )
+from src.api.task_presenter import task_response
 from src.domain.enums import JobType
 from src.schemas.asset import AssetResponse
 from src.schemas.common import APIResponse
@@ -20,7 +21,6 @@ from src.schemas.project import (
 )
 from src.schemas.task import TaskCreate, TaskResponse
 from src.schemas.template import ProjectTemplateResponse, ProjectTemplateUpdate
-from src.schemas.workflow import WorkflowJobResponse
 from src.services.asset_service import AssetService
 from src.services.project_service import ProjectService
 from src.services.system_asset_service import sync_bgm_directory_assets
@@ -29,20 +29,6 @@ from src.services.template_service import ProjectTemplateService
 from src.tasks.manager import task_manager
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
-
-
-def _task_response(task, job=None) -> TaskResponse:
-    """Build a task DTO with optional durable-job progress."""
-    response = TaskResponse.model_validate(task)
-    response.scenes_count = len(task.scenes or [])
-    response.scheduled_publish = (task.input_payload or {}).get("scheduled_publish")
-    if job:
-        response.active_job = WorkflowJobResponse.model_validate(job)
-        response.current_stage = job.current_stage
-        response.resume_count = job.retry_count
-        response.last_heartbeat_at = job.heartbeat_at
-        response.can_resume = job.status in {"failed", "cancelled", "missed", "uncertain"}
-    return response
 
 
 @router.post("", response_model=APIResponse[ProjectResponse], status_code=status.HTTP_201_CREATED)
@@ -152,7 +138,7 @@ async def list_project_tasks(
         )
         if not job:
             job = await task_manager.get_latest_job(task.id, session_factory=factory)
-        responses.append(_task_response(task, job))
+        responses.append(task_response(task, job))
     return APIResponse(data=responses)
 
 
@@ -167,6 +153,4 @@ async def create_project_task(
     task_service: TaskService = Depends(get_task_service),
 ):
     task = await task_service.create_task(project_id, payload)
-    response = TaskResponse.model_validate(task)
-    response.scheduled_publish = (task.input_payload or {}).get("scheduled_publish")
-    return APIResponse(data=response)
+    return APIResponse(data=task_response(task, scenes_count=0))

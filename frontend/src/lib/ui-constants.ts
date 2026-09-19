@@ -1,5 +1,14 @@
 import type { StatusTone } from "@/components/ui/status-badge";
-import type { ContentMode, CreativeAngle, ProductionMode, TrendFrequency, VisualRole } from "@/lib/types";
+import {
+  CONTENT_MODE_VALUES,
+  type ContentMode,
+  type CreativeAngle,
+  type ProductionMode,
+  type TrendFrequency,
+  type VisualRole,
+} from "@/lib/types";
+
+export { CONTENT_MODE_VALUES, PRODUCTION_MODE_VALUES } from "@/lib/types";
 
 export interface ProductionModeSpec {
   label: string;
@@ -20,8 +29,6 @@ export const PRODUCTION_MODE_SPECS: Record<ProductionMode, ProductionModeSpec> =
     description: "从已批准 Storyboard 到逐 Shot 媒体、对白音频与 Episode 视频。",
   },
 };
-
-export const PRODUCTION_MODE_VALUES = Object.keys(PRODUCTION_MODE_SPECS) as ProductionMode[];
 
 export const GENRE_OPTIONS = [
   { value: "auto", label: "自动匹配", desc: "根据标题、文案和调研内容自动选择最合适的表达方向" },
@@ -207,8 +214,6 @@ export const CONTENT_MODE_SPECS: Record<ContentMode, ContentModeSpec> = {
   },
 };
 
-export const CONTENT_MODE_VALUES = Object.keys(CONTENT_MODE_SPECS) as ContentMode[];
-
 const CONTENT_MODE_GROUP_ORDER: ReadonlyArray<{
   value: ContentModeGroup;
   label: string;
@@ -238,31 +243,6 @@ export function getContentModeSpec(value: unknown): ContentModeSpec | undefined 
 export const CONTENT_MODE_LABELS: Record<ContentMode, string> = Object.fromEntries(
   Object.entries(CONTENT_MODE_SPECS).map(([mode, spec]) => [mode, spec.label])
 ) as Record<ContentMode, string>;
-
-export const STAGE_LABELS: Record<string, string> = {
-  product_ingest: "商品输入",
-  product_truth: "商品事实",
-  creative_strategy: "Creative Planning",
-  variant_selection: "Variant Selection",
-  topic: "选题规划",
-  planning: "选题策划",
-  research: "全网调研",
-  script: "剧本编排",
-  storyboard: "分镜拆解",
-  scenes: "分镜拆解",
-  visuals: "画面素材",
-  assets: "画面素材",
-  voice: "旁白配音",
-  tts: "旁白配音",
-  render: "视觉渲染",
-  subtitles: "动态字幕",
-  composition: "视频合成",
-  assembly: "视频合成",
-  export: "成片导出",
-  completed: "已完成",
-  ready: "已就绪",
-  queued: "排队中",
-};
 
 export const TEMPLATE_NAMES: Record<string, string> = {
   // 9:16 (竖屏)
@@ -321,12 +301,6 @@ export function formatParamLabel(paramName?: string | null, fallback?: string | 
   const key = paramName.toLowerCase().trim();
   if (TEMPLATE_PARAM_LABELS[key]) return TEMPLATE_PARAM_LABELS[key];
   return fallback || paramName.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-export function formatStageName(stageKey?: string | null): string {
-  if (!stageKey) return "执行中";
-  const key = stageKey.toLowerCase().trim();
-  return STAGE_LABELS[key] || stageKey;
 }
 
 export const PLATFORM_LABELS: Record<string, string> = {

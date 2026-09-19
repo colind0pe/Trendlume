@@ -12,6 +12,7 @@ from src.api.dependencies import (
     get_task_service,
     request_session_factory,
 )
+from src.api.task_presenter import task_detail_response, task_response
 from src.core.exceptions import ValidationException
 from src.domain.enums import JobType
 from src.schemas.asset import AssetResponse
@@ -58,21 +59,6 @@ async def commerce_preflight(
     )
 
 
-async def _task_response(task, db: AsyncSession) -> TaskResponse:
-    response = TaskResponse.model_validate(task)
-    response.scenes_count = len(task.scenes or [])
-    response.scheduled_publish = (task.input_payload or {}).get("scheduled_publish")
-    factory = request_session_factory(db)
-    job = await task_manager.get_latest_job(task.id, session_factory=factory, exclude_publish=True)
-    if job:
-        response.active_job = WorkflowJobResponse.model_validate(job)
-        response.current_stage = job.current_stage
-        response.resume_count = job.retry_count
-        response.last_heartbeat_at = job.heartbeat_at
-        response.can_resume = job.status in {"failed", "cancelled", "missed", "uncertain"}
-    return response
-
-
 @router.get("", response_model=APIResponse[list[TaskResponse]])
 async def list_all_tasks(
     limit: int = Query(50, ge=1, le=100),
@@ -83,7 +69,14 @@ async def list_all_tasks(
 ):
     """List all tasks across all projects with optional status filter"""
     tasks = await service.list_tasks(status=status_filter, limit=limit, offset=offset)
-    return APIResponse(data=[await _task_response(task, db) for task in tasks])
+    factory = request_session_factory(db)
+    responses = []
+    for task in tasks:
+        job = await task_manager.get_latest_job(
+            task.id, session_factory=factory, exclude_publish=True
+        )
+        responses.append(task_response(task, job))
+    return APIResponse(data=responses)
 
 
 @router.get("/{task_id}", response_model=APIResponse[TaskDetailResponse])
@@ -96,37 +89,7 @@ async def get_task(
     task = await service.get_task(task_id)
     factory = request_session_factory(db)
     latest_job = await task_manager.get_latest_job(task_id, session_factory=factory, exclude_publish=True)
-    job_response = WorkflowJobResponse.model_validate(latest_job) if latest_job else None
-    return APIResponse(
-        data=TaskDetailResponse(
-            id=task.id,
-            project_id=task.project_id,
-            product_id=task.product_id,
-            creative_plan_id=task.creative_plan_id,
-            creative_angle=task.creative_angle,
-            title=task.title,
-            description=task.description,
-            job_type=task.job_type,
-            production_mode=task.production_mode,
-            status=task.status,
-            progress_percentage=task.progress_percentage,
-            input_payload=task.input_payload,
-            result_payload=task.result_payload,
-            error_message=task.error_message,
-            scenes_count=len(task.scenes) if task.scenes else 0,
-            scenes=[SceneResponse.model_validate(s) for s in task.scenes],
-            started_at=task.started_at,
-            completed_at=task.completed_at,
-            created_at=task.created_at,
-            updated_at=task.updated_at,
-            active_job=job_response,
-            current_stage=latest_job.current_stage if latest_job else None,
-            resume_count=latest_job.retry_count if latest_job else 0,
-            last_heartbeat_at=latest_job.heartbeat_at if latest_job else None,
-            can_resume=bool(latest_job and latest_job.status in {"failed", "cancelled", "missed", "uncertain"}),
-            scheduled_publish=(task.input_payload or {}).get("scheduled_publish"),
-        )
-    )
+    return APIResponse(data=task_detail_response(task, latest_job))
 
 
 @router.get("/{task_id}/research", response_model=APIResponse[ResearchResponse])
@@ -161,29 +124,7 @@ async def duplicate_task(
         mode=payload.mode if payload else "settings_and_script",
         title=payload.title if payload else None,
     )
-    return APIResponse(data=TaskDetailResponse(
-        id=task.id,
-        project_id=task.project_id,
-        product_id=task.product_id,
-        creative_plan_id=task.creative_plan_id,
-        creative_angle=task.creative_angle,
-        title=task.title,
-        description=task.description,
-        job_type=task.job_type,
-        production_mode=task.production_mode,
-        status=task.status,
-        progress_percentage=task.progress_percentage,
-        input_payload=task.input_payload,
-        result_payload=task.result_payload,
-        error_message=task.error_message,
-        scenes_count=len(task.scenes or []),
-        scenes=[SceneResponse.model_validate(scene) for scene in task.scenes or []],
-        started_at=task.started_at,
-        completed_at=task.completed_at,
-        created_at=task.created_at,
-        updated_at=task.updated_at,
-        scheduled_publish=(task.input_payload or {}).get("scheduled_publish"),
-    ))
+    return APIResponse(data=task_detail_response(task))
 
 
 @router.post("/{task_id}/rerender", response_model=APIResponse[dict])
@@ -395,37 +336,7 @@ async def update_task(
     task = await service.update_task(task_id, payload)
     factory = request_session_factory(db)
     latest_job = await task_manager.get_latest_job(task_id, session_factory=factory, exclude_publish=True)
-    job_response = WorkflowJobResponse.model_validate(latest_job) if latest_job else None
-    return APIResponse(
-        data=TaskDetailResponse(
-            id=task.id,
-            project_id=task.project_id,
-            product_id=task.product_id,
-            creative_plan_id=task.creative_plan_id,
-            creative_angle=task.creative_angle,
-            title=task.title,
-            description=task.description,
-            job_type=task.job_type,
-            production_mode=task.production_mode,
-            status=task.status,
-            progress_percentage=task.progress_percentage,
-            input_payload=task.input_payload,
-            result_payload=task.result_payload,
-            error_message=task.error_message,
-            scenes_count=len(task.scenes) if task.scenes else 0,
-            scenes=[SceneResponse.model_validate(s) for s in task.scenes],
-            started_at=task.started_at,
-            completed_at=task.completed_at,
-            created_at=task.created_at,
-            updated_at=task.updated_at,
-            active_job=job_response,
-            current_stage=latest_job.current_stage if latest_job else None,
-            resume_count=latest_job.retry_count if latest_job else 0,
-            last_heartbeat_at=latest_job.heartbeat_at if latest_job else None,
-            can_resume=bool(latest_job and latest_job.status in {"failed", "cancelled", "missed", "uncertain"}),
-            scheduled_publish=(task.input_payload or {}).get("scheduled_publish"),
-        )
-    )
+    return APIResponse(data=task_detail_response(task, latest_job))
 
 
 @router.delete("/{task_id}", response_model=APIResponse[bool])

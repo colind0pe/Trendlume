@@ -307,7 +307,6 @@ export function ProductionTaskDialog({
           },
         } : {}),
         input_payload: {
-          ...(isCommerce ? { product_id: productId, creative_plan_id: creativePlanId, creative_angle: creativeAngle } : {}),
           mode: creationMode,
           topic: finalTitle,
           raw_script: rawScript,
@@ -333,7 +332,7 @@ export function ProductionTaskDialog({
         bgm_enabled: bgmEnabled,
         bgm_volume: bgmVolume,
         voice_id: taskVoiceId,
-        voice_speed: taskSpeed,
+        speed: taskSpeed,
         content_mode: contentMode,
         template_params: templateParams,
         source_asset_id: contentMode === "uploaded_asset" ? sourceAssetId || null : null,

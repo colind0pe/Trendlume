@@ -343,8 +343,6 @@ const VOLCENGINE_TTS_DEFAULT_RESOURCE_ID = "seed-tts-2.0";
 const VOLCENGINE_TTS_DEFAULT_SPEED_RATIO = 1.0;
 const VOLCENGINE_TTS_MIN_SPEED_RATIO = 0.5;
 const VOLCENGINE_TTS_MAX_SPEED_RATIO = 2.0;
-const VOLCENGINE_TTS_LEGACY_VOICE = "zh_female_cancan_mars_bigtts";
-const VOLCENGINE_TTS_LEGACY_RESOURCE_ID = "volc.service_type.10029";
 const DEFAULT_IMAGE_TEST_PROMPT = "一只橘猫坐在窗边，温暖阳光";
 const DEFAULT_IMAGE_TEST_STYLE = "cinematic_real";
 const IMAGE_TEST_STYLE_OPTIONS = STYLE_PRESET_OPTIONS.filter((style) => style.value !== "custom");
@@ -945,15 +943,7 @@ function ProviderWorkspace({
       setIsDefault(existing.is_default);
 
       customDefs.forEach((cf) => {
-        let val = existing.config?.[cf.key];
-        if (vendorName === "volcengine" && categoryKey === "tts") {
-          if (cf.key === "resource_id" && val === VOLCENGINE_TTS_LEGACY_RESOURCE_ID) {
-            val = VOLCENGINE_TTS_DEFAULT_RESOURCE_ID;
-          }
-          if (cf.key === "default_voice" && (val === VOLCENGINE_TTS_LEGACY_VOICE || !val)) {
-            val = VOLCENGINE_TTS_DEFAULT_VOICE;
-          }
-        }
+        const val = existing.config?.[cf.key];
         newCustomValues[cf.key] = val !== undefined ? String(val) : String(cf.defaultValue ?? "");
       });
 

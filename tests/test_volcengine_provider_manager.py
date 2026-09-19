@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import httpx
 import pytest
+
 from src.core.exceptions import ValidationException
 from src.core.security import secret_cipher
 from src.models.provider_config import ProviderConfigModel
-from src.providers.image.volcengine_image import VolcengineImageProvider
 from src.providers.image.protocol import ImageResult
+from src.providers.image.volcengine_image import VolcengineImageProvider
 from src.providers.tts.volcengine_tts import VolcengineTTSProvider
 from src.providers.video.volcengine_video import VolcengineVideoProvider
 from src.schemas.provider import ProviderConfigUpdate, ProviderTestRequest
@@ -76,27 +77,6 @@ async def test_provider_manager_builds_volcengine_media_providers(test_session):
     assert tts_provider.api_key == "tts-key-old"
     assert tts_provider.default_voice == "voice-test"
     assert tts_provider.default_speed_ratio == 1.4
-
-
-@pytest.mark.asyncio
-async def test_provider_manager_normalizes_legacy_volcengine_tts_defaults(test_session):
-    tts = await _add_provider(
-        test_session,
-        provider_type="tts",
-        provider_name="volcengine",
-        provider_id="legacy-volc-tts",
-        config={
-            "resource_id": "volc.service_type.10029",
-            "default_voice": "zh_female_cancan_mars_bigtts",
-        },
-        credentials={"api_key": "tts-key"},
-    )
-
-    provider = await ProviderManager(test_session).get_tts(tts.id)
-
-    assert isinstance(provider, VolcengineTTSProvider)
-    assert provider.resource_id == "seed-tts-2.0"
-    assert provider.default_voice == "zh_female_vv_uranus_bigtts"
 
 
 @pytest.mark.asyncio

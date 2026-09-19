@@ -4,9 +4,9 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.api.dependencies import get_db, get_trend_service, request_session_factory
+from src.api.task_presenter import task_response
 from src.core.exceptions import ValidationException
 from src.schemas.common import APIResponse
-from src.schemas.task import TaskResponse
 from src.schemas.trend import (
     TrendFeedResponse,
     TrendPreferencesResponse,
@@ -252,15 +252,12 @@ async def reject_trend_proposal(
 def _proposal_action_response(
     proposal, task, job=None, *, queue_status="not_requested", queue_error=None
 ):
-    task_response = TaskResponse.model_validate(task) if task is not None else None
-    if task_response is not None:
-        # A freshly built task has no scenes; avoiding relationship access here
-        # keeps this response safe after the service transaction has committed.
-        task_response.scenes_count = 0
-        task_response.scheduled_publish = (task.input_payload or {}).get("scheduled_publish")
+    task_response_data = (
+        task_response(task, scenes_count=0) if task is not None else None
+    )
     return TrendProposalActionResponse(
         proposal=proposal,
-        task=task_response,
+        task=task_response_data,
         job=job.to_dict() if hasattr(job, "to_dict") else job,
         queue_status=queue_status,
         queue_error=queue_error,

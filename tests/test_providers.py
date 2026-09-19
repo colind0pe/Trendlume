@@ -289,6 +289,7 @@ def test_provider_registry_passes_llm_provider_name():
 @pytest.mark.asyncio
 async def test_openai_compatible_llm_retries_remote_disconnect(monkeypatch):
     import httpx
+
     from src.providers.llm.openai_client import OpenAICompatibleLLMProvider
 
     sleep_delays = []
@@ -340,6 +341,7 @@ async def test_openai_compatible_llm_retries_remote_disconnect(monkeypatch):
 @pytest.mark.asyncio
 async def test_openai_compatible_llm_retries_dns_without_warning(monkeypatch):
     import httpx
+
     from src.providers.llm.openai_client import OpenAICompatibleLLMProvider
 
     class CapturedLogger:
@@ -412,6 +414,7 @@ async def test_openai_compatible_llm_reports_terminal_transport_errors(
     monkeypatch, failure_kind, expected_message
 ):
     import httpx
+
     from src.core.exceptions import ProviderException
     from src.providers.llm.openai_client import OpenAICompatibleLLMProvider
 
@@ -478,6 +481,7 @@ async def test_openai_compatible_llm_does_not_retry_http_errors(
     monkeypatch, status_code, error_message
 ):
     import httpx
+
     from src.core.exceptions import ProviderException
     from src.providers.llm.openai_client import OpenAICompatibleLLMProvider
 
@@ -520,6 +524,7 @@ async def test_openai_compatible_llm_does_not_retry_http_errors(
 @pytest.mark.asyncio
 async def test_openai_compatible_llm_redacts_credentials_from_http_errors(monkeypatch):
     import httpx
+
     from src.core.exceptions import ProviderException
     from src.providers.llm.openai_client import OpenAICompatibleLLMProvider
 

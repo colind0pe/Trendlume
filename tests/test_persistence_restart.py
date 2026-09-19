@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
 from src.core.database import Base
 from src.core.security import SecretCipher
 from src.schemas.provider import ProviderConfigUpdate
@@ -20,7 +21,7 @@ async def test_restart_persistence_and_priority(tmp_path: Path):
     5. User changes in SQLite are preserved and NOT overwritten by .env defaults!
     """
     db_file = tmp_path / "persistence_test.db"
-    db_url = f"sqlite+aiosqlite:///{str(db_file).replace('\\', '/')}"
+    db_url = f"sqlite+aiosqlite:///{db_file.as_posix()}"
 
     engine = create_async_engine(db_url, echo=False)
     session_factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)

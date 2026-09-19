@@ -635,11 +635,7 @@ class ProviderManager:
             if model and model.provider_name == "volcengine"
             else "zh-CN-YunxiNeural"
         )
-        config = (
-            VolcengineTTSProvider.normalize_legacy_defaults(model.config or {})
-            if model and model.provider_name == "volcengine"
-            else (model.config or {}) if model else {}
-        )
+        config = (model.config or {}) if model else {}
         return str(config.get("default_voice") or fallback).strip() or fallback
 
     async def get_tts(self, provider_id: str | None = None) -> TTSProvider:
@@ -650,11 +646,7 @@ class ProviderManager:
             return EdgeTTSProvider(default_voice=cfg.get("default_voice") or "zh-CN-YunxiNeural")
 
         creds = secret_cipher.decrypt_dict(model.credentials_encrypted)
-        cfg = (
-            VolcengineTTSProvider.normalize_legacy_defaults(model.config or {})
-            if model.provider_name == "volcengine"
-            else model.config or {}
-        )
+        cfg = model.config or {}
 
         if model.provider_name == "volcengine":
             api_key = str(creds.get("api_key") or "").strip()
@@ -1392,7 +1384,6 @@ class ProviderManager:
                 details={"voices_count": len(voices)},
             )
         if provider_name == "volcengine":
-            cfg = VolcengineTTSProvider.normalize_legacy_defaults(cfg)
             api_key = str(creds.get("api_key") or "").strip()
             if not api_key:
                 return ProviderTestResponse(

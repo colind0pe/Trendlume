@@ -1,6 +1,6 @@
 # Knowledge Production Mode
 
-Trendlume 当前的 topic、fixed script 和 Trend→Video 入口都归属于 Knowledge Mode。Trend 仍然只是一个输入源，不是另一种生产模式；已有客户端即使继续发送 `content_brief` 或省略 `production_mode`，后端也会兼容并按 Knowledge Task 处理。
+Trendlume 当前的 topic、fixed script 和 Trend→Video 入口都归属于 Knowledge Mode。Trend 仍然只是一个输入源，不是另一种生产模式；省略 `production_mode` 时按项目默认或 Knowledge 处理。当前运行时契约使用 `KnowledgeBrief`，不再保留 `content_brief` 入口；旧数据库记录只在迁移过程中被规范化。
 
 ## 从主题到知识视频
 
@@ -34,7 +34,7 @@ Knowledge Task 的编辑核心是四个问题：
 }
 ```
 
-旧 `ContentBrief` 的 `goal`、`angle`、`key_points` 和 `claims` 会映射到上述字段；不会要求旧入口一次性迁移。
+有效基线升级时，迁移脚本会把旧数据库中的 `ContentBrief` 结构转换为 `KnowledgeBrief`；迁移完成后的 API、Task payload 和 UI 只使用当前字段。
 
 ## 来源与视觉逻辑
 

@@ -16,7 +16,7 @@ from src.models import Base
 ROOT_DIR = Path(__file__).resolve().parent.parent
 BACKEND_DIR = ROOT_DIR / "backend"
 BASELINE_REVISION = "001_release_baseline"
-RELEASE_REVISION = "010_normalize_drama_dialogue"
+RELEASE_REVISION = "011_canonicalize_production_contracts"
 
 
 def _migration_database(tmp_path: Path, filename: str) -> tuple[Path, str]:
@@ -51,55 +51,28 @@ def _migration_version(connection: sqlite3.Connection) -> str:
     return connection.execute("SELECT version_num FROM alembic_version").fetchone()[0]
 
 
+def _assert_current_schema(connection: sqlite3.Connection) -> None:
+    assert _table_names(connection) == set(Base.metadata.tables) | {"alembic_version"}
+    for table in Base.metadata.tables.values():
+        assert _table_columns(connection, table.name) == {
+            column.name for column in table.columns
+        }
+    assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
 def test_head_creates_current_schema(tmp_path: Path):
     database_file, database_url = _migration_database(tmp_path, "release.db")
 
     _run_migration(database_url, "head")
 
     with sqlite3.connect(database_file) as connection:
-        assert _table_names(connection) == set(Base.metadata.tables) | {"alembic_version"}
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
             RELEASE_REVISION,
         )
-        assert "task_batches" not in _table_names(connection)
-        assert "batch_id" not in _table_columns(connection, "tasks")
-        assert "lease_token" in _table_columns(connection, "workflow_jobs")
-        assert {
-            "last_test_connected",
-            "last_tested_at",
-            "last_test_message",
-            "last_test_latency_ms",
-        } <= _table_columns(connection, "provider_configs")
-        assert {
-            "knowledge_brief",
-            "generation_options",
-        } <= _table_columns(connection, "topic_proposals")
-        assert "content_brief" not in _table_columns(connection, "topic_proposals")
-        assert "primary_production_mode" in _table_columns(connection, "projects")
-        assert "production_mode" in _table_columns(connection, "tasks")
-        assert {"product_id", "creative_angle"} <= _table_columns(connection, "tasks")
-        assert {"products", "product_assets", "commerce_creative_plans"} <= _table_names(connection)
-        assert {
-            "drama_bibles",
-            "drama_characters",
-            "drama_locations",
-            "drama_episodes",
-            "drama_scenes",
-            "drama_shots",
-            "drama_dialogue_lines",
-        } <= _table_names(connection)
-        assert "dialogue" not in _table_columns(connection, "drama_shots")
-        assert "creative_plan_id" in _table_columns(connection, "tasks")
-        assert {
-            "visual_role",
-            "claim_refs",
-            "source_refs",
-            "production_metadata",
-        } <= _table_columns(connection, "scenes")
-        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+        _assert_current_schema(connection)
 
 
-def test_existing_release_database_upgrades_and_downgrades_trend_center(tmp_path: Path):
+def test_baseline_database_upgrades_and_downgrades_current_schema(tmp_path: Path):
     database_file, database_url = _migration_database(tmp_path, "upgrade.db")
 
     _run_migration(database_url, BASELINE_REVISION)
@@ -142,8 +115,99 @@ def test_existing_release_database_upgrades_and_downgrades_trend_center(tmp_path
                     {
                         "content_brief": {"angle": "先定义", "key_points": ["旧主张"]},
                         "template_id": "default_portrait",
+                        "product_id": "product_legacy",
+                        "creative_plan_id": "plan_legacy",
+                        "creative_angle": "demo",
+                        "visual_mode": "video",
+                        "commerce": {"product_id": "product_legacy", "variant_label": "旧方案"},
+                        "image_workflow_id": "image_flux.json",
+                        "video_workflow_id": "selfhost/video_wan2.1_fusionx.json",
+                        "image_workflow_snapshot": {
+                            "id": "image_flux.json",
+                            "path": "image_flux.json",
+                        },
+                        "voice_speed": 1.15,
                     }
                 ),
+                "2026-09-18",
+                "2026-09-18",
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO provider_configs
+                (id, provider_type, provider_name, display_name, enabled, is_default,
+                 config, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "provider_legacy_tts",
+                "tts",
+                "volcengine",
+                "Legacy TTS",
+                1,
+                1,
+                json.dumps(
+                    {
+                        "resource_id": "volc.service_type.10029",
+                        "default_voice": "zh_female_cancan_mars_bigtts",
+                    }
+                ),
+                "2026-09-18",
+                "2026-09-18",
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO provider_configs
+                (id, provider_type, provider_name, display_name, enabled, is_default,
+                 config, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "provider_legacy_image",
+                "image",
+                "comfyui",
+                "Legacy Image",
+                1,
+                1,
+                json.dumps({"default_workflow": "image_flux.json"}),
+                "2026-09-18",
+                "2026-09-18",
+            ),
+        )
+        connection.commit()
+
+    _run_migration(database_url, "002_trend_center")
+    with sqlite3.connect(database_file) as connection:
+        connection.execute(
+            """
+            INSERT INTO trend_items (id, canonical_key, title, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            ("trend_item_legacy", "legacy-speed", "旧速度", "2026-09-18", "2026-09-18"),
+        )
+        connection.execute(
+            """
+            INSERT INTO topic_proposals
+                (id, project_id, trend_item_id, revision, status, title, angle,
+                 match_reason, matched_keywords, trend_snapshot, content_brief,
+                 generation_options, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "proposal_legacy_speed",
+                "project_legacy",
+                "trend_item_legacy",
+                1,
+                "draft",
+                "旧速度提案",
+                "旧角度",
+                "旧匹配",
+                json.dumps([]),
+                json.dumps({}),
+                json.dumps({"thesis": "旧主张"}),
+                json.dumps({"voice_speed": 1.25}),
                 "2026-09-18",
                 "2026-09-18",
             ),
@@ -153,27 +217,7 @@ def test_existing_release_database_upgrades_and_downgrades_trend_center(tmp_path
     _run_migration(database_url, "head")
     with sqlite3.connect(database_file) as connection:
         assert _migration_version(connection) == RELEASE_REVISION
-        assert "trend_runs" in _table_names(connection)
-        assert "primary_production_mode" in _table_columns(connection, "projects")
-        assert "production_mode" in _table_columns(connection, "tasks")
-        assert {"product_id", "creative_angle"} <= _table_columns(connection, "tasks")
-        assert {"products", "product_assets", "commerce_creative_plans"} <= _table_names(connection)
-        assert {
-            "drama_bibles",
-            "drama_characters",
-            "drama_locations",
-            "drama_episodes",
-            "drama_scenes",
-            "drama_shots",
-            "drama_dialogue_lines",
-        } <= _table_names(connection)
-        assert "creative_plan_id" in _table_columns(connection, "tasks")
-        assert {
-            "visual_role",
-            "claim_refs",
-            "source_refs",
-            "production_metadata",
-        } <= _table_columns(connection, "scenes")
+        _assert_current_schema(connection)
         assert connection.execute(
             "SELECT primary_production_mode FROM projects WHERE id = 'project_legacy'"
         ).fetchone() == ("knowledge",)
@@ -192,6 +236,39 @@ def test_existing_release_database_upgrades_and_downgrades_trend_center(tmp_path
         assert payload["knowledge_brief"]["thesis"] == "先定义"
         assert payload["knowledge_brief"]["key_claims"][0]["statement"] == "旧主张"
         assert payload["template_id"] == "image_gallery_matted"
+        assert payload["content_mode"] == "generated_video"
+        assert not {"product_id", "creative_plan_id", "creative_angle", "visual_mode", "commerce"} & payload.keys()
+        assert payload["image_workflow_id"] == "image/image_flux.json"
+        assert payload["video_workflow_id"] == "video/video_wan2.1_fusionx.json"
+        assert payload["image_workflow_snapshot"] == {
+            "id": "image/image_flux.json",
+            "path": "image/image_flux.json",
+        }
+        assert payload["speed"] == 1.15
+        assert "voice_speed" not in payload
+        provider_config = json.loads(
+            connection.execute(
+                "SELECT config FROM provider_configs WHERE id = 'provider_legacy_tts'"
+            ).fetchone()[0]
+        )
+        assert provider_config == {
+            "resource_id": "seed-tts-2.0",
+            "default_voice": "zh_female_vv_uranus_bigtts",
+        }
+        image_provider_config = json.loads(
+            connection.execute(
+                "SELECT config FROM provider_configs WHERE id = 'provider_legacy_image'"
+            ).fetchone()[0]
+        )
+        assert image_provider_config == {"default_workflow": "image/image_flux.json"}
+
+    with sqlite3.connect(database_file) as connection:
+        proposal_options = json.loads(
+            connection.execute(
+                "SELECT generation_options FROM topic_proposals WHERE id = 'proposal_legacy_speed'"
+            ).fetchone()[0]
+        )
+        assert proposal_options == {"speed": 1.25}
 
     _run_migration(database_url, BASELINE_REVISION, downgrade=True)
     with sqlite3.connect(database_file) as connection:
@@ -205,6 +282,7 @@ def test_existing_release_database_upgrades_and_downgrades_trend_center(tmp_path
             "topic_proposals",
             "trend_subscriptions",
         } & _table_names(connection)
+
 
 @pytest.mark.asyncio
 async def test_verify_schema_reports_missing_columns(tmp_path: Path):

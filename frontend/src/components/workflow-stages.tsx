@@ -34,32 +34,6 @@ import type {
   WorkflowStepRun,
 } from "@/lib/types";
 
-export const STAGE_NAMES: Record<string, string> = {
-  topic: "主题",
-  research: "研究",
-  planning: "策划",
-  script: "脚本",
-  storyboard: "分镜",
-  assets: "素材",
-  voice: "配音",
-  subtitles: "字幕",
-  composition: "合成",
-  export: "导出",
-};
-
-export const STAGE_SHORT_NAMES: Record<string, string> = {
-  topic: "主题",
-  research: "研究",
-  planning: "策划",
-  script: "脚本",
-  storyboard: "分镜",
-  assets: "素材",
-  voice: "配音",
-  subtitles: "字幕",
-  composition: "合成",
-  export: "成片",
-};
-
 export const STAGE_STATES: Record<string, string> = {
   waiting: "等待",
   running: "执行中",
@@ -189,7 +163,7 @@ export function WorkflowMiniRail({
               <button
                 type="button"
                 onClick={onOpenDetails}
-                title={`${stage.label || STAGE_NAMES[key] || key} · ${STAGE_STATES[status] || status}${
+                title={`${stage.label || key} · ${STAGE_STATES[status] || status}${
                   validity === "stale" ? " (已过期)" : validity === "corrupt" ? " (制品损坏)" : ""
                 }`}
                 className={`group inline-flex shrink-0 items-center gap-1 rounded-md border px-2 py-1 transition-all hover:scale-[1.02] cursor-pointer ${colorClass} ${
@@ -203,7 +177,7 @@ export function WorkflowMiniRail({
                   aria-hidden="true"
                 />
                 <span className="font-medium text-xs">
-                  {stage.label || STAGE_SHORT_NAMES[key] || key}
+                  {stage.label || key}
                 </span>
                 {status === "reused" && (
                   <span className="text-xs opacity-80" title="该阶段已复用已有制品">
@@ -465,7 +439,7 @@ export function WorkflowInspectorDialog({
 
         {query.data?.stages.map((stage) => {
           const Icon = getStageIcon(stage.status, stage.validity);
-          const stageName = STAGE_NAMES[stage.step_key] || stage.step_key;
+          const stageName = stage.label || stage.step_key;
           const stageStatus = STAGE_STATES[stage.status] || stage.status;
 
           return (

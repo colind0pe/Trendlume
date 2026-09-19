@@ -2,7 +2,7 @@
 
 > Trendlume is an AI video production workbench for distinct content tracks.
 
-Knowledge, Commerce, and Drama each have their own planning entry point and production workflow while sharing media generation, voice, subtitles, rendering, and durable artifacts. A Project stores its primary Production Mode, while a Task can override it through the appropriate creation flow. `ContentMode` remains the compatible backend contract for the user-facing “Visual Source” setting.
+Knowledge, Commerce, and Drama each have their own planning entry point and production workflow while sharing media generation, voice, subtitles, rendering, and durable artifacts. A Project stores its primary Production Mode, while a Task can override it through the appropriate creation flow. `ContentMode` is the current contract for the user-facing “Visual Source” setting.
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=flat-square)](LICENSE) [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/) [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/) [![Next.js 14](https://img.shields.io/badge/Next.js-14-black?style=flat-square&logo=next.js&logoColor=white)](https://nextjs.org/) [![React 18](https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react&logoColor=black)](https://react.dev/) [![SQLite](https://img.shields.io/badge/SQLite-3-003B57?style=flat-square&logo=sqlite&logoColor=white)](https://www.sqlite.org/) [![FFmpeg](https://img.shields.io/badge/FFmpeg-6.0+-007808?style=flat-square&logo=ffmpeg&logoColor=white)](https://ffmpeg.org/)
 

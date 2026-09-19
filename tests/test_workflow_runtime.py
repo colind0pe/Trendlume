@@ -3,6 +3,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
+
 from src.core.exceptions import ValidationException
 from src.models import ProjectModel, TaskModel
 from src.models.workflow import (
@@ -125,6 +126,7 @@ async def test_invalid_media_not_completed(test_session, tmp_path):
 @pytest.mark.asyncio
 async def test_foreign_key_restricts_referenced_asset(test_session, tmp_path):
     from sqlalchemy import delete, text
+
     from src.models.asset import AssetModel
     await test_session.commit()
     await test_session.execute(text('PRAGMA foreign_keys=ON'))
@@ -149,6 +151,7 @@ async def test_foreign_key_restricts_referenced_asset(test_session, tmp_path):
 @pytest.mark.parametrize('owner', ['task', 'project'])
 async def test_owner_delete_cascades_reused_artifact_history(test_session, tmp_path, owner):
     from sqlalchemy import delete, text
+
     from src.models.workflow import WorkflowArtifactModel
     await test_session.commit()
     await test_session.execute(text('PRAGMA foreign_keys=ON'))

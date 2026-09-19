@@ -12,10 +12,13 @@ import {
   Film,
   LockKeyhole,
   MapPin,
+  Pencil,
   RefreshCcw,
+  Save,
   ShieldCheck,
   Sparkles,
   Users,
+  X,
 } from "lucide-react";
 
 import { api } from "@/lib/api-client";
@@ -23,6 +26,7 @@ import { DramaProductionPanel } from "@/components/drama/drama-production-panel"
 import type {
   DramaApprovalStatus,
   DramaDetail,
+  DramaCharacter,
   DramaEpisode,
   DramaShot,
   DramaStage,
@@ -231,7 +235,7 @@ function IntakePanel({
             label={sourceType === "idea" ? "故事想法" : "剧本原文"}
             htmlFor="drama-source"
             required
-            description={sourceType === "script" ? "支持标题、角色、分镜、场景、台词、景别和运镜等 key: value 字段。" : "先用一句话写清楚人物、冲突和想要的情绪落点。"}
+            description={sourceType === "script" ? "支持标题、角色、分集（第1集 / EP2）、分镜、场景、台词、景别和运镜等 key: value 字段。" : "先用一句话写清楚人物、冲突和想要的情绪落点。"}
           >
             <Textarea
               id="drama-source"
@@ -317,27 +321,103 @@ function BiblePanel({ detail }: { detail: DramaDetail }) {
   );
 }
 
-function CharactersPanel({ detail, onRefresh }: { detail: DramaDetail; onRefresh: (detail: DramaDetail) => void }) {
+function CharacterCard({
+  detail,
+  character,
+  onRefresh,
+}: {
+  detail: DramaDetail;
+  character: DramaCharacter;
+  onRefresh: (detail: DramaDetail) => void;
+}) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const mutation = useMutation({
-    mutationFn: (characterId: string) => api.approveDramaCharacter(detail.id, characterId),
+  const [editing, setEditing] = React.useState(false);
+  const [draft, setDraft] = React.useState(() => ({
+    name: character.name,
+    description: character.description,
+    appearance_lock: character.appearance_lock,
+    wardrobe: character.wardrobe,
+    voice_id: character.voice_id || "",
+  }));
+  React.useEffect(() => {
+    setDraft({
+      name: character.name,
+      description: character.description,
+      appearance_lock: character.appearance_lock,
+      wardrobe: character.wardrobe,
+      voice_id: character.voice_id || "",
+    });
+  }, [character.appearance_lock, character.description, character.name, character.voice_id, character.wardrobe]);
+
+  const saveMutation = useMutation({
+    mutationFn: () => api.updateDramaCharacter(detail.id, character.id, { ...draft, voice_id: draft.voice_id || null }),
+    onSuccess: (next) => {
+      queryClient.setQueryData(["drama", detail.id], next);
+      onRefresh(next);
+      setEditing(false);
+      toast("角色设定已保存；相关 Shot 需要重新确认。", "success");
+    },
+    onError: (error: Error) => toast(`角色保存失败：${error.message}`, "error"),
+  });
+  const approveMutation = useMutation({
+    mutationFn: () => api.approveDramaCharacter(detail.id, character.id),
     onSuccess: (next) => { queryClient.setQueryData(["drama", detail.id], next); onRefresh(next); toast("角色锁已确认，相关 Shot anchor 已刷新。", "success"); },
     onError: (error: Error) => toast(`角色确认失败：${error.message}`, "error"),
   });
   return (
+    <Card className={`rounded-2xl ${character.approval_status === "approved" ? "border-success/25" : ""}`}>
+      <CardHeader className="pb-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <CardTitle className="flex items-center gap-2 text-base"><Users className="h-4 w-4 text-primary" aria-hidden="true" />{character.name}</CardTitle>
+            <CardDescription className="mt-1">{character.description}</CardDescription>
+          </div>
+          <ApprovalBadge status={character.approval_status} />
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3 text-sm">
+        {editing ? (
+          <div className="grid gap-3">
+            <Field label="角色名" htmlFor={`character-name-${character.id}`} required>
+              <Input id={`character-name-${character.id}`} value={draft.name} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} />
+            </Field>
+            <Field label="人物描述" htmlFor={`character-description-${character.id}`}>
+              <Textarea id={`character-description-${character.id}`} value={draft.description} onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))} />
+            </Field>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="外观锁" htmlFor={`character-appearance-${character.id}`} required>
+                <Textarea id={`character-appearance-${character.id}`} value={draft.appearance_lock} onChange={(event) => setDraft((current) => ({ ...current, appearance_lock: event.target.value }))} />
+              </Field>
+              <Field label="服装锁" htmlFor={`character-wardrobe-${character.id}`} required>
+                <Textarea id={`character-wardrobe-${character.id}`} value={draft.wardrobe} onChange={(event) => setDraft((current) => ({ ...current, wardrobe: event.target.value }))} />
+              </Field>
+            </div>
+            <Field label="音色 ID" htmlFor={`character-voice-${character.id}`} description="对白会优先使用此音色；留空时才使用 Production 的默认音色。">
+              <Input id={`character-voice-${character.id}`} value={draft.voice_id} onChange={(event) => setDraft((current) => ({ ...current, voice_id: event.target.value }))} placeholder="例如 voice-lin" />
+            </Field>
+            <div className="flex justify-end gap-2 border-t border-border/50 pt-3">
+              <Button type="button" size="sm" variant="ghost" className="gap-1.5" onClick={() => setEditing(false)} disabled={saveMutation.isPending}><X className="h-3.5 w-3.5" aria-hidden="true" />取消</Button>
+              <Button type="button" size="sm" className="gap-1.5" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending || !draft.name.trim() || !draft.appearance_lock.trim() || !draft.wardrobe.trim()}><Save className="h-3.5 w-3.5" aria-hidden="true" />{saveMutation.isPending ? "保存中…" : "保存角色"}</Button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="grid gap-2 rounded-xl bg-secondary/35 p-3"><div><span className="text-xs text-muted-foreground">Appearance lock</span><p className="mt-1 leading-5 text-foreground">{character.appearance_lock}</p></div><div><span className="text-xs text-muted-foreground">Wardrobe</span><p className="mt-1 leading-5 text-foreground">{character.wardrobe}</p></div><div><span className="text-xs text-muted-foreground">Voice</span><p className="mt-1 font-mono text-xs text-foreground">{character.voice_id || "跟随 Production 默认音色"}</p></div></div>
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/50 pt-3"><span className="max-w-[65%] truncate font-mono text-[10px] text-muted-foreground" title={character.prompt_anchor}>{character.prompt_anchor}</span><div className="flex items-center gap-2"><Button type="button" size="sm" variant="ghost" className="gap-1.5" onClick={() => setEditing(true)}><Pencil className="h-3.5 w-3.5" aria-hidden="true" />编辑</Button><ApprovalAction status={character.approval_status} pending={approveMutation.isPending} onApprove={() => approveMutation.mutate()} label="确认角色锁" /></div></div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function CharactersPanel({ detail, onRefresh }: { detail: DramaDetail; onRefresh: (detail: DramaDetail) => void }) {
+  return (
     <div className="space-y-4">
       <SectionHeader title="Characters" description="确认外观、服装和声音身份后，角色才可以进入 Shot。" actions={<Badge variant="outline">{detail.characters.length} 个角色</Badge>} />
       <div className="grid gap-4 md:grid-cols-2">
-        {detail.characters.map((character) => (
-          <Card key={character.id} className={`rounded-2xl ${character.approval_status === "approved" ? "border-success/25" : ""}`}>
-            <CardHeader className="pb-3"><div className="flex items-start justify-between gap-3"><div><CardTitle className="flex items-center gap-2 text-base"><Users className="h-4 w-4 text-primary" aria-hidden="true" />{character.name}</CardTitle><CardDescription className="mt-1">{character.description}</CardDescription></div><ApprovalBadge status={character.approval_status} /></div></CardHeader>
-            <CardContent className="space-y-3 text-sm">
-              <div className="grid gap-2 rounded-xl bg-secondary/35 p-3"><div><span className="text-xs text-muted-foreground">Appearance lock</span><p className="mt-1 leading-5 text-foreground">{character.appearance_lock}</p></div><div><span className="text-xs text-muted-foreground">Wardrobe</span><p className="mt-1 leading-5 text-foreground">{character.wardrobe}</p></div></div>
-              <div className="flex items-center justify-between gap-3 border-t border-border/50 pt-3"><span className="max-w-[65%] truncate font-mono text-[10px] text-muted-foreground" title={character.prompt_anchor}>{character.prompt_anchor}</span><ApprovalAction status={character.approval_status} pending={mutation.isPending && mutation.variables === character.id} onApprove={() => mutation.mutate(character.id)} label="确认角色锁" /></div>
-            </CardContent>
-          </Card>
-        ))}
+        {detail.characters.map((character) => <CharacterCard key={character.id} detail={detail} character={character} onRefresh={onRefresh} />)}
       </div>
     </div>
   );
@@ -393,15 +473,73 @@ function EpisodeCard({ detail, episode, onRefresh }: { detail: DramaDetail; epis
 function StoryboardShot({ detail, shot, blocked = false, onRefresh }: { detail: DramaDetail; shot: DramaShot; blocked?: boolean; onRefresh: (detail: DramaDetail) => void }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const mutation = useMutation({
+  const [editing, setEditing] = React.useState(false);
+  const [draft, setDraft] = React.useState(() => ({
+    action: shot.action,
+    visual_prompt: shot.visual_prompt,
+    camera: shot.camera,
+    framing: shot.framing,
+    movement: shot.movement,
+    duration_hint: String(shot.duration_hint),
+    dialogue: shot.dialogue_lines.map((line) => `${line.speaker_name}${line.delivery && line.delivery !== "自然" ? `（${line.delivery}）` : ""}${line.timing_hint ? ` @${line.timing_hint}` : ""}: ${line.text}`).join("\n"),
+  }));
+  React.useEffect(() => {
+    setDraft({
+      action: shot.action,
+      visual_prompt: shot.visual_prompt,
+      camera: shot.camera,
+      framing: shot.framing,
+      movement: shot.movement,
+      duration_hint: String(shot.duration_hint),
+      dialogue: shot.dialogue_lines.map((line) => `${line.speaker_name}${line.delivery && line.delivery !== "自然" ? `（${line.delivery}）` : ""}${line.timing_hint ? ` @${line.timing_hint}` : ""}: ${line.text}`).join("\n"),
+    });
+  }, [shot.action, shot.camera, shot.dialogue_lines, shot.duration_hint, shot.framing, shot.movement, shot.visual_prompt]);
+  const saveMutation = useMutation({
+    mutationFn: () => api.updateDramaShot(detail.id, shot.id, {
+      action: draft.action,
+      visual_prompt: draft.visual_prompt,
+      camera: draft.camera,
+      framing: draft.framing,
+      movement: draft.movement,
+      duration_hint: Number(draft.duration_hint),
+      dialogue: draft.dialogue,
+    }),
+    onSuccess: (next) => {
+      queryClient.setQueryData(["drama", detail.id], next);
+      onRefresh(next);
+      setEditing(false);
+      toast("Shot 已保存；请重新确认后再进入制作。", "success");
+    },
+    onError: (error: Error) => toast(`Shot 保存失败：${error.message}`, "error"),
+  });
+  const approvalMutation = useMutation({
     mutationFn: () => api.approveDramaShot(detail.id, shot.id),
     onSuccess: (next) => { queryClient.setQueryData(["drama", detail.id], next); onRefresh(next); toast("Shot 已确认。", "success"); },
     onError: (error: Error) => toast(`Shot 确认失败：${error.message}`, "error"),
   });
   return (
     <Card className={`rounded-2xl ${shot.approval_status === "approved" ? "border-success/25" : ""}`}>
-      <CardHeader className="pb-3"><div className="flex items-start justify-between gap-3"><div><div className="mb-1 flex items-center gap-2 font-mono text-[10px] uppercase tracking-wider text-primary"><Film className="h-3 w-3" aria-hidden="true" /> Shot {String(shot.sequence_index).padStart(2, "0")}</div><CardTitle className="text-sm">{shot.action}</CardTitle></div><ApprovalAction status={shot.approval_status} pending={mutation.isPending} disabled={blocked} onApprove={() => mutation.mutate()} label={blocked ? "先确认场景" : "确认 Shot"} /></div></CardHeader>
-      <CardContent className="space-y-3 text-sm"><div className="grid gap-3 md:grid-cols-2"><div className="rounded-xl bg-secondary/35 p-3"><p className="text-[11px] text-muted-foreground">画面提示</p><p className="mt-1 leading-6 text-foreground">{shot.visual_prompt}</p></div><div className="rounded-xl bg-secondary/35 p-3"><p className="text-[11px] text-muted-foreground">镜头语言</p><p className="mt-1 leading-6 text-foreground">{shot.camera} · {shot.framing} · {shot.movement}</p><p className="mt-1 font-mono text-xs text-muted-foreground">约 {shot.duration_hint.toFixed(1)}s</p></div></div>{shot.dialogue && <div className="border-l-2 border-primary/40 pl-3 text-sm leading-6 text-foreground">“{shot.dialogue}”</div>}<div className="flex flex-wrap items-center gap-2 border-t border-border/50 pt-3"><span className="text-[11px] text-muted-foreground">continuity</span>{Object.entries(shot.continuity_metadata || {}).filter(([, value]) => value).map(([key, value]) => <Badge key={key} variant="secondary" className="font-mono text-[10px]">{key}: {String(value)}</Badge>)}<span className="ml-auto max-w-full truncate font-mono text-[10px] text-muted-foreground" title={shot.prompt_anchor}>{shot.prompt_anchor}</span></div></CardContent>
+      <CardHeader className="pb-3"><div className="flex items-start justify-between gap-3"><div><div className="mb-1 flex items-center gap-2 font-mono text-[10px] uppercase tracking-wider text-primary"><Film className="h-3 w-3" aria-hidden="true" /> Shot {String(shot.sequence_index).padStart(2, "0")}</div><CardTitle className="text-sm">{shot.action}</CardTitle></div><div className="flex items-center gap-2"><Button type="button" size="sm" variant="ghost" className="gap-1.5" onClick={() => setEditing((value) => !value)}><Pencil className="h-3.5 w-3.5" aria-hidden="true" />{editing ? "收起" : "编辑"}</Button><ApprovalAction status={shot.approval_status} pending={approvalMutation.isPending} disabled={blocked || editing} onApprove={() => approvalMutation.mutate()} label={blocked ? "先确认场景" : "确认 Shot"} /></div></div></CardHeader>
+      <CardContent className="space-y-3 text-sm">
+        {editing ? (
+          <div className="space-y-3">
+            <Field label="动作" htmlFor={`shot-action-${shot.id}`} required><Textarea id={`shot-action-${shot.id}`} value={draft.action} onChange={(event) => setDraft((current) => ({ ...current, action: event.target.value }))} /></Field>
+            <Field label="画面提示" htmlFor={`shot-visual-${shot.id}`} required><Textarea id={`shot-visual-${shot.id}`} value={draft.visual_prompt} onChange={(event) => setDraft((current) => ({ ...current, visual_prompt: event.target.value }))} className="min-h-24" /></Field>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <Field label="机位" htmlFor={`shot-camera-${shot.id}`}><Input id={`shot-camera-${shot.id}`} value={draft.camera} onChange={(event) => setDraft((current) => ({ ...current, camera: event.target.value }))} /></Field>
+              <Field label="景别" htmlFor={`shot-framing-${shot.id}`}><Input id={`shot-framing-${shot.id}`} value={draft.framing} onChange={(event) => setDraft((current) => ({ ...current, framing: event.target.value }))} /></Field>
+              <Field label="运镜" htmlFor={`shot-movement-${shot.id}`}><Input id={`shot-movement-${shot.id}`} value={draft.movement} onChange={(event) => setDraft((current) => ({ ...current, movement: event.target.value }))} /></Field>
+              <Field label="时长（秒）" htmlFor={`shot-duration-${shot.id}`} required><Input id={`shot-duration-${shot.id}`} type="number" min="0.1" max="60" step="0.1" value={draft.duration_hint} onChange={(event) => setDraft((current) => ({ ...current, duration_hint: event.target.value }))} /></Field>
+            </div>
+            <Field label="对白" htmlFor={`shot-dialogue-${shot.id}`} description="每行一条：角色：台词；旁白也可以单独写一行。可用“角色（低声）@起始提示：台词”。">
+              <Textarea id={`shot-dialogue-${shot.id}`} value={draft.dialogue} onChange={(event) => setDraft((current) => ({ ...current, dialogue: event.target.value }))} className="min-h-28" placeholder="林夏：又是凌晨两点。\n旁白：她没有关掉那盏灯。" />
+            </Field>
+            <div className="flex justify-end gap-2 border-t border-border/50 pt-3"><Button type="button" size="sm" variant="ghost" className="gap-1.5" onClick={() => setEditing(false)} disabled={saveMutation.isPending}><X className="h-3.5 w-3.5" aria-hidden="true" />取消</Button><Button type="button" size="sm" className="gap-1.5" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending || !draft.action.trim() || !draft.visual_prompt.trim() || !Number.isFinite(Number(draft.duration_hint)) || Number(draft.duration_hint) <= 0}><Save className="h-3.5 w-3.5" aria-hidden="true" />{saveMutation.isPending ? "保存中…" : "保存 Shot"}</Button></div>
+          </div>
+        ) : (
+          <><div className="grid gap-3 md:grid-cols-2"><div className="rounded-xl bg-secondary/35 p-3"><p className="text-[11px] text-muted-foreground">画面提示</p><p className="mt-1 leading-6 text-foreground">{shot.visual_prompt}</p></div><div className="rounded-xl bg-secondary/35 p-3"><p className="text-[11px] text-muted-foreground">镜头语言</p><p className="mt-1 leading-6 text-foreground">{shot.camera} · {shot.framing} · {shot.movement}</p><p className="mt-1 font-mono text-xs text-muted-foreground">约 {shot.duration_hint.toFixed(1)}s</p></div></div>{shot.dialogue_lines.length > 0 ? <div className="border-l-2 border-primary/40 pl-3 text-sm leading-6 text-foreground">“{shot.dialogue_lines.map((line) => `${line.speaker_name}: ${line.text}`).join(" ")}”</div> : <p className="rounded-xl border border-dashed border-border/70 px-3 py-2 text-xs text-muted-foreground">暂无对白；该 Shot 将保留画面时长并使用无对白音轨。</p>}<div className="flex flex-wrap items-center gap-2 border-t border-border/50 pt-3"><span className="text-[11px] text-muted-foreground">continuity</span>{Object.entries(shot.continuity_metadata || {}).filter(([, value]) => value).map(([key, value]) => <Badge key={key} variant="secondary" className="font-mono text-[10px]">{key}: {String(value)}</Badge>)}<span className="ml-auto max-w-full truncate font-mono text-[10px] text-muted-foreground" title={shot.prompt_anchor}>{shot.prompt_anchor}</span></div></>
+        )}
+      </CardContent>
     </Card>
   );
 }

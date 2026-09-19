@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from src.api.dependencies import get_generation_service, request_session_factory
+from src.api.task_presenter import task_detail_response
 from src.schemas.common import APIResponse
 from src.schemas.generation import (
     PlatformMetadata,
@@ -99,30 +100,7 @@ async def apply_script_to_task(
 ):
     await task_manager.run_inline(task_id, {"single_step": "script", "script": script.model_dump(), "force_step": "script"}, session_factory=request_session_factory(service.session))
     task = await service.task_repo.get_by_id(task_id)
-    return APIResponse(
-        data=TaskDetailResponse(
-            id=task.id,
-            project_id=task.project_id,
-            product_id=task.product_id,
-            creative_angle=task.creative_angle,
-            title=task.title,
-            description=task.description,
-            job_type=task.job_type,
-            production_mode=task.production_mode,
-            status=task.status,
-            progress_percentage=task.progress_percentage,
-            input_payload=task.input_payload,
-            result_payload=task.result_payload,
-            error_message=task.error_message,
-            scenes_count=len(task.scenes) if task.scenes else 0,
-            scenes=[SceneResponse.model_validate(s) for s in task.scenes],
-            started_at=task.started_at,
-            completed_at=task.completed_at,
-            created_at=task.created_at,
-            updated_at=task.updated_at,
-            scheduled_publish=(task.input_payload or {}).get("scheduled_publish"),
-        )
-    )
+    return APIResponse(data=task_detail_response(task))
 
 
 @router.post("/scenes/{scene_id}/tts", response_model=APIResponse[SceneResponse])

@@ -152,17 +152,10 @@ class DurableProductionPipeline(BaseProductionPipeline):
         await self.db.commit()
         artifacts = await self.runtime.outputs(run)
         await event_broadcaster.broadcast(event, {'task_id': self.job.task_id, 'job_id': self.job.id,
-            'stage': run.step_key, 'step': run.step_key, 'step_run_id': run.id, 'unit_key': run.unit_key,
+            'stage': run.step_key, 'step_run_id': run.id, 'unit_key': run.unit_key,
             'attempt': run.attempt, 'status': run.status, 'progress': db_job.progress,
             'artifact_ids': [a.id for a in artifacts]},
             task_id=self.job.task_id, job_id=self.job.id, lease_token=self.runtime.lease_token)
-        # Preserve the older task-event vocabulary used by the live task page
-        # while the durable step events remain the source of truth.
-        await event_broadcaster.broadcast('job.progress', {
-            'task_id': self.job.task_id, 'job_id': self.job.id, 'stage': run.step_key,
-            'step': run.step_key, 'unit_key': run.unit_key, 'status': run.status,
-            'progress': db_job.progress, 'artifact_ids': [a.id for a in artifacts],
-        }, task_id=self.job.task_id, job_id=self.job.id, lease_token=self.runtime.lease_token)
         if event == 'step.completed' and run.unit_key:
             await event_broadcaster.broadcast('scene.status_changed', {
                 'task_id': self.job.task_id, 'job_id': self.job.id, 'scene_id': run.unit_key,
@@ -280,7 +273,7 @@ class DurableProductionPipeline(BaseProductionPipeline):
             token = str(uuid4())
             self.job.lease_token = token
             self.owns_job = True
-            db_job = WorkflowJobModel(id=self.job.id, task_id=self.job.task_id, job_type=self.job.type,
+            db_job = WorkflowJobModel(id=self.job.id, task_id=self.job.task_id, job_type=self.job.job_type,
                 status='running', lease_token=token, params=self.params)
             self.db.add(db_job)
             await self.db.commit()

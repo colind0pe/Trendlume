@@ -73,7 +73,7 @@ class FakeAsyncClient:
 
 
 @pytest.mark.asyncio
-async def test_old_default_workflow_retries_with_compatible_image_workflow(monkeypatch):
+async def test_implicit_default_workflow_retries_with_compatible_image_workflow(monkeypatch):
     FakeAsyncClient.instances.clear()
     FakeAsyncClient.always_fail_validation = False
 
@@ -113,3 +113,16 @@ async def test_explicit_or_custom_workflow_does_not_use_compatibility_fallback(m
                 workflow=workflow,
             )
         assert len(FakeAsyncClient.instances[-1].posts) == 1
+
+
+def test_text_to_image_workflow_rejects_an_explicit_reference_image():
+    provider = ComfyUIImageProvider(default_workflow="image/image_flux.json")
+
+    with pytest.raises(ProviderException, match="LoadImage"):
+        provider._load_workflow_graph(
+            None,
+            "一只小狗",
+            720,
+            1280,
+            reference_image_name="reference.png",
+        )

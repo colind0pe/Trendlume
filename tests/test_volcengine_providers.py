@@ -5,9 +5,10 @@ import json
 
 import httpx
 import pytest
+
 from src.core.exceptions import ProviderException
-from src.providers.image.volcengine_image import VolcengineImageProvider
 from src.providers.image.style_presets import IMAGE_STYLE_PRESETS
+from src.providers.image.volcengine_image import VolcengineImageProvider
 from src.providers.tts.volcengine_tts import VolcengineTTSProvider
 from src.providers.video.volcengine_video import VolcengineVideoProvider
 

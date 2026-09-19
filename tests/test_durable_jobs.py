@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
 from src.core.database import Base
 from src.domain.enums import JobStatus, JobType, TaskStatus
 from src.models.project import ProjectModel
@@ -163,7 +164,7 @@ async def test_job_events_are_replayable(durable_sessions):
     event_broadcaster.bind_job("t_events", "job_events", sessions)
     queue = event_broadcaster.subscribe(task_id="t_events")
     await event_broadcaster.broadcast(
-        "job.progress",
+        "step.completed",
         {
             "task_id": "t_events",
             "job_id": "job_events",
@@ -176,7 +177,7 @@ async def test_job_events_are_replayable(durable_sessions):
         job_id="job_events",
     )
     await event_broadcaster.broadcast(
-        "job.progress",
+        "step.completed",
         {
             "task_id": "t_events",
             "job_id": "job_events",
@@ -190,7 +191,7 @@ async def test_job_events_are_replayable(durable_sessions):
     )
     live_message = await asyncio.wait_for(queue.get(), timeout=1)
     live_envelope = json.loads(live_message.split("data:", 1)[1].strip())
-    assert live_envelope["event"] == "job.progress"
+    assert live_envelope["event"] == "step.completed"
     assert isinstance(live_envelope["event_id"], int)
     assert live_envelope["created_at"]
     assert live_envelope["data"]["task_id"] == "t_events"

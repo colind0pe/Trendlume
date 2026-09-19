@@ -155,11 +155,7 @@ class CommerceProductionPipeline(DurableProductionPipeline):
             source_refs=source_refs,
             production_metadata={
                 "commerce": {
-                    "role": role.value,
-                    "product_id": product.id,
                     "asset_locked": asset_locked,
-                    "fact_refs": source_refs,
-                    "claim_refs": claim_refs,
                 },
                 "media": {
                     "locked": asset_locked,
@@ -216,8 +212,6 @@ class CommerceProductionPipeline(DurableProductionPipeline):
                     source_refs=source_refs,
                     production_metadata={
                         "commerce": {
-                            "role": role.value,
-                            "product_id": product.id,
                             "asset_locked": asset_locked,
                             "asset_strategy": item.asset_strategy,
                             "deterministic_transform": (
@@ -225,8 +219,6 @@ class CommerceProductionPipeline(DurableProductionPipeline):
                                 if asset_locked
                                 else "deterministic_layout"
                             ),
-                            "fact_refs": source_refs,
-                            "claim_refs": claim_refs,
                         },
                         "media": {
                             "locked": asset_locked,
@@ -267,14 +259,14 @@ class CommerceProductionPipeline(DurableProductionPipeline):
         prompt_selection: dict[str, Any],
     ) -> None:
         del project
-        product_id = task.product_id or payload.get("product_id")
+        product_id = task.product_id
         if not product_id:
             raise ValidationException("Commerce 生产任务缺少 product_id。")
         product = await ProductService(self.db, storage=self.storage).get_product(product_id)
         truth = self._truth(product)
         claims = self._claims(truth)
         evidence_refs = self._evidence_refs(claims)
-        plan_id = task.creative_plan_id or payload.get("creative_plan_id")
+        plan_id = task.creative_plan_id
         plan = None
         if plan_id:
             plan = await self.db.get(CreativePlanModel, str(plan_id))
@@ -282,7 +274,7 @@ class CommerceProductionPipeline(DurableProductionPipeline):
                 raise ValidationException("所选 Creative Plan 不属于当前商品。")
             if plan.status not in {"selected", "variant"}:
                 raise ValidationException("请先选择 Creative Plan，再进入 storyboard/media 生产。")
-        angle = str(task.creative_angle or payload.get("creative_angle") or CreativeAngle.DIRECT.value)
+        angle = str(task.creative_angle or CreativeAngle.DIRECT.value)
         if plan:
             angle = plan.angle
         try:
@@ -488,22 +480,8 @@ class CommerceProductionPipeline(DurableProductionPipeline):
         fresh_task = await TaskRepository(self.db).get_by_id(task_id)
         fresh_task.input_payload = {
             **(fresh_task.input_payload or {}),
-            "product_id": product.id,
-            "creative_angle": angle,
-            "creative_plan_id": plan.id if plan else None,
             "creative_plan_snapshot": plan_snapshot,
             "fact_snapshot": plan.fact_snapshot if plan else None,
-            "commerce": {
-                "product_id": product.id,
-                "creative_plan_id": plan.id if plan else None,
-                "variant_label": plan.variant_label if plan else None,
-                "truth_sheet_version": truth.version,
-                "creative_angle": angle,
-                "locked_product_asset_id": hero.id if hero else None,
-                "locked_asset_id": hero.asset_id if hero else None,
-                "claim_ids": strategy["claim_ids"],
-                "unresolved_fields": truth.unresolved_fields,
-            },
             "_commerce_prepared": True,
         }
         await self.save()

@@ -73,6 +73,8 @@ class DramaSceneUpdate(BaseModel):
 
 class DramaShotUpdate(BaseModel):
     action: str | None = Field(default=None, max_length=10_000)
+    # Human-friendly editor payload; each non-empty line becomes one
+    # DialogueLine so audio and subtitle timing stay line-addressable.
     dialogue: str | None = Field(default=None, max_length=10_000)
     character_ids: list[str] | None = Field(default=None, max_length=30)
     location_id: str | None = Field(default=None, max_length=36)
@@ -149,7 +151,6 @@ class DramaShotResponse(BaseModel):
     scene_id: str
     sequence_index: int
     action: str
-    dialogue: str
     character_ids: list[str]
     characters: list[str] = Field(default_factory=list)
     location_id: str | None = None
@@ -255,7 +256,7 @@ class DramaProductionStartRequest(BaseModel):
     """Explicit settings for the post-approval Drama production task."""
 
     episode_id: str | None = Field(default=None, max_length=36)
-    visual_mode: Literal["image", "video"] = "image"
+    content_mode: Literal["generated_image", "generated_video"] = "generated_image"
     template_id: str = Field(default="image_gallery_matted", min_length=1, max_length=120)
     template_params: dict[str, Any] = Field(default_factory=dict)
     voice_id: str | None = Field(default=None, max_length=120)
@@ -311,6 +312,10 @@ class DramaProductionResponse(BaseModel):
     qa_after: list[DramaProductionFinding] = Field(default_factory=list)
     final_video_asset_id: str | None = None
     final_video_url: str | None = None
+    cover_asset_id: str | None = None
+    cover_url: str | None = None
     subtitle_artifact_ids: list[str] = Field(default_factory=list)
+    episode_metadata_artifact_id: str | None = None
+    render_manifest_artifact_id: str | None = None
     total_duration_seconds: float | None = None
     error_message: str | None = None

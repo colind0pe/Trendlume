@@ -28,9 +28,17 @@ export type PublishJobStatus =
   | "cancelled"
   | "missed"
   | "uncertain";
-export type VisualMode = "image" | "video";
-export type ContentMode = "generated_image" | "generated_video" | "online_asset" | "static" | "uploaded_asset";
-export type ProductionMode = "knowledge" | "commerce" | "drama";
+export const CONTENT_MODE_VALUES = [
+  "generated_image",
+  "generated_video",
+  "online_asset",
+  "static",
+  "uploaded_asset",
+] as const;
+export type ContentMode = (typeof CONTENT_MODE_VALUES)[number];
+export type DramaContentMode = Extract<ContentMode, "generated_image" | "generated_video">;
+export const PRODUCTION_MODE_VALUES = ["knowledge", "commerce", "drama"] as const;
+export type ProductionMode = (typeof PRODUCTION_MODE_VALUES)[number];
 export type DramaSourceType = "idea" | "script";
 export type DramaStage = "story" | "bible" | "assets" | "episode" | "storyboard" | "approval";
 export type DramaWorkflowStatus = "draft" | "in_progress" | "paused" | "completed" | "failed";
@@ -404,7 +412,6 @@ export interface DramaShot {
   scene_id: string;
   sequence_index: number;
   action: string;
-  dialogue: string;
   character_ids: string[];
   characters: string[];
   location_id?: string | null;
@@ -511,7 +518,7 @@ export type DramaProductionStage = "media" | "audio" | "composition";
 
 export interface DramaProductionStartRequest {
   episode_id?: string | null;
-  visual_mode?: "image" | "video";
+  content_mode?: DramaContentMode;
   template_id?: string;
   template_params?: Record<string, any>;
   voice_id?: string | null;
@@ -563,7 +570,11 @@ export interface DramaProductionStatus {
   qa_after: DramaProductionFinding[];
   final_video_asset_id?: string | null;
   final_video_url?: string | null;
+  cover_asset_id?: string | null;
+  cover_url?: string | null;
   subtitle_artifact_ids: string[];
+  episode_metadata_artifact_id?: string | null;
+  render_manifest_artifact_id?: string | null;
   total_duration_seconds?: number | null;
   error_message?: string | null;
 }
@@ -645,6 +656,7 @@ export interface Task {
   updated_at: string;
   active_job?: WorkflowJob | null;
   current_stage?: string | null;
+  current_stage_label?: string | null;
   resume_count?: number;
   last_heartbeat_at?: string | null;
   can_resume?: boolean;

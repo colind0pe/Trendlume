@@ -10,11 +10,11 @@ from src.domain.enums import JobStatus, JobType
 class Job:
     id: str = field(default_factory=lambda: f"job_{uuid.uuid4().hex[:12]}")
     task_id: str = ""
-    type: str = JobType.FULL_PIPELINE.value
+    job_type: str = JobType.FULL_PIPELINE.value
     status: JobStatus = JobStatus.PENDING
     progress: int = 0
-    current_step: str = "Pending"
-    error: str | None = None
+    current_stage: str = "queued"
+    error_message: str | None = None
     lease_token: str | None = None
     retry_count: int = 0
     max_retries: int = 3
@@ -33,14 +33,11 @@ class Job:
         return {
             "id": self.id,
             "task_id": self.task_id,
-            "job_type": self.type,
-            "type": self.type,
+            "job_type": self.job_type,
             "status": self.status.value if isinstance(self.status, JobStatus) else str(self.status),
             "progress": self.progress,
-            "current_step": self.current_step,
-            "current_stage": self.current_step,
-            "error": self.error,
-            "error_message": self.error,
+            "current_stage": self.current_stage,
+            "error_message": self.error_message,
             "retry_count": self.retry_count,
             "max_retries": self.max_retries,
             "available_at": self.available_at.isoformat() if self.available_at else None,

@@ -4,6 +4,8 @@ from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
+from tests.mocks import MockPublishingProvider
+
 from src.domain.enums import (
     AssetType,
     JobType,
@@ -36,8 +38,6 @@ from src.schemas.publishing import (
 from src.services.asset_service import AssetService
 from src.services.publishing_service import PublishingService
 from src.storage.local_storage import LocalStorageService
-
-from tests.mocks import MockPublishingProvider
 
 
 @pytest.mark.asyncio

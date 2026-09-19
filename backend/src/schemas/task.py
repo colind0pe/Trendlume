@@ -33,7 +33,7 @@ class TaskCreate(BaseModel):
     bgm_enabled: bool = True
     bgm_volume: float = Field(default=0.20, ge=0.0, le=0.5)
     voice_id: str | None = None
-    voice_speed: float = Field(default=1.0, ge=0.5, le=2.0)
+    speed: float = Field(default=1.0, ge=0.5, le=2.0)
     content_mode: ContentMode | None = None
     target_scene_count: int = Field(default=8, ge=8, le=20, description="目标分镜数量")
     scheduled_publish: ScheduledPublishConfig | None = None
@@ -98,6 +98,7 @@ class TaskResponse(BaseModel):
     updated_at: datetime
     active_job: WorkflowJobResponse | None = None
     current_stage: str | None = None
+    current_stage_label: str | None = None
     resume_count: int = 0
     last_heartbeat_at: datetime | None = None
     can_resume: bool = False

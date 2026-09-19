@@ -419,7 +419,7 @@ function TrendDetailSheet({
     if (createdProposal && !localProposal) {
       const options = createdProposal.generation_options || {};
       const count = Number(options.target_scene_count ?? 8);
-      const speed = Number(options.voice_speed ?? options.speed ?? 1.0);
+      const speed = Number(options.speed ?? 1.0);
       const volume = Number(options.bgm_volume ?? 0.2);
       const savedVoiceId = typeof options.voice_id === "string"
         ? options.voice_id

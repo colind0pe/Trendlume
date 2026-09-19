@@ -95,7 +95,10 @@ def _adapt_shot(bible: DramaBibleModel, shot: DramaShotModel, sequence: int) -> 
         f"reference_asset_ids={','.join(location_consistency['reference_asset_ids']) or 'none'}; "
         f"deterministic_anchor={location_consistency['prompt_anchor']}"
     )
-    narration = shot.dialogue.strip() or shot.action.strip()
+    narration = "\n".join(
+        f"{line.speaker_name}: {line.text}" if line.speaker_name != "旁白" else line.text
+        for line in shot.dialogue_lines
+    ).strip() or shot.action.strip()
     anchor_line = f"Deterministic continuity anchor: {shot.prompt_anchor}."
     prompt_parts = [shot.visual_prompt.strip(), character_prompt, location_prompt]
     if bible.visual_style.strip():

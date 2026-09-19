@@ -14,12 +14,14 @@ import {
   RefreshCcw,
   RotateCcw,
   ShieldCheck,
+  SlidersHorizontal,
   Video,
 } from "lucide-react";
 
 import { api } from "@/lib/api-client";
 import type {
   DramaDetail,
+  DramaContentMode,
   DramaProductionFinding,
   DramaProductionStage,
   DramaProductionStatus,
@@ -29,6 +31,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, Select } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
 import { SectionHeader } from "@/components/ui/page-shell";
 import { StatusBadge, type StatusTone } from "@/components/ui/status-badge";
 import { useToast } from "@/components/ui/toast";
@@ -184,7 +187,11 @@ export function DramaProductionPanel({ detail }: { detail: DramaDetail }) {
   const queryClient = useQueryClient();
   const approvedEpisodes = detail.episodes.filter((episode) => episode.approval_status === "approved");
   const [episodeId, setEpisodeId] = React.useState(approvedEpisodes[0]?.id || detail.episodes[0]?.id || "");
-  const [visualMode, setVisualMode] = React.useState<"image" | "video">("image");
+  const [contentMode, setContentMode] = React.useState<DramaContentMode>("generated_image");
+  const [voiceId, setVoiceId] = React.useState("");
+  const [speed, setSpeed] = React.useState("1");
+  const [imageWorkflowId, setImageWorkflowId] = React.useState("");
+  const [videoWorkflowId, setVideoWorkflowId] = React.useState("");
   const [retryingShot, setRetryingShot] = React.useState<string | null>(null);
 
   React.useEffect(() => {
@@ -199,13 +206,26 @@ export function DramaProductionPanel({ detail }: { detail: DramaDetail }) {
     enabled: detail.approval_status === "approved" && Boolean(episodeId),
     refetchInterval: (query) => (ACTIVE_STATUSES.has(query.state.data?.status || "") ? 2500 : false),
   });
+  const voicesQuery = useQuery({
+    queryKey: ["provider-voices", "active"],
+    queryFn: () => api.listVoices(true),
+    enabled: detail.approval_status === "approved",
+    staleTime: 5 * 60 * 1000,
+  });
 
   const updateStatus = React.useCallback((next: DramaProductionStatus) => {
     queryClient.setQueryData(["drama-production", detail.id, next.episode_id], next);
   }, [detail.id, queryClient]);
 
   const startMutation = useMutation({
-    mutationFn: () => api.startDramaProduction(detail.id, { episode_id: episodeId, visual_mode: visualMode }),
+    mutationFn: () => api.startDramaProduction(detail.id, {
+      episode_id: episodeId,
+      content_mode: contentMode,
+      voice_id: voiceId.trim() || null,
+      speed: Number(speed) || 1,
+      image_workflow_id: imageWorkflowId.trim() || null,
+      video_workflow_id: videoWorkflowId.trim() || null,
+    }),
     onSuccess: (next) => { updateStatus(next); toast("Episode production 已启动，状态会按 Shot 更新。", "success"); },
     onError: (error: Error) => toast(`启动制作失败：${error.message}`, "error"),
   });
@@ -257,10 +277,10 @@ export function DramaProductionPanel({ detail }: { detail: DramaDetail }) {
                 {approvedEpisodes.map((episode) => <option key={episode.id} value={episode.id}>EP {String(episode.episode_number).padStart(2, "0")} · {episode.title}</option>)}
               </Select>
             </Field>
-            <Field label="画面来源" htmlFor="drama-production-visual-mode" description="复用当前 Image / Video Provider。">
-              <Select id="drama-production-visual-mode" value={visualMode} onChange={(event) => setVisualMode(event.target.value as "image" | "video")} disabled={busy}>
-                <option value="image">Image → clip</option>
-                <option value="video">Video Provider</option>
+            <Field label="画面来源" htmlFor="drama-production-content-mode" description="复用当前 Image / Video Provider。">
+              <Select id="drama-production-content-mode" value={contentMode} onChange={(event) => setContentMode(event.target.value as "generated_image" | "generated_video")} disabled={busy}>
+                <option value="generated_image">Image → clip</option>
+                <option value="generated_video">Video Provider</option>
               </Select>
             </Field>
             <div className="flex items-end">
@@ -270,7 +290,29 @@ export function DramaProductionPanel({ detail }: { detail: DramaDetail }) {
                 <Button type="button" className="w-full gap-2" disabled={!canStart || busy} onClick={() => startMutation.mutate()}>{startMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Play className="h-4 w-4" aria-hidden="true" />}{status?.task_id ? "重新运行未完成部分" : "开始 Episode production"}</Button>
               )}
             </div>
+            </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="默认音色 ID" htmlFor="drama-production-voice" description="仅用于旁白或未绑定角色音色的对白；角色自己的 voice_id 优先。">
+              <Input id="drama-production-voice" list="drama-production-voices" value={voiceId} onChange={(event) => setVoiceId(event.target.value)} placeholder="例如 zh-CN-YunxiNeural" disabled={busy} />
+              <datalist id="drama-production-voices">
+                {voicesQuery.data?.map((voice) => <option key={voice.id} value={voice.id} label={`${voice.name} · ${voice.locale}`} />)}
+              </datalist>
+            </Field>
+            <Field label="语速" htmlFor="drama-production-speed" description="0.5–2.0；实际片段时长以生成音频探测结果为准。">
+              <Input id="drama-production-speed" type="number" min="0.5" max="2" step="0.05" value={speed} onChange={(event) => setSpeed(event.target.value)} disabled={busy} />
+            </Field>
           </div>
+          <details className="rounded-xl border border-border/60 bg-secondary/20 px-3 py-2">
+            <summary className="flex cursor-pointer list-none items-center gap-2 text-xs font-medium text-foreground"><SlidersHorizontal className="h-3.5 w-3.5 text-primary" aria-hidden="true" />高级 Provider / 工作流设置</summary>
+            <div className="mt-3 grid gap-3 border-t border-border/50 pt-3 sm:grid-cols-2">
+              <Field label="Image workflow ID" htmlFor="drama-production-image-workflow" description="参考图需要选择包含 LoadImage 的 img2img 工作流。">
+                <Input id="drama-production-image-workflow" value={imageWorkflowId} onChange={(event) => setImageWorkflowId(event.target.value)} placeholder="留空使用 Provider 默认工作流" disabled={busy} />
+              </Field>
+              <Field label="Video workflow ID" htmlFor="drama-production-video-workflow" description="首帧参考图需要选择 image-to-video 工作流。">
+                <Input id="drama-production-video-workflow" value={videoWorkflowId} onChange={(event) => setVideoWorkflowId(event.target.value)} placeholder="留空使用 Provider 默认工作流" disabled={busy} />
+              </Field>
+            </div>
+          </details>
           {productionQuery.isError && <p role="alert" className="rounded-lg border border-destructive/25 bg-destructive/[0.04] px-3 py-2 text-xs text-destructive">无法读取 production 状态：{(productionQuery.error as Error).message}。可以稍后刷新或重新启动 Episode。</p>}
           {status && (
             <div className="space-y-3">
@@ -286,7 +328,10 @@ export function DramaProductionPanel({ detail }: { detail: DramaDetail }) {
       {status?.final_video_url && (
         <Card className="rounded-2xl border-success/25">
           <CardHeader className="pb-3"><div className="flex items-center gap-2"><CheckCircle2 className="h-5 w-5 text-success" aria-hidden="true" /><CardTitle>Episode final preview</CardTitle></div><CardDescription>{status.total_duration_seconds ? `${status.total_duration_seconds.toFixed(1)}s · ` : ""}逐 Shot compose 后 concatenate 的最终视频。</CardDescription></CardHeader>
-          <CardContent><video controls preload="metadata" className="aspect-video w-full rounded-xl bg-black" src={status.final_video_url} aria-label="Episode final preview" /></CardContent>
+          <CardContent className="grid gap-4 sm:grid-cols-[150px_minmax(0,1fr)]">
+            {status.cover_url && <div className="overflow-hidden rounded-xl border border-border/60 bg-secondary/30"><img src={status.cover_url} alt="Episode 封面" loading="lazy" className="aspect-[9/16] h-full w-full object-cover" /></div>}
+            <video controls preload="metadata" className="aspect-video w-full rounded-xl bg-black" src={status.final_video_url} aria-label="Episode final preview" />
+          </CardContent>
         </Card>
       )}
 

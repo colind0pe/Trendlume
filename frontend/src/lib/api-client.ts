@@ -517,7 +517,7 @@ export const api = {
       bgm_enabled?: boolean;
       bgm_volume?: number;
       voice_id?: string | null;
-      voice_speed?: number;
+      speed?: number;
       content_mode?: ContentMode;
       material_provider_id?: string | null;
       template_params?: Record<string, any>;

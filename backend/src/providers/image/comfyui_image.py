@@ -1,6 +1,6 @@
 import asyncio
 import json
-import random
+import mimetypes
 import uuid
 from pathlib import Path
 
@@ -79,91 +79,91 @@ class ComfyUIImageProvider:
             return f"{summary}；{'；'.join(details)}"
         return summary or raw_text[:1000]
 
-    def _load_workflow_graph(self, workflow_name: str | None, prompt: str, width: int, height: int) -> dict:
-        """Load workflow JSON from workflows directory or build default standard graph"""
+    def _load_workflow_graph(
+        self,
+        workflow_name: str | None,
+        prompt: str,
+        width: int,
+        height: int,
+        reference_image_name: str | None = None,
+    ) -> dict:
+        """Load and parameterize one canonical workflow catalog entry."""
         wf_target = workflow_name or self.default_workflow
         workflows_dir = Path(__file__).resolve().parent.parent.parent.parent / "workflows"
         wf_path = workflow_service.resolve_workflow_file(wf_target, workflows_dir)
+        if wf_path is None:
+            raise ProviderException("ComfyUI", f"工作流不存在或不是 canonical catalog id: {wf_target}")
+        try:
+            with open(wf_path, encoding="utf-8") as f:
+                graph = json.load(f)
+        except (OSError, TypeError, ValueError) as exc:
+            raise ProviderException("ComfyUI", f"读取工作流失败 ({wf_target}): {exc}") from exc
+        if not isinstance(graph, dict):
+            raise ProviderException("ComfyUI", f"工作流必须是节点对象 ({wf_target})")
 
-        if wf_path and wf_path.exists():
-            try:
-                with open(wf_path, encoding="utf-8") as f:
-                    graph = json.load(f)
+        reference_bound = False
+        # Inject prompt, dimensions, and an optional uploaded reference into
+        # the canonical graph. Reference images are never silently ignored.
+        for node_id, node in graph.items():
+            if not isinstance(node, dict):
+                continue
+            inputs = node.get("inputs", {})
+            class_type = node.get("class_type", "")
+            title = node.get("_meta", {}).get("title", "")
 
-                # Inject prompt into prompt node if found
-                for node_id, node in graph.items():
-                    if not isinstance(node, dict):
-                        continue
-                    inputs = node.get("inputs", {})
-                    class_type = node.get("class_type", "")
-                    title = node.get("_meta", {}).get("title", "")
+            if "$prompt" in title or class_type == "CLIPTextEncode" or "prompt" in str(title).lower():
+                if "text" in inputs and isinstance(inputs["text"], str):
+                    inputs["text"] = prompt
+                elif "value" in inputs and isinstance(inputs["value"], str):
+                    inputs["value"] = prompt
 
-                    if "$prompt" in title or class_type == "CLIPTextEncode" or "prompt" in str(title).lower():
-                        if "text" in inputs and isinstance(inputs["text"], str):
-                            inputs["text"] = prompt
-                        elif "value" in inputs and isinstance(inputs["value"], str):
-                            inputs["value"] = prompt
+            if class_type in {"EmptyLatentImage", "EmptySD3LatentImage"}:
+                if "width" in inputs and isinstance(inputs["width"], (int, float)):
+                    inputs["width"] = width
+                if "height" in inputs and isinstance(inputs["height"], (int, float)):
+                    inputs["height"] = height
 
-                    if class_type in {"EmptyLatentImage", "EmptySD3LatentImage"}:
-                        if "width" in inputs and isinstance(inputs["width"], (int, float)):
-                            inputs["width"] = width
-                        if "height" in inputs and isinstance(inputs["height"], (int, float)):
-                            inputs["height"] = height
+            if reference_image_name and class_type in {"LoadImage", "LoadImageOutput"}:
+                if "image" in inputs:
+                    inputs["image"] = reference_image_name
+                    reference_bound = True
 
-                logger.info(f"Loaded ComfyUI workflow graph from {wf_path}")
-                return graph
-            except Exception as e:
-                logger.warning(f"Failed to parse custom workflow {wf_path}, fallback to default: {e}")
+        if reference_image_name and not reference_bound:
+            raise ProviderException(
+                "ComfyUI",
+                f"工作流 {wf_target} 不包含可绑定参考图的 LoadImage 节点；"
+                "请改用 img2img 工作流，不能静默退化为文生图。",
+            )
 
-        # Standard Fallback Prompt Graph
-        return {
-            "3": {
-                "class_type": "KSampler",
-                "inputs": {
-                    "cfg": 8,
-                    "denoise": 1,
-                    "latent_image": ["5", 0],
-                    "model": ["4", 0],
-                    "negative": ["7", 0],
-                    "positive": ["6", 0],
-                    "sampler_name": "euler",
-                    "scheduler": "normal",
-                    "seed": random.randint(1, 10**15),
-                    "steps": 20,
-                },
-            },
-            "4": {
-                "class_type": "CheckpointLoaderSimple",
-                "inputs": {"ckpt_name": "v1-5-pruned-emaonly.safetensors"},
-            },
-            "5": {
-                "class_type": "EmptyLatentImage",
-                "inputs": {
-                    "batch_size": 1,
-                    "height": height,
-                    "width": width,
-                },
-            },
-            "6": {
-                "class_type": "CLIPTextEncode",
-                "inputs": {"clip": ["4", 1], "text": prompt},
-            },
-            "7": {
-                "class_type": "CLIPTextEncode",
-                "inputs": {
-                    "clip": ["4", 1],
-                    "text": "low quality, blurry, distorted, watermark, text",
-                },
-            },
-            "8": {
-                "class_type": "VAEDecode",
-                "inputs": {"samples": ["3", 0], "vae": ["4", 2]},
-            },
-            "9": {
-                "class_type": "SaveImage",
-                "inputs": {"filename_prefix": "Trendlume", "images": ["8", 0]},
-            },
-        }
+        logger.info(f"Loaded ComfyUI workflow graph from {wf_path}")
+        return graph
+
+    async def _upload_reference_image(self, client: httpx.AsyncClient, path: str) -> str:
+        reference_path = Path(path)
+        if not reference_path.is_file():
+            raise ProviderException("ComfyUI", f"参考图不存在: {path}")
+        mime_type = mimetypes.guess_type(reference_path.name)[0] or "application/octet-stream"
+        try:
+            with reference_path.open("rb") as stream:
+                response = await client.post(
+                    f"{self.base_url}/upload/image",
+                    files={"image": (reference_path.name, stream, mime_type)},
+                    data={"type": "input", "overwrite": "true"},
+                )
+        except OSError as exc:
+            raise ProviderException("ComfyUI", f"读取参考图失败: {path}") from exc
+        if response.status_code != 200:
+            raise ProviderException(
+                "ComfyUI",
+                f"上传参考图失败 (Status {response.status_code}): {response.text[:500]}",
+            )
+        try:
+            name = response.json().get("name")
+        except ValueError as exc:
+            raise ProviderException("ComfyUI", "上传参考图响应不是有效 JSON。") from exc
+        if not isinstance(name, str) or not name:
+            raise ProviderException("ComfyUI", "上传参考图响应缺少文件名。")
+        return name
 
     async def generate_image(
         self,
@@ -173,6 +173,8 @@ class ComfyUIImageProvider:
         workflow: str | None = None,
         width: int | None = None,
         height: int | None = None,
+        reference_image_path: str | None = None,
+        continuity_input: dict | None = None,
     ) -> ImageResult:
         prompt = apply_image_style_preset(prompt, style_preset)
         if width is None or height is None or width <= 0 or height <= 0:
@@ -186,12 +188,23 @@ class ComfyUIImageProvider:
         else:
             width, height = int(width), int(height)
         client_id = f"trendlume_{uuid.uuid4().hex[:8]}"
-        prompt_graph = self._load_workflow_graph(workflow, prompt, width, height)
         uses_default_workflow = workflow is None
         headers = self._get_headers()
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout, headers=headers) as client:
+                reference_image_name = (
+                    await self._upload_reference_image(client, reference_image_path)
+                    if reference_image_path
+                    else None
+                )
+                prompt_graph = self._load_workflow_graph(
+                    workflow,
+                    prompt,
+                    width,
+                    height,
+                    reference_image_name=reference_image_name,
+                )
                 # 1. Queue prompt
                 queue_res = await client.post(
                     f"{self.base_url}/prompt",
@@ -207,7 +220,11 @@ class ComfyUIImageProvider:
                     # must fail visibly so the configured workflow is actually
                     # tested instead of being silently replaced.
                     fallback_graph = self._load_workflow_graph(
-                        COMFYUI_IMAGE_COMPATIBILITY_WORKFLOW, prompt, width, height
+                        COMFYUI_IMAGE_COMPATIBILITY_WORKFLOW,
+                        prompt,
+                        width,
+                        height,
+                        reference_image_name=reference_image_name,
                     )
                     fallback_res = await client.post(
                         f"{self.base_url}/prompt",

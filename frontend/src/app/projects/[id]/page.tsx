@@ -19,7 +19,7 @@ import {
   Clapperboard,
 } from "lucide-react";
 import { api } from "@/lib/api-client";
-import { useTaskEvents, type TaskEvent } from "@/lib/use-task-events";
+import { TASK_REFRESH_EVENTS, useTaskEvents, type TaskEvent } from "@/lib/use-task-events";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -42,7 +42,6 @@ import {
   isTaskActive,
   formatTemplateName,
   formatParamLabel,
-  formatStageName,
   PRODUCTION_MODE_SPECS,
 } from "@/lib/ui-constants";
 import {
@@ -53,25 +52,6 @@ const canonicalTemplateId = (id?: string | null) =>
   id || "image_gallery_matted";
 const assetFileUrl = (filePath: string) =>
   `/api/v1/assets/files/${filePath.split("/").map(encodeURIComponent).join("/")}`;
-const PROJECT_TASK_REFRESH_EVENTS = new Set([
-  "task.queued",
-  "task.started",
-  "task.completed",
-  "task.failed",
-  "task.cancelled",
-  "task_queued",
-  "task_started",
-  "task_completed",
-  "task_failed",
-  "task_cancelled",
-  "job.started",
-  "job.retrying",
-  "job.completed",
-  "job.failed",
-  "job.cancelled",
-  "job.uncertain",
-  "step.completed",
-]);
 export default function ProjectDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -162,7 +142,7 @@ export default function ProjectDetailPage() {
         queryClient.invalidateQueries({ queryKey: ["project-assets", projectId] });
         return;
       }
-      if (PROJECT_TASK_REFRESH_EVENTS.has(event.event)) {
+      if (TASK_REFRESH_EVENTS.has(event.event)) {
         refreshProjectTaskQueries();
       }
     },
@@ -419,7 +399,7 @@ export default function ProjectDetailPage() {
                     {isTaskActive(task) && (
                       <div className="space-y-1.5 rounded-lg border border-primary/20 bg-primary/5 p-2.5">
                         <div className="flex justify-between text-xs font-mono">
-                          <span className="text-foreground font-medium">{formatStageName(task.current_stage || task.active_job?.current_stage) || "排队中"}</span>
+                          <span className="text-foreground font-medium">{task.current_stage_label || task.current_stage || task.active_job?.current_stage || "排队中"}</span>
                           <span className="font-semibold text-primary">{task.active_job?.progress ?? task.progress_percentage}%</span>
                         </div>
                         <Progress value={task.active_job?.progress ?? task.progress_percentage} className="h-1.5" />

@@ -215,8 +215,8 @@ class TaskManager:
             status = JobStatus.PENDING
         def aware(value):
             return value.replace(tzinfo=UTC) if value and value.tzinfo is None else value
-        return Job(id=model.id, task_id=model.task_id, type=model.job_type, status=status, progress=model.progress,
-                   current_step=model.current_stage, error=model.error_message, retry_count=model.retry_count,
+        return Job(id=model.id, task_id=model.task_id, job_type=model.job_type, status=status, progress=model.progress,
+                   current_stage=model.current_stage, error_message=model.error_message, retry_count=model.retry_count,
                    lease_token=model.lease_token,
                    max_retries=model.max_retries, params=dict(model.params or {}), result=model.result,
                    created_at=aware(model.created_at), started_at=aware(model.started_at),
@@ -279,7 +279,7 @@ class TaskManager:
         if available <= now:
             await self._enqueue_model(model, event_session_factory=factory)
         await event_broadcaster.broadcast("step.started", {
-            "task_id": task_id, "job_id": job.id, "step": "Queued", "status": JobStatus.QUEUED.value,
+            "task_id": task_id, "job_id": job.id, "stage": "queued", "status": JobStatus.QUEUED.value,
             "progress": 0, "message": f"任务已持久化排队 ({job_type})",
         }, task_id=task_id, job_id=job.id)
         return job
@@ -876,7 +876,7 @@ class TaskManager:
                 )
                 heartbeat_task = asyncio.create_task(self._heartbeat_loop(job.id, claimed.lease_token), name=f"Heartbeat-{job.id}")
                 job_result: dict[str, Any] | None = None
-                if job.type == JobType.PUBLISH.value:
+                if job.job_type == JobType.PUBLISH.value:
                     from src.services.publishing_service import PublishingService
                     published = None
                     async with self.session_factory() as session:
@@ -911,7 +911,7 @@ class TaskManager:
                 else:
                     job_result = await self.executor.execute(job)
                     await self._finish_job(job.id, job_result, lease_token=claimed.lease_token)
-                    if job.type == JobType.FULL_PIPELINE.value:
+                    if job.job_type == JobType.FULL_PIPELINE.value:
                         await self._enqueue_scheduled_publish(job.task_id)
                 await event_broadcaster.broadcast(
                     "job.completed",
@@ -948,7 +948,7 @@ class TaskManager:
                 except WorkflowLeaseLost:
                     continue
                 failed_state = await self.get_job(job.id)
-                if job.type == JobType.PUBLISH.value:
+                if job.job_type == JobType.PUBLISH.value:
                     await self._sync_auto_publish_state(
                         job.task_id,
                         job.params.get("publishing_job_id"),
@@ -959,7 +959,7 @@ class TaskManager:
                     {
                         "task_id": job.task_id,
                         "job_id": job.id,
-                        "stage": failed_state.current_stage if failed_state else job.current_step,
+                        "stage": failed_state.current_stage if failed_state else job.current_stage,
                         "status": failed_status,
                         "progress": failed_state.progress if failed_state else job.progress,
                         "error": safe_error,

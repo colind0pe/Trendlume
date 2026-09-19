@@ -252,14 +252,6 @@ def normalize_knowledge_script(
         scene.visual_role = infer_visual_role(scene.narration_text) if not scene.visual_role else scene.visual_role
         scene.claim_refs = list(dict.fromkeys(ref for ref in scene.claim_refs if ref in claim_ids))
         scene.source_refs = [ref for ref in scene.source_refs if ref in source_refs]
-        scene.production_metadata = {
-            **(scene.production_metadata or {}),
-            "knowledge": {
-                "visual_role": scene.visual_role.value,
-                "claim_refs": scene.claim_refs,
-                "source_refs": scene.source_refs,
-            },
-        }
     script.knowledge_brief = brief
     return script
 
@@ -2014,14 +2006,26 @@ class GenerationService:
         return scene
 
     @staticmethod
-    def _provider_accepts(provider, parameter: str, method: str = "generate_image") -> bool:
-        """Detect optional capability without changing existing Providers."""
+    def _provider_accepts(
+        provider,
+        parameter: str,
+        method: str = "generate_image",
+        *,
+        strict: bool = False,
+    ) -> bool:
+        """Detect optional capability without treating ``**kwargs`` as proof.
+
+        Legacy providers can still receive non-semantic optional context via
+        ``**kwargs``. Explicit reference-frame inputs use ``strict=True`` so a
+        provider must declare and implement the capability visibly.
+        """
         try:
             signature = inspect.signature(getattr(provider, method))
         except (AttributeError, TypeError, ValueError):
             return False
-        return parameter in signature.parameters or any(
-            item.kind == inspect.Parameter.VAR_KEYWORD for item in signature.parameters.values()
+        return parameter in signature.parameters or (
+            not strict
+            and any(item.kind == inspect.Parameter.VAR_KEYWORD for item in signature.parameters.values())
         )
 
     async def generate_scene_image(
@@ -2065,6 +2069,18 @@ class GenerationService:
                 await self.execution_context.fence(self.session)
             await self.session.commit()
             raise ValidationException("未配置可用的图片 Provider，无法生成真实分镜画面。")
+        if reference_image_path and not self._provider_accepts(
+            image_provider, "reference_image_path", "generate_image", strict=True
+        ):
+            message = (
+                "当前图片 Provider 不支持参考图输入；请配置支持 img2img 的工作流，"
+                "不能静默退化为文生图。"
+            )
+            await self._set_scene_generation_status(scene, "image", "failed", message)
+            if self.execution_context:
+                await self.execution_context.fence(self.session)
+            await self.session.commit()
+            raise ValidationException(message)
         img_bytes = None
         width, height = media_width, media_height
         fmt = "png"
@@ -2086,7 +2102,7 @@ class GenerationService:
                     "height": media_height,
                     **(
                         {"reference_image_path": reference_image_path}
-                        if reference_image_path and self._provider_accepts(image_provider, "reference_image_path", "generate_image")
+                        if reference_image_path and self._provider_accepts(image_provider, "reference_image_path", "generate_image", strict=True)
                         else {}
                     ),
                     **(
@@ -2133,7 +2149,7 @@ class GenerationService:
                     "provider": getattr(image_provider, "name", "unknown"),
                     "reference_strategy": (
                         "provider_reference"
-                        if reference_image_path and self._provider_accepts(image_provider, "reference_image_path", "generate_image")
+                        if reference_image_path and self._provider_accepts(image_provider, "reference_image_path", "generate_image", strict=True)
                         else "deterministic_prompt_anchor"
                     ),
                     "reference_image_path": reference_image_path if reference_image_path else None,
@@ -2206,6 +2222,32 @@ class GenerationService:
             if source_asset and source_asset.mime_type.startswith("image/"):
                 first_frame_path = str(self.storage.get_path(source_asset.file_path))
 
+        last_frame_path = (continuity_input or {}).get("last_frame_path")
+        if first_frame_path and not self._provider_accepts(video_provider, "image_url", "generate_video", strict=True):
+            message = (
+                "当前视频 Provider 不支持首帧参考图输入；请配置 image-to-video 工作流，"
+                "不能静默退化为文生视频。"
+            )
+            await self._set_scene_generation_status(scene, "video", "failed", message)
+            if self.execution_context:
+                await self.execution_context.fence(self.session)
+            await self.session.commit()
+            raise ValidationException(message)
+        if (
+            last_frame_path
+            and not first_frame_path
+            and not self._provider_accepts(video_provider, "last_frame_url", "generate_video", strict=True)
+            and not self._provider_accepts(video_provider, "image_url", "generate_video", strict=True)
+        ):
+            message = (
+                "当前视频 Provider 不支持连续性参考帧输入；请配置支持首帧或末帧的工作流。"
+            )
+            await self._set_scene_generation_status(scene, "video", "failed", message)
+            if self.execution_context:
+                await self.execution_context.fence(self.session)
+            await self.session.commit()
+            raise ValidationException(message)
+
         try:
             requested_duration = float(scene.duration_seconds or 4.0)
             video_kwargs = {
@@ -2218,10 +2260,9 @@ class GenerationService:
             }
             if first_frame_path:
                 video_kwargs["image_url"] = first_frame_path
-            last_frame_path = (continuity_input or {}).get("last_frame_path")
-            if last_frame_path and self._provider_accepts(video_provider, "last_frame_url", "generate_video"):
+            if last_frame_path and self._provider_accepts(video_provider, "last_frame_url", "generate_video", strict=True):
                 video_kwargs["last_frame_url"] = last_frame_path
-            elif last_frame_path and not first_frame_path and self._provider_accepts(video_provider, "image_url", "generate_video"):
+            elif last_frame_path and not first_frame_path and self._provider_accepts(video_provider, "image_url", "generate_video", strict=True):
                 # Existing video Providers expose first-frame input as
                 # image_url. Use it as a generic continuity hand-off when a
                 # dedicated last-frame parameter is unavailable.
@@ -2250,7 +2291,7 @@ class GenerationService:
                     "provider": getattr(video_provider, "name", "unknown"),
                     "continuity_strategy": (
                         "provider_last_frame"
-                        if last_frame_path and self._provider_accepts(video_provider, "last_frame_url", "generate_video")
+                        if last_frame_path and self._provider_accepts(video_provider, "last_frame_url", "generate_video", strict=True)
                         else "provider_first_frame"
                         if first_frame_path or last_frame_path
                         else "deterministic_prompt_anchor"

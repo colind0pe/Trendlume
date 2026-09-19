@@ -43,7 +43,12 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { api } from "@/lib/api-client";
-import { useTaskEvents, type TaskEvent } from "@/lib/use-task-events";
+import {
+  JOB_LIFECYCLE_EVENTS,
+  TASK_LIFECYCLE_EVENTS,
+  useTaskEvents,
+  type TaskEvent,
+} from "@/lib/use-task-events";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -71,7 +76,6 @@ import {
   ASSET_TYPE_LABELS,
   CONTENT_MODE_LABELS,
   PLATFORM_LABELS,
-  STAGE_LABELS,
   isTaskActive,
   TASK_STATUS_LABELS,
   getTaskStatusTone,
@@ -82,26 +86,6 @@ import {
   VISUAL_ROLE_OPTIONS,
 } from "@/lib/ui-constants";
 
-const TASK_LIFECYCLE_EVENTS = new Set([
-  "task.queued",
-  "task.started",
-  "task.completed",
-  "task.failed",
-  "task.cancelled",
-  "task_queued",
-  "task_started",
-  "task_completed",
-  "task_failed",
-  "task_cancelled",
-]);
-const JOB_LIFECYCLE_EVENTS = new Set([
-  "job.started",
-  "job.retrying",
-  "job.completed",
-  "job.failed",
-  "job.cancelled",
-  "job.uncertain",
-]);
 const canonicalTemplateId = (id?: string | null) =>
   id || "image_gallery_matted";
 
@@ -531,9 +515,9 @@ export default function TaskStoryboardPage() {
         liveJobIdRef.current = data.job_id;
       }
 
-      const stage = String(data.stage || data.current_stage || data.step || data.current_step || "").toLowerCase();
+      const stage = String(data.stage || "").toLowerCase();
       const progress = typeof data.progress === "number" ? Math.max(0, Math.min(100, data.progress)) : null;
-      const message = data.message || data.error || data.error_message;
+      const message = data.message;
 
       if (typeof data.current_scene === "number") setLiveCurrentScene(data.current_scene);
       if (typeof data.total_scenes === "number") setLiveTotalScenes(data.total_scenes);
@@ -543,16 +527,16 @@ export default function TaskStoryboardPage() {
       const taskLifecycleEvent = TASK_LIFECYCLE_EVENTS.has(event.event);
       const currentJobLifecycleEvent = JOB_LIFECYCLE_EVENTS.has(event.event);
       if (isGenerationLifecycleEvent(event.event)) {
-        if (event.event === "task.completed" || event.event === "task_completed" || event.event === "job.completed") {
+        if (event.event === "task.completed" || event.event === "job.completed") {
           setLiveStatus("completed");
           setLiveProgress(100);
           setLiveStepMessage(message || "视频生成与合成完毕");
           const completedUrl = data.preview_url || data.final_video_url;
           if (completedUrl) setLiveVideoUrl(completedUrl);
-        } else if (event.event === "task.failed" || event.event === "task_failed" || event.event === "job.failed") {
+        } else if (event.event === "task.failed" || event.event === "job.failed") {
           setLiveStatus("failed");
           setLiveStepMessage(message || "生成失败");
-        } else if (event.event === "task.cancelled" || event.event === "task_cancelled" || event.event === "job.cancelled") {
+        } else if (event.event === "task.cancelled" || event.event === "job.cancelled") {
           setLiveStatus("cancelled");
           setLiveStepMessage(message || "任务已取消");
         } else if (event.event === "job.retrying") {
@@ -1747,7 +1731,7 @@ export default function TaskStoryboardPage() {
                   <span>
                     阶段：
                     <strong className="text-foreground">
-                      {STAGE_LABELS[String(task.current_stage || task.active_job.current_stage || "queued").toLowerCase()] || task.current_stage || task.active_job.current_stage || "排队中"}
+                      {task.current_stage_label || task.current_stage || task.active_job.current_stage || "排队中"}
                     </strong>
                   </span>
                   {(task.resume_count || task.active_job.retry_count) > 0 && (

@@ -73,7 +73,7 @@ async def provider_capabilities(
         type_capabilities = {
             "llm": ["script_generation"],
             "search": ["topic_research"],
-            "tts": ["speech_synthesis", "voice_speed"],
+            "tts": ["speech_synthesis"],
             "image": ["scene_image"],
             "video": ["scene_video"],
             "material": ["online_scene_video"],

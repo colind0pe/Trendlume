@@ -75,7 +75,7 @@ def test_research_source_ids_and_scene_provenance_survive_script_normalization()
     assert normalized.knowledge_brief.key_claims[0].source_refs == [ref_id]
     assert normalized.scenes[0].source_refs == [ref_id]
     assert normalized.scenes[0].claim_refs == ["claim-1"]
-    assert normalized.scenes[0].production_metadata["knowledge"]["visual_role"] == "quote"
+    assert normalized.scenes[0].production_metadata == {}
 
 
 def test_scene_create_exposes_knowledge_metadata_separately_from_layout():

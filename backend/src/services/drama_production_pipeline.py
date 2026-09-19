@@ -62,7 +62,7 @@ class DramaProductionPipeline(DurableProductionPipeline):
             db_job = WorkflowJobModel(
                 id=job_id,
                 task_id=task_id,
-                job_type=self.job.type,
+                job_type=self.job.job_type,
                 status="running",
                 lease_token=token,
                 params=self.params,
@@ -317,12 +317,22 @@ class DramaProductionPipeline(DurableProductionPipeline):
         scene.production_metadata = metadata
         await self.save()
 
-    async def _stage_media(self, task, drafts, scenes_by_source, *, visual_mode: str):
+    async def _stage_media(self, task, drafts, scenes_by_source, *, content_mode: str):
         outputs_by_scene: dict[str, list] = {}
         errors: list[str] = []
         for draft in drafts:
             scene = scenes_by_source[draft.source_shot_id]
             references = await self._reference_inputs(draft)
+            missing_reference = next(
+                (item for item in references if not item.get("asset_exists") or not item.get("path_exists")),
+                None,
+            )
+            if missing_reference:
+                role = "角色" if missing_reference.get("role") == "character" else "场景"
+                raise ValidationException(
+                    f"{role}参考资产 {missing_reference.get('reference_asset_id')} 不存在或文件缺失；"
+                    "请重新上传或清除参考资产后再生成，不能静默退回文生图。"
+                )
             reference = next((item for item in references if item.get("path_exists")), None)
             continuity = dict(draft.layout_params.get("continuity_input") or {})
             last_frame_asset_id = continuity.get("last_frame_asset_id")
@@ -335,10 +345,12 @@ class DramaProductionPipeline(DurableProductionPipeline):
             # The current bundled Providers do not expose a last-frame input.
             # Keep the abstract previous-shot reference stable so retrying one
             # Shot does not invalidate an already successful neighboring Shot.
-            provider_key = self.provider_inputs.get("video" if visual_mode == "video" else "image")
+            provider_key = self.provider_inputs.get(
+                "video" if content_mode == "generated_video" else "image"
+            )
             inputs = {
                 "source_shot_id": draft.source_shot_id,
-                "visual_mode": visual_mode,
+                "content_mode": content_mode,
                 "prompt": draft.visual_prompt,
                 "prompt_anchor": draft.production_metadata.get("prompt_anchor"),
                 "character_consistency": draft.production_metadata.get("character_consistency"),
@@ -346,14 +358,18 @@ class DramaProductionPipeline(DurableProductionPipeline):
                 "reference_assets": [{key: value for key, value in item.items() if key != "path"} for item in references],
                 "continuity_input": continuity,
                 "provider": provider_key,
-                "workflow": self.payload.get("video_workflow_id" if visual_mode == "video" else "image_workflow_id"),
+                "workflow": self.payload.get(
+                    "video_workflow_id"
+                    if content_mode == "generated_video"
+                    else "image_workflow_id"
+                ),
             }
 
             async def action(run, scene_id=scene.id, draft=draft, reference=reference, continuity=continuity):
                 current = await SceneRepository(self.db).get_by_id(scene_id)
                 if not current:
                     raise ValidationException("Drama Render Scene 不存在。")
-                if visual_mode == "video":
+                if content_mode == "generated_video":
                     if reference and not current.media_asset_id:
                         # Existing video Providers already accept image_url as
                         # a first-frame input. Keep this as an adapter-level
@@ -412,8 +428,11 @@ class DramaProductionPipeline(DurableProductionPipeline):
     async def _stage_audio(self, task, drafts, shots_by_source, scenes_by_source):
         outputs_by_scene: dict[str, list] = {}
         errors: list[str] = []
-        tts_provider = await self.gen._get_tts_provider()
-        default_voice = self.payload.get("voice_id") or await self.gen.provider_manager.get_default_tts_voice()
+        has_dialogue = any(shot.dialogue_lines for shot in shots_by_source.values())
+        tts_provider = await self.gen._get_tts_provider() if has_dialogue else None
+        default_voice = self.payload.get("voice_id")
+        if has_dialogue and not default_voice:
+            default_voice = await self.gen.provider_manager.get_default_tts_voice()
         for draft in drafts:
             scene = scenes_by_source[draft.source_shot_id]
             shot = shots_by_source[draft.source_shot_id]
@@ -452,6 +471,8 @@ class DramaProductionPipeline(DurableProductionPipeline):
                 timeline: list[dict[str, Any]] = []
                 cursor = 0.0
                 for line in line_inputs:
+                    if tts_provider is None:
+                        raise ValidationException("存在对白但没有可用的 TTS Provider。")
                     result = await self._synthesize(
                         tts_provider,
                         line["text"],
@@ -582,12 +603,13 @@ class DramaProductionPipeline(DurableProductionPipeline):
             srt, ass = subtitle_documents(timeline)
             directory = self.runtime.attempt_dir(run)
             specs = []
-            for name, data in (("subtitles.srt", srt), ("subtitles.ass", ass)):
-                target = directory / name
-                temporary = target.with_suffix(target.suffix + ".tmp")
-                await asyncio.to_thread(temporary.write_text, data, encoding="utf-8")
-                temporary.replace(target)
-                specs.append(ArtifactSpec(target, name.rsplit(".", 1)[-1]))
+            if timeline:
+                for name, data in (("subtitles.srt", srt), ("subtitles.ass", ass)):
+                    target = directory / name
+                    temporary = target.with_suffix(target.suffix + ".tmp")
+                    await asyncio.to_thread(temporary.write_text, data, encoding="utf-8")
+                    temporary.replace(target)
+                    specs.append(ArtifactSpec(target, name.rsplit(".", 1)[-1]))
             path = await self.runtime.write_json(run, "timeline.json", timeline)
             specs.append(ArtifactSpec(path, "timeline"))
             return specs, {"timeline": timeline}, None, False
@@ -646,6 +668,7 @@ class DramaProductionPipeline(DurableProductionPipeline):
                 "layout": scene.layout_params,
                 "template_id": self.payload.get("template_id"),
                 "content_mode": self.payload.get("content_mode"),
+                "composition_format_version": RenderingService.COMPOSITION_FORMAT_VERSION,
             }
 
             async def action(run, scene_id=scene.id):
@@ -778,9 +801,9 @@ class DramaProductionPipeline(DurableProductionPipeline):
             if self._has_blocking(before_findings):
                 raise ValidationException("生成前 QA 未通过，已阻止媒体生成。")
 
-            visual_mode = self.payload.get("visual_mode") or "image"
+            content_mode = self.payload.get("content_mode") or "generated_image"
             media_outputs, media_errors = await self._stage_media(
-                task, drafts, scenes_by_source, visual_mode=visual_mode
+                task, drafts, scenes_by_source, content_mode=content_mode
             )
             audio_outputs, audio_errors = await self._stage_audio(
                 task, drafts, shots_by_source, scenes_by_source
@@ -827,6 +850,7 @@ class DramaProductionPipeline(DurableProductionPipeline):
             if composition_errors or not final_outputs:
                 raise ValidationException("部分 Shot 合成失败，Episode 暂未生成最终视频。")
             final_artifact = final_outputs[0]
+            final_info = dict(final_artifact.media_info or {})
             current_runs = list(
                 (
                     await self.db.scalars(
@@ -842,6 +866,60 @@ class DramaProductionPipeline(DurableProductionPipeline):
                     unique[artifact.id] = artifact
 
             async def export_action(run):
+                final_video_path = self.storage.get_path(final_artifact.relative_path)
+                cover_path = self.runtime.attempt_dir(run) / "cover.png"
+                await self.renderer._run_ffmpeg_command(
+                    [
+                        "ffmpeg",
+                        "-y",
+                        "-ss",
+                        "0",
+                        "-i",
+                        str(final_video_path),
+                        "-frames:v",
+                        "1",
+                        "-c:v",
+                        "png",
+                        str(cover_path),
+                    ],
+                    cover_path,
+                    timeout=60.0,
+                )
+                cover_probe = await media_probe_service.probe(cover_path)
+                if not cover_probe.has_video:
+                    raise ValidationException("无法从最终视频生成有效封面。")
+                cover_asset = await self.gen.asset_service.save_asset_from_file(
+                    cover_path,
+                    file_name=f"{task.title or 'drama'}_cover.png",
+                    mime_type="image/png",
+                    asset_type=AssetType.IMAGE,
+                    project_id=task.project_id,
+                    width=cover_probe.width,
+                    height=cover_probe.height,
+                    metadata={
+                        "drama_id": self.drama_id,
+                        "episode_id": self.episode_id,
+                        "source": "final_video_first_frame",
+                    },
+                )
+                export_metadata = {
+                    "schema_version": 1,
+                    "title": task.title,
+                    "drama_id": self.drama_id,
+                    "episode_id": self.episode_id,
+                    "final_video_asset_id": final_artifact.asset_id,
+                    "cover_asset_id": cover_asset.id,
+                    "content_mode": self.payload.get("content_mode"),
+                    "template_id": self.payload.get("template_id"),
+                    "total_duration_seconds": final_info.get("duration_seconds")
+                    or final_info.get("video_duration"),
+                    "subtitle_artifact_ids": [
+                        item.id for item in subtitle_artifacts if item.kind in {"srt", "ass"}
+                    ],
+                }
+                metadata_path = await self.runtime.write_json(
+                    run, "episode_metadata.json", export_metadata
+                )
                 manifest = {
                     "schema_version": 1,
                     "task_id": task.id,
@@ -853,6 +931,7 @@ class DramaProductionPipeline(DurableProductionPipeline):
                     "qa_after": after_findings,
                     "timeline": timeline,
                     "final_video_artifact_id": final_artifact.id,
+                    "export": export_metadata,
                     "steps": [
                         {
                             "id": item.id,
@@ -883,7 +962,11 @@ class DramaProductionPipeline(DurableProductionPipeline):
                     ],
                 }
                 path = await self.runtime.write_json(run, "render_manifest.json", manifest)
-                return [ArtifactSpec(path, "render_manifest")], {"manifest_version": 1}, None, False
+                return [
+                    ArtifactSpec(cover_path, "cover", cover_asset.id, "generated"),
+                    ArtifactSpec(metadata_path, "episode_metadata"),
+                    ArtifactSpec(path, "render_manifest"),
+                ], {"manifest_version": 1, **export_metadata}, None, False
 
             _, export_artifacts = await self.stage(
                 "export",
@@ -894,8 +977,15 @@ class DramaProductionPipeline(DurableProductionPipeline):
             final_asset = await self.db.get(AssetModel, final_artifact.asset_id) if final_artifact.asset_id else None
             if not final_asset:
                 raise ValidationException("最终视频资产不存在。")
-            final_info = dict(final_artifact.media_info or {})
             subtitle_ids = [item.id for item in subtitle_artifacts if item.kind in {"srt", "ass"}]
+            cover_artifact = next((item for item in export_artifacts if item.kind == "cover"), None)
+            metadata_artifact = next(
+                (item for item in export_artifacts if item.kind == "episode_metadata"), None
+            )
+            manifest_artifact = next(
+                (item for item in export_artifacts if item.kind == "render_manifest"), None
+            )
+            cover_asset = await self.db.get(AssetModel, cover_artifact.asset_id) if cover_artifact and cover_artifact.asset_id else None
             result = {
                 "video_status": "ready",
                 "job_id": self.job.id,
@@ -904,12 +994,15 @@ class DramaProductionPipeline(DurableProductionPipeline):
                 "final_video_asset_id": final_asset.id,
                 "final_video_path": final_artifact.relative_path,
                 "final_video_url": self.storage.get_url(final_artifact.relative_path),
+                "cover_asset_id": cover_asset.id if cover_asset else None,
+                "cover_url": self.storage.get_url(cover_asset.file_path) if cover_asset else None,
                 "subtitle_artifact_ids": subtitle_ids,
                 "qa_before": before_findings,
                 "qa_after": after_findings,
                 "scenes_count": len(render_scenes),
                 "total_duration_seconds": final_info.get("duration_seconds") or final_info.get("video_duration"),
-                "render_manifest_artifact_id": export_artifacts[0].id,
+                "render_manifest_artifact_id": manifest_artifact.id if manifest_artifact else None,
+                "episode_metadata_artifact_id": metadata_artifact.id if metadata_artifact else None,
             }
             await self.runtime.assert_lease()
             task = await TaskRepository(self.db).get_by_id(task.id)

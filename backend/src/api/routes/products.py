@@ -7,6 +7,7 @@ from src.api.dependencies import (
     get_product_service,
     get_task_service,
 )
+from src.api.task_presenter import task_response
 from src.core.exceptions import ValidationException
 from src.domain.enums import AssetType, CreativeAngle, ProductionMode
 from src.schemas.common import APIResponse
@@ -155,14 +156,9 @@ async def produce_from_creative_plan(
             product_id=product_id,
             creative_plan_id=plan.id,
             creative_angle=CreativeAngle(plan.angle),
-            input_payload={
-                "product_id": product_id,
-                "creative_plan_id": plan.id,
-                "creative_angle": plan.angle,
-            },
         ),
     )
-    return APIResponse(data=TaskResponse.model_validate(task))
+    return APIResponse(data=task_response(task, scenes_count=0))
 
 
 @router.get("/{product_id}", response_model=APIResponse[ProductResponse])

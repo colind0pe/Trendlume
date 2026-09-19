@@ -65,6 +65,11 @@ async def test_rendering_service_persists_scene_and_composition(test_session, tm
         visual_prompt="Solid color",
         duration_seconds=2.0,
         media_asset_id=img_asset.id,
+        layout_params={
+            "dialogue_timeline": [
+                {"text": "对白会进入成片", "start": 0.2, "end": 1.4},
+            ]
+        },
     )
     test_session.add_all([proj, task, scene])
     await test_session.commit()
@@ -80,6 +85,12 @@ async def test_rendering_service_persists_scene_and_composition(test_session, tm
     assert ffmpeg_calls[0][0] == "ffmpeg"
     assert "-loop" in ffmpeg_calls[0]
     assert "-map" in ffmpeg_calls[0]
+    assert "ass=filename=" in ffmpeg_calls[0][ffmpeg_calls[0].index("-filter_complex") + 1]
+    await test_session.refresh(scene)
+    clip_asset = await test_session.get(AssetModel, scene.rendered_segment_asset_id)
+    assert clip_asset is not None
+    assert clip_asset.metadata_json["subtitle_burned"] is True
+    assert clip_asset.metadata_json["subtitle_line_count"] == 1
 
     # Composition should reuse the rendered clip and persist the final result.
     final_asset = await rendering_service.compose_task_video(task.id)

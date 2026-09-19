@@ -157,7 +157,7 @@ class CommercePreflightService:
         locked_product_scenes: list[Any] = []
         for scene in scenes:
             commerce = (scene.production_metadata or {}).get("commerce") or {}
-            role = str(commerce.get("role") or scene.visual_role or "")
+            role = str(scene.visual_role or "")
             locked = bool(commerce.get("asset_locked") or role in _PRODUCT_ROLES)
             if not locked:
                 continue
@@ -242,8 +242,7 @@ class CommercePreflightService:
         if plan and not _text(plan.cta):
             findings.append(self._finding("cta_missing", "error", "Creative Plan 缺少 CTA。"))
         if scenes and not any(
-            str((scene.production_metadata or {}).get("commerce", {}).get("role") or scene.visual_role)
-            == VisualRole.CTA.value
+            str(scene.visual_role or "") == VisualRole.CTA.value
             for scene in scenes
         ):
             findings.append(self._finding("cta_missing", "error", "Storyboard 中缺少 CTA 镜头。"))

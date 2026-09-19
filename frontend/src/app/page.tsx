@@ -12,7 +12,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { PageContainer, PageHeader, SectionHeader } from "@/components/ui/page-shell";
 import { Progress } from "@/components/ui/progress";
 import { StatusBadge } from "@/components/ui/status-badge";
-import { getTaskStatusTone, isTaskActive, TASK_STATUS_LABELS, formatStageName, formatTemplateName, PRODUCTION_MODE_SPECS } from "@/lib/ui-constants";
+import { getTaskStatusTone, isTaskActive, TASK_STATUS_LABELS, formatTemplateName, PRODUCTION_MODE_SPECS } from "@/lib/ui-constants";
 import { cn, formatDate } from "@/lib/utils";
 
 export default function DashboardPage() {
@@ -192,7 +192,7 @@ export default function DashboardPage() {
                     </div>
                     <Progress value={progress} className="h-1" />
                     <div className="flex flex-col gap-1.5 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between pt-0.5">
-                      <span>流程阶段：<strong className="text-foreground">{formatStageName(task.current_stage || task.active_job?.current_stage || task.job_type)}</strong></span>
+                      <span>流程阶段：<strong className="text-foreground">{task.current_stage_label || task.current_stage || task.active_job?.current_stage || task.job_type}</strong></span>
                       <Link
                         href={`/projects/${task.project_id}/tasks/${task.id}`}
                         className="inline-flex items-center gap-1 font-medium text-primary hover:underline group"

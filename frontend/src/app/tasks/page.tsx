@@ -13,7 +13,7 @@ import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { Progress } from "@/components/ui/progress";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { isTaskActive, TASK_STATUS_LABELS, getTaskStatusTone, formatStageName } from "@/lib/ui-constants";
+import { isTaskActive, TASK_STATUS_LABELS, getTaskStatusTone } from "@/lib/ui-constants";
 import { formatDate } from "@/lib/utils";
 
 export default function TasksGlobalPage() {
@@ -180,7 +180,7 @@ export default function TasksGlobalPage() {
                   {active && (
                     <div className="space-y-1.5 rounded-lg border border-primary/20 bg-primary/5 p-2.5">
                       <div className="flex justify-between text-xs font-mono">
-                        <span className="text-foreground font-medium">{formatStageName(task.current_stage || task.active_job?.current_stage) || "生成中"}</span>
+                        <span className="text-foreground font-medium">{task.current_stage_label || task.current_stage || task.active_job?.current_stage || "生成中"}</span>
                         <span className="font-semibold text-primary tabular-nums">{progress}%</span>
                       </div>
                       <Progress value={progress} className="h-1.5" />
@@ -256,7 +256,7 @@ export default function TasksGlobalPage() {
                         {active ? (
                           <div className="space-y-1.5">
                             <div className="flex justify-between text-xs font-mono">
-                              <span className="text-foreground">{formatStageName(task.current_stage || task.active_job?.current_stage) || "生成中"}</span>
+                              <span className="text-foreground">{task.current_stage_label || task.current_stage || task.active_job?.current_stage || "生成中"}</span>
                               <span className="font-semibold text-primary">{progress}%</span>
                             </div>
                             <Progress value={progress} className="h-1.5" />
