@@ -42,14 +42,12 @@ class ProductionPipelineRegistry:
     def _ensure_builtin_pipelines(self) -> None:
         # Import lazily so the registry remains independent from the default
         # implementation and can be used by TaskService during test setup.
-        from src.services.commerce_pipeline import CommerceProductionPipeline
-        from src.services.drama_production_pipeline import DramaProductionPipeline
         from src.services.durable_pipeline import DurableProductionPipeline
 
         builtins = {
             ProductionMode.KNOWLEDGE: DurableProductionPipeline,
-            ProductionMode.COMMERCE: CommerceProductionPipeline,
-            ProductionMode.DRAMA: DramaProductionPipeline,
+            ProductionMode.COMMERCE: DurableProductionPipeline,
+            ProductionMode.DRAMA: DurableProductionPipeline,
         }
         for mode, factory in builtins.items():
             if mode not in self._factories:

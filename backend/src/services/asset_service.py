@@ -13,7 +13,7 @@ from src.core.exceptions import NotFoundException, ValidationException
 from src.domain.enums import BGM_STORAGE_PREFIX, AssetType
 from src.models.asset import AssetModel
 from src.models.product import ProductAssetModel
-from src.models.project import ProjectModel
+from src.models.project import ProjectAssetBindingModel
 from src.models.publishing import PublishingJobModel
 from src.models.scene import SceneModel
 from src.models.task import TaskModel
@@ -70,7 +70,6 @@ class AssetService:
 
         asset = AssetModel(
             id=asset_id,
-            project_id=project_id,
             asset_type=asset_type.value,
             file_name=file_name,
             file_path=saved_path,
@@ -83,7 +82,15 @@ class AssetService:
         )
         if self.execution_context:
             await self.execution_context.fence(self.session)
-        return await self.asset_repo.create(asset)
+        asset = await self.asset_repo.create(asset)
+        if project_id:
+            self.session.add(ProjectAssetBindingModel(
+                id=f"pab_{uuid.uuid4().hex[:12]}", project_id=project_id,
+                asset_id=asset.id,
+                purpose="bgm" if asset_type == AssetType.BGM else "visual_reference",
+            ))
+            await self.session.flush()
+        return asset
 
     async def save_asset_from_file(
         self,
@@ -131,7 +138,6 @@ class AssetService:
             temporary_path.replace(final_path)
             asset = AssetModel(
                 id=asset_id,
-                project_id=project_id,
                 asset_type=asset_type.value,
                 file_name=file_name,
                 file_path=relative_path,
@@ -145,6 +151,13 @@ class AssetService:
             if self.execution_context:
                 await self.execution_context.fence(self.session)
             result = await self.asset_repo.create(asset)
+            if project_id:
+                self.session.add(ProjectAssetBindingModel(
+                    id=f"pab_{uuid.uuid4().hex[:12]}", project_id=project_id,
+                    asset_id=result.id,
+                    purpose="bgm" if asset_type == AssetType.BGM else "visual_reference",
+                ))
+                await self.session.flush()
             persisted = True
             return result
         except BaseException:
@@ -213,13 +226,9 @@ class AssetService:
         ):
             return "product_reference"
 
-        project_filter = asset.project_id
-        project_stmt = select(ProjectModel.id).where(
-            or_(ProjectModel.cover_asset_id == asset.id, ProjectModel.bgm_asset_id == asset.id)
-        )
-        if project_filter is not None:
-            project_stmt = project_stmt.where(ProjectModel.id == project_filter)
-        if (await self.session.execute(project_stmt.limit(1))).scalar_one_or_none():
+        if await self.session.scalar(select(ProjectAssetBindingModel.id).where(
+            ProjectAssetBindingModel.asset_id == asset.id
+        ).limit(1)):
             return "project_reference"
 
         scene_stmt = select(SceneModel.id).where(
@@ -229,10 +238,6 @@ class AssetService:
                 SceneModel.rendered_segment_asset_id == asset.id,
             )
         )
-        if project_filter is not None:
-            scene_stmt = scene_stmt.join(TaskModel, SceneModel.task_id == TaskModel.id).where(
-                TaskModel.project_id == project_filter
-            )
         if (await self.session.execute(scene_stmt.limit(1))).scalar_one_or_none():
             return "scene_reference"
 
@@ -242,29 +247,19 @@ class AssetService:
                 PublishingJobModel.cover_asset_id == asset.id,
             )
         )
-        if project_filter is not None:
-            publishing_stmt = publishing_stmt.where(PublishingJobModel.project_id == project_filter)
         if (await self.session.execute(publishing_stmt.limit(1))).scalar_one_or_none():
             return "publishing_reference"
 
-        task_stmt = select(TaskModel.input_payload, TaskModel.result_payload)
-        if project_filter is not None:
-            task_stmt = task_stmt.where(TaskModel.project_id == project_filter)
+        task_stmt = select(TaskModel.generation_settings, TaskModel.publishing_settings)
         task_rows = (await self.session.execute(task_stmt)).all()
-        for input_payload, result_payload in task_rows:
-            input_payload = input_payload or {}
+        for generation_settings, publishing_settings in task_rows:
+            generation_settings = generation_settings or {}
             if asset.id in {
-                input_payload.get("source_asset_id"),
-                input_payload.get("bgm_asset_id"),
+                generation_settings.get("source_asset_id"),
+                generation_settings.get("bgm_asset_id"),
             }:
                 return "task_reference"
-            result_payload = result_payload or {}
-            if result_payload.get("final_video_asset_id") == asset.id:
-                return "task_reference"
-            if any(
-                isinstance(version, dict) and version.get("asset_id") == asset.id
-                for version in result_payload.get("final_video_versions", [])
-            ):
+            if (publishing_settings or {}).get("cover_asset_id") == asset.id:
                 return "task_reference"
         return None
 

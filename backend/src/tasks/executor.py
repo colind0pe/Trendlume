@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.core.database import async_session_factory
 from src.core.exceptions import ValidationException
+from src.models.production_context import ProductionContextSnapshotModel
 from src.models.task import TaskModel
 from src.models.workflow import WorkflowJobModel
 from src.services.production_pipeline import production_pipeline_registry
@@ -25,8 +26,16 @@ class VideoWorkflowExecutor:
             task = await session.get(TaskModel, job.task_id)
             if task is None:
                 raise ValidationException("任务不存在")
+            job_record = await session.get(WorkflowJobModel, job.id)
+            if job_record is None:
+                raise ValidationException("WorkflowJob 不存在")
+            snapshot = await session.get(
+                ProductionContextSnapshotModel, job_record.production_context_snapshot_id
+            )
+            if snapshot is None:
+                raise ValidationException("WorkflowJob 缺少生产上下文快照")
             pipeline = production_pipeline_registry.create(
-                getattr(task, "production_mode", None),
+                snapshot.mode,
                 session,
                 job,
                 self.rendering_service_factory,

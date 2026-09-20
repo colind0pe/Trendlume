@@ -2,34 +2,22 @@ import {
   Asset,
   AssetBatchResult,
   AccountCheckResponse,
-  ContentMode,
   Project,
   ProjectDetail,
   ProjectTemplate,
   ProjectTemplateUpdate,
   Product,
-  CreativePlan,
-  DramaApprovalResponse,
-  DramaBible,
-  DramaDetail,
-  DramaPreflight,
-  DramaProductionStartRequest,
-  DramaProductionStatus,
-  DramaProductionStage,
   CommercePreflightResponse,
   ProductionMode,
-  CreativeAngle,
   ProviderConfigItem,
   ProviderCreatePayload,
   ImageGenerationTestResult,
-  KnowledgeBrief,
   ProviderTestResult,
   ProviderUpdatePayload,
   SystemConfigSummary,
   PublishingJob,
   PlatformMetadata,
   ResearchResponse,
-  ScheduledPublishConfig,
   Scene,
   SceneCreate,
   ScriptGenerateRequest,
@@ -194,251 +182,22 @@ export const api = {
       body: JSON.stringify({ expected_revision: expectedRevision }),
     }),
 
-  approveAndRunTrendProposal: (
-    proposalId: string,
-    expectedRevision: number,
-  ) =>
-    request<TrendProposalActionResponse>(`/trends/proposals/${encodeURIComponent(proposalId)}/approve-and-run`, {
-      method: "POST",
-      body: JSON.stringify({ expected_revision: expectedRevision }),
-    }),
-
   getProject: (id: string) => request<ProjectDetail>(`/projects/${id}`),
 
-  // Drama production: approved storyboard -> per-shot media/audio -> episode video.
-  listDramas: (projectId: string) =>
-    request<DramaBible[]>(`/projects/${encodeURIComponent(projectId)}/dramas`),
-
-  createDrama: (
-    projectId: string,
-    payload: {
-      source_type: "idea" | "script";
-      title: string;
-      source_text: string;
-      logline?: string;
-      genre?: string;
-      tone?: string;
-      visual_style?: string;
-      continuity_rules?: Array<Record<string, any>>;
-      prop_locks?: Array<Record<string, any>>;
-    },
-  ) =>
-    request<DramaDetail>(`/projects/${encodeURIComponent(projectId)}/dramas`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }),
-
-  getDrama: (dramaId: string) => request<DramaDetail>(`/dramas/${encodeURIComponent(dramaId)}`),
-
-  planDrama: (dramaId: string, regenerate = false) =>
-    request<DramaDetail>(`/dramas/${encodeURIComponent(dramaId)}/plan`, {
-      method: "POST",
-      body: JSON.stringify({ regenerate }),
-    }),
-
-  getDramaPreflight: (dramaId: string) =>
-    request<DramaPreflight>(`/dramas/${encodeURIComponent(dramaId)}/preflight`),
-
-  updateDrama: (dramaId: string, payload: Partial<DramaDetail>) =>
-    request<DramaDetail>(`/dramas/${encodeURIComponent(dramaId)}`, {
-      method: "PATCH",
-      body: JSON.stringify(payload),
-    }),
-
-  updateDramaCharacter: (dramaId: string, characterId: string, payload: Record<string, any>) =>
-    request<DramaDetail>(`/dramas/${encodeURIComponent(dramaId)}/characters/${encodeURIComponent(characterId)}`, {
-      method: "PATCH",
-      body: JSON.stringify(payload),
-    }),
-
-  approveDramaCharacter: (dramaId: string, characterId: string) =>
-    request<DramaDetail>(`/dramas/${encodeURIComponent(dramaId)}/characters/${encodeURIComponent(characterId)}/approve`, {
-      method: "POST",
-      body: JSON.stringify({}),
-    }),
-
-  updateDramaLocation: (dramaId: string, locationId: string, payload: Record<string, any>) =>
-    request<DramaDetail>(`/dramas/${encodeURIComponent(dramaId)}/locations/${encodeURIComponent(locationId)}`, {
-      method: "PATCH",
-      body: JSON.stringify(payload),
-    }),
-
-  approveDramaLocation: (dramaId: string, locationId: string) =>
-    request<DramaDetail>(`/dramas/${encodeURIComponent(dramaId)}/locations/${encodeURIComponent(locationId)}/approve`, {
-      method: "POST",
-      body: JSON.stringify({}),
-    }),
-
-  updateDramaEpisode: (dramaId: string, episodeId: string, payload: Record<string, any>) =>
-    request<DramaDetail>(`/dramas/${encodeURIComponent(dramaId)}/episodes/${encodeURIComponent(episodeId)}`, {
-      method: "PATCH",
-      body: JSON.stringify(payload),
-    }),
-
-  approveDramaEpisode: (dramaId: string, episodeId: string) =>
-    request<DramaDetail>(`/dramas/${encodeURIComponent(dramaId)}/episodes/${encodeURIComponent(episodeId)}/approve`, {
-      method: "POST",
-      body: JSON.stringify({}),
-    }),
-
-  updateDramaScene: (dramaId: string, sceneId: string, payload: Record<string, any>) =>
-    request<DramaDetail>(`/dramas/${encodeURIComponent(dramaId)}/scenes/${encodeURIComponent(sceneId)}`, {
-      method: "PATCH",
-      body: JSON.stringify(payload),
-    }),
-
-  approveDramaScene: (dramaId: string, sceneId: string) =>
-    request<DramaDetail>(`/dramas/${encodeURIComponent(dramaId)}/scenes/${encodeURIComponent(sceneId)}/approve`, {
-      method: "POST",
-      body: JSON.stringify({}),
-    }),
-
-  updateDramaShot: (dramaId: string, shotId: string, payload: Record<string, any>) =>
-    request<DramaDetail>(`/dramas/${encodeURIComponent(dramaId)}/shots/${encodeURIComponent(shotId)}`, {
-      method: "PATCH",
-      body: JSON.stringify(payload),
-    }),
-
-  approveDramaShot: (dramaId: string, shotId: string) =>
-    request<DramaDetail>(`/dramas/${encodeURIComponent(dramaId)}/shots/${encodeURIComponent(shotId)}/approve`, {
-      method: "POST",
-      body: JSON.stringify({}),
-    }),
-
-  approveDramaStoryboard: (dramaId: string) =>
-    request<DramaApprovalResponse>(`/dramas/${encodeURIComponent(dramaId)}/approve-storyboard`, {
-      method: "POST",
-      body: JSON.stringify({}),
-    }),
-
-  getDramaProduction: (dramaId: string, episodeId?: string) =>
-    request<DramaProductionStatus>(
-      `/dramas/${encodeURIComponent(dramaId)}/production${episodeId ? `?episode_id=${encodeURIComponent(episodeId)}` : ""}`,
-    ),
-
-  startDramaProduction: (dramaId: string, payload: DramaProductionStartRequest = {}) =>
-    request<DramaProductionStatus>(`/dramas/${encodeURIComponent(dramaId)}/production/start`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }),
-
-  resumeDramaProduction: (dramaId: string) =>
-    request<DramaProductionStatus>(`/dramas/${encodeURIComponent(dramaId)}/production/resume`, {
-      method: "POST",
-      body: JSON.stringify({}),
-    }),
-
-  retryDramaShot: (dramaId: string, shotId: string, stage: DramaProductionStage = "media") =>
-    request<DramaProductionStatus>(
-      `/dramas/${encodeURIComponent(dramaId)}/production/shots/${encodeURIComponent(shotId)}/retry`,
-      {
-        method: "POST",
-        body: JSON.stringify({ stage }),
-      },
-    ),
-
-  createProject: (data: {
-    name: string;
-    description?: string;
-    aspect_ratio?: string;
-    primary_production_mode?: ProductionMode;
-    default_voice_id?: string;
-    bgm_asset_id?: string | null;
-    settings?: Record<string, any>;
-  }) =>
+  createProject: (data: Record<string, unknown>) =>
     request<Project>("/projects", {
       method: "POST",
       body: JSON.stringify(data),
     }),
 
-  // Product Library
-  listProducts: (limit = 50, offset = 0) =>
-    request<Product[]>(`/products?limit=${limit}&offset=${offset}`),
+  getProjectProduct: (projectId: string) =>
+    request<Product>(`/projects/${projectId}/product`),
 
-  getProduct: (productId: string) =>
-    request<Product>(`/products/${encodeURIComponent(productId)}`),
-
-  listCreativePlans: (productId: string) =>
-    request<CreativePlan[]>(`/products/${encodeURIComponent(productId)}/creative-plans`),
-
-  generateCreativePlans: (productId: string, data: { count?: number; audience?: string; objective?: string } = {}) =>
-    request<CreativePlan[]>(`/products/${encodeURIComponent(productId)}/creative-plans`, {
-      method: "POST",
-      body: JSON.stringify({ count: 3, ...data }),
-    }),
-
-  selectCreativePlan: (productId: string, planId: string) =>
-    request<CreativePlan>(`/products/${encodeURIComponent(productId)}/creative-plans/${encodeURIComponent(planId)}/select`, {
-      method: "POST",
-    }),
-
-  duplicateCreativePlan: (productId: string, planId: string, variant_label?: string) =>
-    request<CreativePlan>(`/products/${encodeURIComponent(productId)}/creative-plans/${encodeURIComponent(planId)}/duplicate`, {
-      method: "POST",
-      body: JSON.stringify({ variant_label }),
-    }),
-
-  confirmCreativePlanFacts: (productId: string, planId: string) =>
-    request<CreativePlan>(`/products/${encodeURIComponent(productId)}/creative-plans/${encodeURIComponent(planId)}/confirm-facts`, {
-      method: "POST",
-      body: JSON.stringify({ confirm: true }),
-    }),
-
-  createProduct: (data: {
-    title: string;
-    brand?: string;
-    description?: string;
-    price?: string;
-    currency?: string;
-    specifications?: Record<string, any>;
-    source_url?: string | null;
-    selling_points?: Array<{ text: string; claim_type?: "selling_point" | "numerical"; evidence_refs?: string[] }>;
-  }) =>
-    request<Product>("/products", {
-      method: "POST",
+  putProjectProduct: (projectId: string, data: Record<string, unknown>) =>
+    request<Product>(`/projects/${projectId}/product`, {
+      method: "PUT",
       body: JSON.stringify(data),
     }),
-
-  importProduct: (url: string) =>
-    request<Product>("/products/import", {
-      method: "POST",
-      body: JSON.stringify({ url }),
-    }),
-
-  updateProduct: (productId: string, data: Partial<Pick<Product, "title" | "brand" | "description" | "price" | "currency" | "specifications" | "source_url">> & { selling_points?: Array<{ text: string; claim_type?: "selling_point" | "numerical"; evidence_refs?: string[] }> }) =>
-    request<Product>(`/products/${encodeURIComponent(productId)}`, {
-      method: "PATCH",
-      body: JSON.stringify(data),
-    }),
-
-  uploadProductAsset: async (productId: string, file: File, assetType: "image" | "video", role = "gallery") => {
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("asset_type", assetType);
-    formData.append("role", role);
-    const res = await fetch(`${BASE_URL}/products/${encodeURIComponent(productId)}/assets`, {
-      method: "POST",
-      body: formData,
-    });
-    if (!res.ok) {
-      let message = `HTTP Error ${res.status}`;
-      try {
-        const data = await res.json();
-        message = data?.error?.message || data?.detail || message;
-      } catch {
-        // Keep the HTTP fallback.
-      }
-      throw new ApiError(message, res.status);
-    }
-    const json = await res.json();
-    return (json.data !== undefined ? json.data : json) as Product;
-  },
-
-  deleteProduct: (productId: string) =>
-    request<boolean>(`/products/${encodeURIComponent(productId)}`, { method: "DELETE" }),
-
-  deleteProductAsset: (productId: string, productAssetId: string) =>
-    request<boolean>(`/products/${encodeURIComponent(productId)}/assets/${encodeURIComponent(productAssetId)}`, { method: "DELETE" }),
 
   updateProject: (id: string, data: Partial<Project>) =>
     request<Project>(`/projects/${id}`, {
@@ -505,30 +264,9 @@ export const api = {
     data: {
       title: string;
       description?: string;
-      job_type?: string;
-      product_id?: string | null;
-      creative_plan_id?: string | null;
-      creative_angle?: CreativeAngle | string | null;
-      knowledge_brief?: KnowledgeBrief;
-      input_payload?: Record<string, any>;
-      template_id?: string;
-      bgm_asset_id?: string | null;
-      bgm_enabled?: boolean;
-      bgm_volume?: number;
-      voice_id?: string | null;
-      speed?: number;
-      content_mode?: ContentMode;
-      material_provider_id?: string | null;
-      template_params?: Record<string, any>;
-      source_asset_id?: string | null;
-      enable_research?: boolean;
-      search_provider_id?: string | null;
-      research_max_queries?: number;
-      research_max_results?: number;
-      image_workflow_id?: string | null;
-      video_workflow_id?: string | null;
-      target_scene_count?: number;
-      scheduled_publish?: ScheduledPublishConfig | null;
+      detail: Record<string, any> & { type: ProductionMode };
+      generation_settings?: Record<string, any>;
+      publishing_settings?: Record<string, any>;
     }
   ) =>
     request<Task>(`/projects/${projectId}/tasks`, {

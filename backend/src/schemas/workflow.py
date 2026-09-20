@@ -9,6 +9,7 @@ class WorkflowJobResponse(BaseModel):
 
     id: str
     task_id: str
+    production_context_snapshot_id: str
     job_type: str
     status: str
     current_stage: str
@@ -45,6 +46,7 @@ class TaskResumeRequest(BaseModel):
 class WorkflowArtifactResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: str
+    job_id: str
     task_id: str
     step_run_id: str
     asset_id: str | None = None

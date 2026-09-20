@@ -166,9 +166,7 @@ class TopicProposalModel(Base):
 
     __tablename__ = "topic_proposals"
     __table_args__ = (
-        UniqueConstraint(
-            "project_id", "trend_item_id", name="uq_topic_proposal_project_item"
-        ),
+        UniqueConstraint("project_id", "trend_item_id", name="uq_topic_proposal_project_item"),
         Index("ix_topic_proposals_project_status", "project_id", "status"),
     )
 
@@ -228,9 +226,7 @@ class TrendSubscriptionModel(Base):
     timezone: Mapped[str] = mapped_column(String(64), default="UTC", nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="active", nullable=False)
     retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    last_run_id: Mapped[str | None] = mapped_column(
-        String(36), nullable=True
-    )
+    last_run_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     last_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_success_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     next_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

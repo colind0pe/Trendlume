@@ -62,7 +62,7 @@ async def _scheduler(test_session: AsyncSession, adapter=None) -> tuple[TrendSch
 
 
 async def _project(session: AsyncSession, project_id: str = "scheduler-project"):
-    project = ProjectModel(id=project_id, name="Scheduler project")
+    project = ProjectModel(id=project_id, name="Scheduler project", mode="knowledge")
     session.add(project)
     await session.commit()
     return project

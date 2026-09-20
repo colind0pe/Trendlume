@@ -1,23 +1,24 @@
-from contextlib import asynccontextmanager
-
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.dependencies import get_db
+from src.core.database import get_db
+from src.core.exceptions import NotFoundException
+from src.models.workflow import WorkflowJobModel
 from src.schemas.common import APIResponse
 from src.schemas.workflow import WorkflowJobResponse
-from src.tasks.manager import task_manager
+from src.services.production_job_service import ProductionJobService
 
-router = APIRouter(prefix="/jobs", tags=["Jobs"])
+router = APIRouter(prefix="/workflow-jobs", tags=["Workflow Jobs"])
 
 
 @router.get("/{job_id}", response_model=APIResponse[WorkflowJobResponse])
 async def get_workflow_job(job_id: str, db: AsyncSession = Depends(get_db)):
-    @asynccontextmanager
-    async def factory():
-        yield db
+    job = await db.get(WorkflowJobModel, job_id)
+    if job is None:
+        raise NotFoundException("WorkflowJob", job_id)
+    return APIResponse(data=job)
 
-    job = await task_manager.get_job(job_id, session_factory=factory)
-    if not job:
-        raise HTTPException(status_code=404, detail=f"WorkflowJob not found: {job_id}")
-    return APIResponse(data=WorkflowJobResponse.model_validate(job))
+
+@router.post("/{job_id}/retry", response_model=APIResponse[WorkflowJobResponse])
+async def retry_workflow_job(job_id: str, db: AsyncSession = Depends(get_db)):
+    return APIResponse(data=await ProductionJobService(db).retry(job_id))

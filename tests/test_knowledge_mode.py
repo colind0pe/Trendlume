@@ -98,8 +98,12 @@ def test_scene_create_exposes_knowledge_metadata_separately_from_layout():
 
 @pytest.mark.asyncio
 async def test_scene_knowledge_metadata_persists_without_entering_layout_params(test_session):
-    project = await ProjectService(test_session).create_project(ProjectCreate(name="Knowledge scenes"))
-    task = await TaskService(test_session).create_task(project.id, TaskCreate(title="Scene metadata"))
+    project = await ProjectService(test_session).create_project(ProjectCreate(
+        name="Knowledge scenes", mode="knowledge", knowledge_profile={}
+    ))
+    task = await TaskService(test_session).create_task(project.id, TaskCreate(
+        title="Scene metadata", detail={"type": "knowledge", "topic": "Scene metadata"}
+    ))
     created = await SceneService(test_session).replace_task_scenes(
         task.id,
         [

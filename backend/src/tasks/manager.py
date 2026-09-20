@@ -190,10 +190,10 @@ class TaskManager:
                         pub.error_message = model.error_message
                 task_id = model.task_id
                 task = await session.get(TaskModel, task_id)
-                config = dict((task.input_payload or {}).get("scheduled_publish") or {}) if task else None
+                config = dict((task.publishing_settings or {}).get("scheduled_publish") or {}) if task else None
                 if task and isinstance(config, dict) and config.get("publishing_job_id") == pub_id:
                     config.update({"status": PublishJobStatus.MISSED.value, "error_message": model.error_message})
-                    task.input_payload = {**(task.input_payload or {}), "scheduled_publish": config}
+                    task.publishing_settings = {**(task.publishing_settings or {}), "scheduled_publish": config}
                 changed = True
             if changed:
                 await session.commit()
@@ -592,7 +592,7 @@ class TaskManager:
                 if not task:
                     return
 
-                payload = dict(task.input_payload or {})
+                payload = dict(task.publishing_settings or {})
                 stored_config = payload.get("scheduled_publish")
                 config = dict(stored_config) if isinstance(stored_config, dict) else stored_config
                 if not isinstance(config, dict):
@@ -638,7 +638,7 @@ class TaskManager:
                         }
                     )
                     payload["scheduled_publish"] = config
-                    task.input_payload = payload
+                    task.publishing_settings = payload
                     await session.commit()
                     return
 
@@ -663,7 +663,7 @@ class TaskManager:
                     }
                 )
                 payload["scheduled_publish"] = config
-                task.input_payload = payload
+                task.publishing_settings = payload
                 await session.commit()
 
             await self.submit_task(
@@ -680,13 +680,13 @@ class TaskManager:
             async with self.session_factory() as session:
                 task = await session.get(TaskModel, task_id)
                 if task:
-                    payload = dict(task.input_payload or {})
+                    payload = dict(task.publishing_settings or {})
                     stored_config = payload.get("scheduled_publish")
                     config = dict(stored_config) if isinstance(stored_config, dict) else stored_config
                     if isinstance(config, dict) and config.get("status") != "cancelled":
                         config.update({"status": "failed", "error_message": safe_error[:1000]})
                         payload["scheduled_publish"] = config
-                        task.input_payload = payload
+                        task.publishing_settings = payload
                     if publishing_job_id:
                         publish_job = await session.get(PublishingJobModel, publishing_job_id)
                         if publish_job and publish_job.status in {
@@ -721,7 +721,7 @@ class TaskManager:
             task = await session.get(TaskModel, task_id)
             if not task:
                 return
-            payload = dict(task.input_payload or {})
+            payload = dict(task.publishing_settings or {})
             stored_config = payload.get("scheduled_publish")
             config = dict(stored_config) if isinstance(stored_config, dict) else stored_config
             if not isinstance(config, dict) or config.get("publishing_job_id") != publishing_job_id:
@@ -734,7 +734,7 @@ class TaskManager:
                 return
             config.update({"status": status, "error_message": error_message})
             payload["scheduled_publish"] = config
-            task.input_payload = payload
+            task.publishing_settings = payload
             await session.commit()
 
     async def _find_publishing_workflows(self, session, publishing_job_id: str) -> list[WorkflowJobModel]:
@@ -790,10 +790,10 @@ class TaskManager:
                 pub.status = PublishJobStatus.CANCELLED.value
                 pub.error_message = "用户取消发布"
             task = await session.get(TaskModel, model.task_id)
-            config = dict((task.input_payload or {}).get("scheduled_publish") or {}) if task else None
+            config = dict((task.publishing_settings or {}).get("scheduled_publish") or {}) if task else None
             if task and isinstance(config, dict) and config.get("publishing_job_id") == publishing_job_id:
                 config.update({"status": PublishJobStatus.CANCELLED.value, "error_message": "用户取消发布"})
-                task.input_payload = {**(task.input_payload or {}), "scheduled_publish": config}
+                task.publishing_settings = {**(task.publishing_settings or {}), "scheduled_publish": config}
             await session.commit()
             running = self._active_tasks.get(model.task_id) if self._task_to_job.get(model.task_id) in {item.id for item in linked_jobs} else None
         if running and not running.done():

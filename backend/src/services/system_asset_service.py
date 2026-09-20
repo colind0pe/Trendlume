@@ -27,19 +27,13 @@ DEFAULT_BGM_FILE_NAME = "default.mp3"
 def is_bgm_asset(asset: AssetModel | None) -> bool:
     """Return whether an asset is a legal BGM asset by type and path."""
     return bool(
-        asset
-        and asset.asset_type == AssetType.BGM.value
-        and is_bgm_storage_path(asset.file_path)
+        asset and asset.asset_type == AssetType.BGM.value and is_bgm_storage_path(asset.file_path)
     )
 
 
 def is_system_asset(asset: AssetModel | None) -> bool:
     """Return whether an asset belongs to the read-only system catalog."""
-    return bool(
-        asset
-        and asset.project_id is None
-        and (asset.metadata_json or {}).get("scope") == "system"
-    )
+    return bool(asset and (asset.metadata_json or {}).get("scope") == "system")
 
 
 def default_bgm_resource_path() -> Path:
@@ -75,7 +69,6 @@ async def ensure_default_bgm(
     if asset is None:
         asset = AssetModel(
             id=DEFAULT_BGM_ASSET_ID,
-            project_id=None,
             asset_type=AssetType.BGM.value,
             file_name=DEFAULT_BGM_FILE_NAME,
             file_path=relative_path,
@@ -86,7 +79,6 @@ async def ensure_default_bgm(
         )
         session.add(asset)
     else:
-        asset.project_id = None
         asset.asset_type = AssetType.BGM.value
         asset.file_path = relative_path
         asset.file_name = DEFAULT_BGM_FILE_NAME
@@ -114,19 +106,13 @@ async def sync_bgm_directory_assets(
     bgm_directory.mkdir(parents=True, exist_ok=True)
 
     result = await session.execute(
-        select(AssetModel.id, AssetModel.file_path)
-        .where(AssetModel.file_path.is_not(None))
+        select(AssetModel.id, AssetModel.file_path).where(AssetModel.file_path.is_not(None))
     )
     registered_paths = {
-        normalize_storage_path(file_path)
-        for _, file_path in result.all()
-        if file_path
+        normalize_storage_path(file_path) for _, file_path in result.all() if file_path
     }
     registered_ids = {
-        asset_id
-        for asset_id in (
-            await session.execute(select(AssetModel.id))
-        ).scalars().all()
+        asset_id for asset_id in (await session.execute(select(AssetModel.id))).scalars().all()
     }
 
     created_count = 0
@@ -166,7 +152,6 @@ async def sync_bgm_directory_assets(
 
         asset = AssetModel(
             id=asset_id,
-            project_id=None,
             asset_type=AssetType.BGM.value,
             file_name=candidate.name,
             file_path=normalized_path,

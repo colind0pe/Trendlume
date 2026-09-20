@@ -11,12 +11,10 @@ from loguru import logger
 
 from src.api.routes import (
     assets_router,
-    drama_router,
     events_router,
     generation_router,
     health_router,
     jobs_router,
-    products_router,
     projects_router,
     providers_router,
     publishing_router,
@@ -25,7 +23,6 @@ from src.api.routes import (
     templates_router,
     trends_router,
 )
-from src.api.routes.workflow import router as workflow_router
 from src.core.config import settings
 from src.core.database import async_session_factory, verify_schema
 from src.core.exceptions import AppException
@@ -50,8 +47,8 @@ async def lifespan(app: FastAPI):
             "Database schema is incomplete: "
             f"{', '.join(missing_schema)}. "
             "Run 'cd backend; .\\.venv\\Scripts\\python.exe -m alembic upgrade head' "
-            "before starting Trendlume. If Alembic reports an unknown revision, "
-            "restore that historical migration before upgrading."
+            "before starting Trendlume. This release does not upgrade historical schemas; "
+            "if the database is not revision 001, create a new database manually."
         )
         logger.error(message)
         raise RuntimeError(message)
@@ -105,14 +102,11 @@ def create_app() -> FastAPI:
     api_v1_prefix = "/api/v1"
     app.include_router(health_router, prefix=api_v1_prefix)
     app.include_router(projects_router, prefix=api_v1_prefix)
-    app.include_router(products_router, prefix=api_v1_prefix)
     app.include_router(tasks_router, prefix=api_v1_prefix)
     app.include_router(scenes_router, prefix=api_v1_prefix)
     app.include_router(assets_router, prefix=api_v1_prefix)
-    app.include_router(drama_router, prefix=api_v1_prefix)
     app.include_router(generation_router, prefix=api_v1_prefix)
     app.include_router(jobs_router, prefix=api_v1_prefix)
-    app.include_router(workflow_router, prefix=api_v1_prefix)
     app.include_router(publishing_router, prefix=api_v1_prefix)
     app.include_router(providers_router, prefix=api_v1_prefix)
     app.include_router(events_router, prefix=api_v1_prefix)

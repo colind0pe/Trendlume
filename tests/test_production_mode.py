@@ -1,135 +1,155 @@
-from __future__ import annotations
-
 import pytest
+from sqlalchemy.exc import IntegrityError
 
-from src.core.exceptions import ValidationException
-from src.domain.enums import CreativeAngle, ProductionMode
-from src.domain.production_workflows import get_production_workflow
-from src.schemas.product import ProductCreate
-from src.schemas.project import ProjectCreate
-from src.schemas.task import TaskCreate, TaskUpdate
-from src.services.product_service import ProductService
-from src.services.production_pipeline import ProductionPipelineRegistry
-from src.services.project_service import ProjectService
-from src.services.task_service import TaskService
+from src.models.drama import DramaCharacterModel
+from src.models.product import ProductModel
+from src.models.production_context import ProductionContextSnapshotModel
+from src.models.workflow import WorkflowJobModel
 
 
-def test_knowledge_workflow_is_ordered_and_commerce_is_registered():
-    workflow = get_production_workflow(ProductionMode.KNOWLEDGE)
-
-    assert workflow.stage_keys == (
-        "topic",
-        "research",
-        "planning",
-        "script",
-        "storyboard",
-        "assets",
-        "voice",
-        "subtitles",
-        "composition",
-        "export",
-    )
-    assert workflow.unit_stage_keys == frozenset({"assets", "voice", "composition"})
-    assert ProductionPipelineRegistry().available_modes() == (
-        ProductionMode.KNOWLEDGE,
-        ProductionMode.COMMERCE,
-        ProductionMode.DRAMA,
-    )
+def knowledge_project(name="Knowledge"):
+    return {"name": name, "mode": "knowledge", "knowledge_profile": {"domain": "science"}}
 
 
 @pytest.mark.asyncio
-async def test_project_and_task_persist_knowledge_production_mode_by_default(test_session):
-    project = await ProjectService(test_session).create_project(
-        ProjectCreate(name="Production mode project")
-    )
-    task = await TaskService(test_session).create_task(
-        project.id,
-        TaskCreate(title="Knowledge task"),
-    )
-
-    assert project.primary_production_mode == ProductionMode.KNOWLEDGE.value
-    assert task.production_mode == ProductionMode.KNOWLEDGE.value
-    assert task.project_context_version_id
-    assert task.context_hash
-    assert "production_mode" not in task.input_payload
-
-
-@pytest.mark.asyncio
-async def test_commerce_task_requires_and_persists_product_context(test_session):
-    project = await ProjectService(test_session).create_project(
-        ProjectCreate(name="Commerce mode project", primary_production_mode=ProductionMode.COMMERCE)
-    )
-
-    with pytest.raises(ValidationException, match="必须选择商品"):
-        await TaskService(test_session).create_task(
-            project.id,
-            TaskCreate(title="Commerce task", production_mode=ProductionMode.COMMERCE),
+async def test_project_owns_mode_and_knowledge_project_has_many_tasks(client):
+    project = (await client.post("/api/v1/projects", json=knowledge_project())).json()["data"]
+    for topic in ("量子", "天文"):
+        response = await client.post(
+            f"/api/v1/projects/{project['id']}/tasks",
+            json={"title": topic, "detail": {"type": "knowledge", "topic": topic}},
         )
-
-
-    product = await ProductService(test_session).create_product(
-        ProductCreate(title="可追溯商品", brand="Demo")
-    )
-    task = await TaskService(test_session).create_task(
-        project.id,
-        TaskCreate(
-            title="Commerce task",
-            production_mode=ProductionMode.COMMERCE,
-            product_id=product.id,
-            creative_angle=CreativeAngle.DEMO,
-        ),
-    )
-
-    assert task.product_id == product.id
-    assert task.creative_angle == CreativeAngle.DEMO.value
-    assert not {"product_id", "creative_plan_id", "creative_angle"} & task.input_payload.keys()
-    assert "knowledge_brief" not in task.input_payload
-    assert "genre" not in task.input_payload
-    assert "enable_research" not in task.input_payload
-    assert "target_scene_count" not in task.input_payload
+        assert response.status_code == 201, response.text
+        assert "production_mode" not in response.json()["data"]
+    tasks = (await client.get(f"/api/v1/projects/{project['id']}/tasks")).json()["data"]
+    assert {task["detail"]["topic"] for task in tasks} == {"量子", "天文"}
 
 
 @pytest.mark.asyncio
-async def test_task_mode_must_match_project_mode(test_session):
-    project = await ProjectService(test_session).create_project(
-        ProjectCreate(name="Commerce project", primary_production_mode=ProductionMode.COMMERCE)
+async def test_task_rejects_mode_and_mismatched_detail(client):
+    project = (await client.post("/api/v1/projects", json=knowledge_project())).json()["data"]
+    invalid_mode = await client.post(
+        f"/api/v1/projects/{project['id']}/tasks",
+        json={
+            "title": "bad",
+            "production_mode": "commerce",
+            "detail": {"type": "knowledge", "topic": "bad"},
+        },
     )
+    assert invalid_mode.status_code == 422
+    mismatch = await client.post(
+        f"/api/v1/projects/{project['id']}/tasks",
+        json={"title": "bad", "detail": {"type": "commerce", "creative_angle": "demo"}},
+    )
+    assert mismatch.status_code == 422
 
-    with pytest.raises(ValidationException, match="继承所属 Project"):
-        await TaskService(test_session).create_task(
-            project.id,
-            TaskCreate(title="Knowledge override", production_mode=ProductionMode.KNOWLEDGE),
+
+@pytest.mark.asyncio
+async def test_drama_episode_number_unique_per_project(client):
+    project = (
+        await client.post(
+            "/api/v1/projects",
+            json={
+                "name": "Drama",
+                "mode": "drama",
+                "drama_profile": {"series_title": "Series"},
+                "drama_style_guide": {},
+            },
         )
-
-    assert project.primary_production_mode == ProductionMode.COMMERCE.value
-
-
-@pytest.mark.asyncio
-async def test_generic_task_creation_cannot_bypass_drama_approval_workspace(test_session):
-    project = await ProjectService(test_session).create_project(
-        ProjectCreate(name="Drama project", primary_production_mode=ProductionMode.DRAMA)
-    )
-
-    with pytest.raises(ValidationException, match="Drama workspace"):
-        await TaskService(test_session).create_task(project.id, TaskCreate(title="Invalid Drama task"))
+    ).json()["data"]
+    payload = {"title": "Episode", "detail": {"type": "drama", "episode_number": 1}}
+    assert (
+        await client.post(f"/api/v1/projects/{project['id']}/tasks", json=payload)
+    ).status_code == 201
+    with pytest.raises(IntegrityError):
+        await client.post(f"/api/v1/projects/{project['id']}/tasks", json=payload)
 
 
 @pytest.mark.asyncio
-async def test_task_mode_cannot_change_after_creation(test_session):
-    project = await ProjectService(test_session).create_project(
-        ProjectCreate(name="Mode update project")
-    )
-    task_service = TaskService(test_session)
-    task = await task_service.create_task(
-        project.id,
-        TaskCreate(title="切换模式", knowledge_brief={"thesis": "知识主张"}),
-    )
-    with pytest.raises(ValidationException, match="创建后不能切换"):
-        await task_service.update_task(
-            task.id,
-            TaskUpdate(production_mode=ProductionMode.COMMERCE),
+async def test_commerce_project_has_one_product_and_many_angles(client, test_session):
+    project = (await client.post("/api/v1/projects", json={
+        "name": "Commerce", "mode": "commerce",
+        "commerce_profile": {"brand": "Demo"},
+    })).json()["data"]
+    test_session.add(ProductModel(
+        id="product_main", project_id=project["id"], title="Main product"
+    ))
+    await test_session.commit()
+    for angle in ("demo", "pain_point"):
+        response = await client.post(f"/api/v1/projects/{project['id']}/tasks", json={
+            "title": angle,
+            "detail": {"type": "commerce", "creative_angle": angle},
+        })
+        assert response.status_code == 201, response.text
+    tasks = (await client.get(f"/api/v1/projects/{project['id']}/tasks")).json()["data"]
+    assert {task["detail"]["creative_angle"] for task in tasks} == {"demo", "pain_point"}
+    test_session.add(ProductModel(
+        id="product_second", project_id=project["id"], title="Forbidden second product"
+    ))
+    with pytest.raises(IntegrityError):
+        await test_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_unapproved_drama_resources_cannot_enter_snapshot(client, test_session, monkeypatch):
+    project = (await client.post("/api/v1/projects", json={
+        "name": "Drama", "mode": "drama",
+        "drama_profile": {"series_title": "Series"}, "drama_style_guide": {},
+    })).json()["data"]
+    task = (await client.post(f"/api/v1/projects/{project['id']}/tasks", json={
+        "title": "Episode 1", "detail": {"type": "drama", "episode_number": 1},
+    })).json()["data"]
+    test_session.add(DramaCharacterModel(
+        id="char_pending", project_id=project["id"], name="Pending character"
+    ))
+    await test_session.commit()
+    await client.post(f"/api/v1/tasks/{task['id']}/approve")
+
+    async def providers(self, **kwargs):
+        return {"llm": {"provider_id": "test"}}
+
+    monkeypatch.setattr("src.services.provider_manager.ProviderManager.capture_snapshot", providers)
+    response = await client.post(f"/api/v1/tasks/{task['id']}/jobs")
+    assert response.status_code == 422
+    assert "必须先通过审批" in response.text
+
+
+@pytest.mark.asyncio
+async def test_new_production_gets_new_snapshot_and_retry_reuses_original(
+    client, test_session, monkeypatch
+):
+    project = (await client.post("/api/v1/projects", json=knowledge_project())).json()["data"]
+    task = (
+        await client.post(
+            f"/api/v1/projects/{project['id']}/tasks",
+            json={"title": "one", "detail": {"type": "knowledge", "topic": "one"}},
         )
+    ).json()["data"]
+    await client.post(f"/api/v1/tasks/{task['id']}/approve")
 
-    unchanged = await task_service.get_task(task.id)
-    assert unchanged.production_mode == ProductionMode.KNOWLEDGE.value
-    assert unchanged.input_payload["knowledge_brief"]["thesis"] == "知识主张"
+    async def providers(self, **kwargs):
+        return {"llm": {"provider_id": "test"}}
+
+    monkeypatch.setattr("src.services.provider_manager.ProviderManager.capture_snapshot", providers)
+    first = (await client.post(f"/api/v1/tasks/{task['id']}/jobs")).json()["data"]
+    first_model = await test_session.get(WorkflowJobModel, first["id"])
+    snapshot = await test_session.get(
+        ProductionContextSnapshotModel, first_model.production_context_snapshot_id
+    )
+    first_model.status = "failed"
+    await test_session.commit()
+    await client.patch(f"/api/v1/tasks/{task['id']}", json={"title": "changed"})
+    retry = (await client.post(f"/api/v1/workflow-jobs/{first['id']}/retry")).json()["data"]
+    retry_model = await test_session.get(WorkflowJobModel, retry["id"])
+    assert retry_model.production_context_snapshot_id == snapshot.id
+    assert snapshot.context_payload["task"]["title"] == "one"
+    retry_model.status = "failed"
+    await test_session.commit()
+    second = (await client.post(f"/api/v1/tasks/{task['id']}/jobs")).json()["data"]
+    second_model = await test_session.get(WorkflowJobModel, second["id"])
+    assert second_model.production_context_snapshot_id != snapshot.id
+    new_snapshot = await test_session.get(
+        ProductionContextSnapshotModel, second_model.production_context_snapshot_id
+    )
+    assert new_snapshot.context_payload["task"]["title"] == "changed"
+    assert new_snapshot.context_hash != snapshot.context_hash

@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.domain.production_workflows import ProductionWorkflow, get_production_workflow
 from src.models.asset import AssetModel
 from src.models.product import ProductAssetModel
-from src.models.task import TaskModel
+from src.models.production_context import ProductionContextSnapshotModel
 from src.models.workflow import (
     WorkflowArtifactModel,
     WorkflowJobModel,
@@ -191,11 +191,14 @@ class WorkflowRuntime:
         if job is None:
             raise LeaseLostError('Workflow job does not exist')
         task_id = job.task_id
-        task = await self.db.get(TaskModel, task_id)
-        context_hash = getattr(task, "context_hash", None)
+        snapshot = await self.db.get(
+            ProductionContextSnapshotModel, job.production_context_snapshot_id
+        )
+        if snapshot is None:
+            raise LeaseLostError('Workflow job snapshot does not exist')
+        context_hash = snapshot.context_hash
         fingerprint_inputs = dict(inputs or {})
-        if context_hash:
-            fingerprint_inputs["_project_context_hash"] = context_hash
+        fingerprint_inputs["_production_context_hash"] = context_hash
         payload = redact(fingerprint_inputs)
         # Preserve producer lineage even when a forced rerun emits identical
         # bytes. Downstream stages must still checkpoint against the new run.
@@ -272,7 +275,7 @@ class WorkflowRuntime:
             if not path.is_file() or not path.stat().st_size:
                 raise ValueError('Artifact is missing or empty')
             media_info = await probe_file(path)
-            artifacts.append(WorkflowArtifactModel(id=str(uuid4()), task_id=run.task_id, step_run_id=run.id,
+            artifacts.append(WorkflowArtifactModel(id=str(uuid4()), job_id=run.job_id, task_id=run.task_id, step_run_id=run.id,
                 asset_id=spec.asset_id, kind=spec.kind, relative_path=relative, size_bytes=path.stat().st_size,
                 sha256=await sha256_file(path), media_info=media_info or spec.media_info, source=spec.source))
         await self.assert_lease()

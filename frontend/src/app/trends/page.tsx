@@ -413,7 +413,9 @@ function TrendDetailSheet({
   );
   const selectedTemplate = availableTemplates.find((template) => template.id === selectedTemplateId);
   const usesAiVisualStyle = contentMode === "generated_image" || contentMode === "generated_video";
-  const projectTemplateId = selectedProject?.template?.template_id || "";
+  const projectTemplateId = String(
+    selectedProject?.default_production_settings?.template_id || "",
+  );
 
   React.useEffect(() => {
     if (createdProposal && !localProposal) {
@@ -423,7 +425,7 @@ function TrendDetailSheet({
       const volume = Number(options.bgm_volume ?? 0.2);
       const savedVoiceId = typeof options.voice_id === "string"
         ? options.voice_id
-        : selectedProject?.default_voice_id || "";
+        : String(selectedProject?.default_production_settings?.voice_id || "");
 
       setAngle(createdProposal.angle || "");
       const brief = createdProposal.knowledge_brief;
@@ -443,7 +445,7 @@ function TrendDetailSheet({
       setBgmEnabled(options.bgm_enabled !== false);
       setBgmAssetId(typeof options.bgm_asset_id === "string"
         ? options.bgm_asset_id
-        : selectedProject?.bgm_asset_id || "");
+        : String(selectedProject?.default_production_settings?.bgm_asset_id || ""));
       setBgmVolume(Number.isFinite(volume) ? Math.max(0, Math.min(0.5, volume)) : 0.2);
       setSourceAssetId(typeof options.source_asset_id === "string" ? options.source_asset_id : "");
     }
@@ -473,9 +475,8 @@ function TrendDetailSheet({
   ]);
 
   // 2. 投产或保存
-  type TrendAction = "create" | "generate";
-  const actionMutation = useMutation<TrendProposalActionResponse, Error, TrendAction>({
-    mutationFn: async (action) => {
+  const actionMutation = useMutation<TrendProposalActionResponse, Error, void>({
+    mutationFn: async () => {
       if (!proposal) throw new Error("选题方案尚未就绪。");
       if (templatesQuery.isLoading) throw new Error("正在加载排版模板，请稍后再试。");
       if (!selectedTemplateId || !selectedTemplate) {
@@ -531,19 +532,11 @@ function TrendDetailSheet({
         });
         setLocalProposal(current);
       }
-      return action === "create"
-        ? api.approveTrendProposal(current.id, current.revision)
-        : api.approveAndRunTrendProposal(current.id, current.revision);
+      return api.approveTrendProposal(current.id, current.revision);
     },
-    onSuccess: (data, action) => {
+    onSuccess: (data) => {
       setLocalProposal(data.proposal);
-      if (action === "create") {
-        toast("任务草稿已保存", "success");
-      } else if (data.queue_status === "queued") {
-        toast("已创建任务并进入生成流水线", "success");
-      } else {
-        toast(data.queue_error || "任务已创建，暂未进入队列", "warning");
-      }
+      toast("已创建待审核任务", "success");
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       queryClient.invalidateQueries({ queryKey: ["project", data.proposal.project_id] });
       queryClient.invalidateQueries({ queryKey: ["project-tasks", data.proposal.project_id] });
@@ -572,7 +565,6 @@ function TrendDetailSheet({
   const isWorking = isProposalPending || actionMutation.isPending || rejectMutation.isPending;
   const taskCreated = proposal?.status === "task_created" || proposal?.status === "queue_failed";
   const proposalClosed = taskCreated || proposal?.status === "rejected";
-  const actionInProgress = actionMutation.variables;
   const platformConfig = PLATFORMS_CONFIG[item.platform] || { badgeClass: "bg-secondary text-foreground", dotClass: "bg-primary" };
   const canSubmitGeneration = Boolean(
     proposal &&
@@ -1120,7 +1112,7 @@ function TrendDetailSheet({
             <div className={cn("rounded-lg border p-2.5 text-xs text-center", proposal.status === "queue_failed" ? "border-warning/30 bg-warning/10 text-warning" : "border-success/30 bg-success/10 text-success")}>
               {proposal.status === "queue_failed"
                 ? "任务已保存，排队暂未完成。"
-                : "任务已创建并进入流水线。"}
+                : "任务草稿已创建，请审核后再开始生产。"}
             </div>
             <div className="grid grid-cols-2 gap-2">
               <Button
@@ -1153,25 +1145,15 @@ function TrendDetailSheet({
                   : "当前画面来源没有匹配模板，请切换来源后再试。"}
               </p>
             )}
-            <div className="grid grid-cols-2 gap-2">
+            <div>
               <Button
                 type="button"
-                variant="outline"
-                onClick={() => actionMutation.mutate("create")}
+                onClick={() => actionMutation.mutate()}
                 disabled={isWorking || !canSubmitGeneration}
-                className="gap-1.5"
+                className="w-full gap-1.5"
               >
-                {actionMutation.isPending && actionInProgress === "create" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-                保存草稿
-              </Button>
-              <Button
-                type="button"
-                onClick={() => actionMutation.mutate("generate")}
-                disabled={isWorking || !canSubmitGeneration}
-                className="gap-1.5 shadow-xs"
-              >
-                {actionMutation.isPending && actionInProgress === "generate" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5 fill-current" />}
-                开始生成
+                {actionMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                创建待审核任务
               </Button>
             </div>
             <Button

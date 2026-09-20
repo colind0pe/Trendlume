@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-from datetime import UTC, datetime
 from uuid import uuid4
 
 from loguru import logger
@@ -15,6 +14,7 @@ from src.domain.content_modes import resolve_content_mode
 from src.domain.enums import ProductionMode
 from src.domain.production_workflows import KNOWLEDGE_PRODUCTION_WORKFLOW
 from src.models.asset import AssetModel
+from src.models.production_context import ProductionContextSnapshotModel
 from src.models.workflow import WorkflowJobModel, WorkflowStepRunModel
 from src.repositories.project_repository import ProjectRepository
 from src.repositories.scene_repository import SceneRepository
@@ -252,15 +252,7 @@ class DurableProductionPipeline(BaseProductionPipeline):
         task = await TaskRepository(self.db).get_by_id(task_id)
         if not task:
             raise ValidationException('任务不存在')
-        task.status = 'pending'
-        runtime_stage = getattr(self, 'runtime_stage', None)
-        task.progress_percentage = (
-            self.workflow.progress_for(runtime_stage, running=False)
-            if runtime_stage and self.workflow.has_stage(runtime_stage)
-            else 0
-        )
-        task.completed_at = None
-        task.error_message = None
+        task.production_status = 'needs_review'
         await self.db.commit()
         return result
 
@@ -293,28 +285,25 @@ class DurableProductionPipeline(BaseProductionPipeline):
         if not task:
             raise ValidationException('任务不存在')
         project = await ProjectRepository(self.db).get_by_id(task.project_id)
-        task.status = 'running'
-        task.started_at = task.started_at or datetime.now(UTC)
+        task.production_status = 'running'
         await self.save()
         await event_broadcaster.broadcast('task.started', {'task_id': task.id, 'job_id': self.job.id, 'status': 'running', 'progress': 0}, task_id=task.id, job_id=self.job.id, lease_token=token)
-        payload = dict(task.input_payload or {})
+        snapshot = await self.db.get(
+            ProductionContextSnapshotModel, db_job.production_context_snapshot_id
+        )
+        if snapshot is None:
+            raise ValidationException('WorkflowJob 缺少生产上下文快照。')
+        snapshot_task = dict(snapshot.context_payload.get('task') or {})
+        payload = dict(snapshot_task.get('generation_settings') or {})
+        payload.update(snapshot_task.get('detail') or {})
+        renderer.production_settings = payload
         pm = ProviderManager(self.db)
-        snapshot = payload.get('workflow_provider_snapshot')
-        if snapshot:
-            pm = ProviderManager(self.db, snapshot=snapshot)
-            await pm.capture_snapshot(
-                search_provider_id=payload.get('search_provider_id'),
-                material_provider_id=payload.get('material_provider_id'),
-            )
-        else:
-            snapshot = await pm.capture_snapshot(
-                search_provider_id=payload.get('search_provider_id'),
-                material_provider_id=payload.get('material_provider_id'),
-            )
-            await self.runtime.assert_lease()
-            payload['workflow_provider_snapshot'] = snapshot
-            task.input_payload = {**(task.input_payload or {}), 'workflow_provider_snapshot': snapshot}
-            await self.save()
+        provider_snapshot = snapshot.context_payload.get('providers') or {}
+        pm = ProviderManager(self.db, snapshot=provider_snapshot)
+        await pm.capture_snapshot(
+            search_provider_id=payload.get('search_provider_id'),
+            material_provider_id=payload.get('material_provider_id'),
+        )
         provider_inputs = pm.snapshot_fingerprint_payload()
         prompt_selection = prompt_selection_snapshot(payload.get("prompt_versions"))
         payload["prompt_versions"] = {
@@ -322,8 +311,6 @@ class DurableProductionPipeline(BaseProductionPipeline):
             for prompt_id, item in prompt_selection.items()
         }
         payload["prompt_selection"] = prompt_selection
-        task.input_payload = payload
-        await self.save()
         gen = GenerationService(
             self.db,
             storage=self.storage,
@@ -331,6 +318,7 @@ class DurableProductionPipeline(BaseProductionPipeline):
             execution_context=self.context,
             task_id=task_id,
             job_id=job_id,
+            production_settings=payload,
         )
         topic = str(payload.get('topic') or task.title or '短视频创作')
         single = self.params.get('single_step')
@@ -353,8 +341,6 @@ class DurableProductionPipeline(BaseProductionPipeline):
         )
         if payload.get('content_mode') != mode:
             payload['content_mode'] = mode
-            task.input_payload = {**(task.input_payload or {}), 'content_mode': payload['content_mode']}
-            await self.save()
         payload, single, mode_prepared = await self.prepare_mode_pipeline(
             task,
             project,
@@ -837,9 +823,8 @@ class DurableProductionPipeline(BaseProductionPipeline):
         task = await TaskRepository(self.db).get_by_id(task_id)
         if not task:
             raise ValidationException('任务不存在')
-        task.status, task.progress_percentage = 'completed', 100
-        task.completed_at, task.error_message = datetime.now(UTC), None
-        task.result_payload = {**(task.result_payload or {}), 'video_status': 'ready', 'job_id': job_id,
+        task.production_status = 'completed'
+        result = {'video_status': 'ready', 'job_id': job_id,
             'final_video_asset_id': final_asset_id, 'final_video_path': final_relative_path,
             'final_video_url': final_video_url, 'scenes_count': scene_count,
             'total_duration_seconds': max(final_media_info.get('audio_duration') or 0, final_media_info.get('video_duration') or 0),
@@ -847,5 +832,5 @@ class DurableProductionPipeline(BaseProductionPipeline):
             'subtitle_artifact_ids': subtitle_artifact_ids}
         await self.db.commit()
         for event in ('video.preview_ready', 'task.completed'):
-            await event_broadcaster.broadcast(event, {**task.result_payload, 'task_id': task_id, 'job_id': job_id, 'status': 'completed', 'progress': 100, 'preview_url': task.result_payload['final_video_url']}, task_id=task_id, job_id=job_id, lease_token=token)
-        return task.result_payload
+            await event_broadcaster.broadcast(event, {**result, 'task_id': task_id, 'job_id': job_id, 'status': 'completed', 'progress': 100, 'preview_url': result['final_video_url']}, task_id=task_id, job_id=job_id, lease_token=token)
+        return result

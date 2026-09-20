@@ -30,9 +30,7 @@ class SceneModel(Base):
     )
     claim_refs: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     source_refs: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
-    production_metadata: Mapped[dict[str, Any]] = mapped_column(
-        JSON, default=dict, nullable=False
-    )
+    production_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     audio_asset_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     media_asset_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     rendered_segment_asset_id: Mapped[str | None] = mapped_column(String(36), nullable=True)

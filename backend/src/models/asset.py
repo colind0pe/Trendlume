@@ -1,24 +1,18 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import JSON, DateTime, Float, Integer, String
+from sqlalchemy.orm import Mapped, mapped_column
 
 from src.core.database import Base
-
-if TYPE_CHECKING:
-    from src.models.project import ProjectModel
 
 
 class AssetModel(Base):
     __tablename__ = "assets"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    project_id: Mapped[str | None] = mapped_column(
-        String(36), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True
-    )
     asset_type: Mapped[str] = mapped_column(String(20), nullable=False)
     file_name: Mapped[str] = mapped_column(String(255), nullable=False)
     file_path: Mapped[str] = mapped_column(String(500), nullable=False)
@@ -33,6 +27,3 @@ class AssetModel(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(UTC), nullable=False
     )
-
-    # Relationships
-    project: Mapped[ProjectModel | None] = relationship("ProjectModel", back_populates="assets")

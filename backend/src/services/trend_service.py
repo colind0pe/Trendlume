@@ -95,7 +95,11 @@ def normalize_trend_title(value: str) -> str:
 
 
 def _project_trend_preferences(project: ProjectModel) -> dict[str, list[str]]:
-    settings = project.settings if isinstance(project.settings, dict) else {}
+    settings = (
+        project.default_production_settings
+        if isinstance(project.default_production_settings, dict)
+        else {}
+    )
     raw = settings.get("trends") if isinstance(settings.get("trends"), dict) else {}
     include = raw.get("include_keywords", raw.get("keywords", []))
     exclude = raw.get("exclude_keywords", [])
@@ -184,7 +188,11 @@ class TrendService(TrendProposalServiceMixin):
         if project is None:
             raise NotFoundException("Project", project_id)
 
-        existing = dict(project.settings) if isinstance(project.settings, dict) else {}
+        existing = (
+            dict(project.default_production_settings)
+            if isinstance(project.default_production_settings, dict)
+            else {}
+        )
         trend_settings = (
             dict(existing.get("trends")) if isinstance(existing.get("trends"), dict) else {}
         )
@@ -196,7 +204,7 @@ class TrendService(TrendProposalServiceMixin):
             trend_settings["platforms"] = clean_terms(payload.platforms)
 
         # Preserve every unrelated project setting while replacing only this namespace.
-        project.settings = {**existing, "trends": trend_settings}
+        project.default_production_settings = {**existing, "trends": trend_settings}
         await self.session.flush()
         await self._refresh_project_matches(project)
         await self.session.commit()

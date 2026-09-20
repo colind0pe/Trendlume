@@ -10,8 +10,6 @@ import {
   Settings,
   LayoutDashboard,
   Flame,
-  PackageOpen,
-  Clapperboard,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { BrandMark } from "@/components/brand/logo";
@@ -20,8 +18,6 @@ const navigation = [
   { name: "工作台", href: "/", icon: LayoutDashboard },
   { name: "热点中心", href: "/trends", icon: Flame },
   { name: "项目库", href: "/projects", icon: FolderKanban },
-  { name: "商品库", href: "/products", icon: PackageOpen },
-  { name: "Drama 工作室", href: "/drama", icon: Clapperboard },
   { name: "任务中心", href: "/tasks", icon: Film },
   { name: "素材库", href: "/assets", icon: ImageIcon },
   { name: "发布中心", href: "/publishing", icon: Share2 },

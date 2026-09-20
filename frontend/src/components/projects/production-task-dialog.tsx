@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Wand2,
   Volume2,
@@ -39,9 +39,7 @@ import {
   Asset,
   ContentMode,
   CreativeAngle,
-  CreativePlan,
   Project,
-  Product,
   SocialAccount,
   TemplateCatalogItem,
   VoiceInfo,
@@ -109,9 +107,8 @@ export function ProductionTaskDialog({
   const [knowledgeAudience, setKnowledgeAudience] = React.useState("");
   const [knowledgeThesis, setKnowledgeThesis] = React.useState("");
   const [knowledgeViewerTakeaway, setKnowledgeViewerTakeaway] = React.useState("");
-  const [productId, setProductId] = React.useState("");
-  const [creativePlanId, setCreativePlanId] = React.useState("");
   const [creativeAngle, setCreativeAngle] = React.useState<CreativeAngle>("direct");
+  const [episodeNumber, setEpisodeNumber] = React.useState(1);
 
   // Visual style
   const [taskStylePreset, setTaskStylePreset] = React.useState("stick_figure");
@@ -124,21 +121,9 @@ export function ProductionTaskDialog({
   const [sourceAssetId, setSourceAssetId] = React.useState("");
 
   const projectAspect = project?.aspect_ratio || "9:16";
-  const productionMode = project.primary_production_mode;
+  const productionMode = project.mode;
   const isCommerce = productionMode === "commerce";
-
-  const { data: products = [], isLoading: productsLoading } = useQuery<Product[]>({
-    queryKey: ["products"],
-    queryFn: () => api.listProducts(),
-    enabled: open && isCommerce,
-  });
-  const selectedProduct = products.find((product) => product.id === productId);
-  const { data: creativePlans = [], isLoading: creativePlansLoading } = useQuery<CreativePlan[]>({
-    queryKey: ["creative-plans", productId],
-    queryFn: () => api.listCreativePlans(productId),
-    enabled: open && isCommerce && Boolean(productId),
-  });
-  const selectedCreativePlan = creativePlans.find((plan) => plan.id === creativePlanId);
+  const isDrama = productionMode === "drama";
 
   // Filter templates strictly matching project's aspect ratio and current content mode
   const availableTemplates = React.useMemo(() => {
@@ -168,8 +153,8 @@ export function ProductionTaskDialog({
 
   // Sync default BGM from project when available
   React.useEffect(() => {
-    if (project?.bgm_asset_id) {
-      setBgmAssetId(project.bgm_asset_id);
+    if (project?.default_production_settings?.bgm_asset_id) {
+      setBgmAssetId(String(project.default_production_settings.bgm_asset_id));
     }
   }, [project]);
 
@@ -192,42 +177,23 @@ export function ProductionTaskDialog({
     }
 
     // Try project's default template if it is in availableTemplates
-    const projectTplId = project?.template?.template_id
-      ? canonicalTemplateId(project.template.template_id)
+    const projectTplId = project?.default_production_settings?.template_id
+      ? canonicalTemplateId(String(project.default_production_settings.template_id))
       : "";
     const matchedProjectTpl = availableTemplates.find((t) => t.id === projectTplId);
 
     if (matchedProjectTpl) {
       setSelectedTemplateId(matchedProjectTpl.id);
-      setTemplateParams(project.template?.params || matchedProjectTpl.default_params || {});
+      setTemplateParams(
+        project.default_production_settings?.template_params ||
+          matchedProjectTpl.default_params ||
+          {},
+      );
     } else {
       setSelectedTemplateId(availableTemplates[0].id);
       setTemplateParams(availableTemplates[0].default_params || {});
     }
   }, [open, availableTemplates, selectedTemplateId, project, canonicalTemplateId]);
-
-  React.useEffect(() => {
-    if (!open || !isCommerce) return;
-    if (!productId && products.length > 0) setProductId(products[0].id);
-  }, [open, isCommerce, productId, products]);
-
-  React.useEffect(() => {
-    if (!isCommerce || !productId) {
-      setCreativePlanId("");
-      return;
-    }
-    if (creativePlans.length === 0) {
-      setCreativePlanId("");
-      return;
-    }
-    if (!creativePlans.some((plan) => plan.id === creativePlanId && plan.status !== "archived")) {
-      setCreativePlanId(
-        creativePlans.find((plan) => plan.status === "selected")?.id ||
-        creativePlans.find((plan) => plan.status !== "archived")?.id ||
-        "",
-      );
-    }
-  }, [creativePlans, creativePlanId, isCommerce, productId]);
 
   // Creation mutation
   const createTaskMutation = useMutation({
@@ -235,15 +201,10 @@ export function ProductionTaskDialog({
       const finalTitle =
         taskTitle.trim() ||
         (isCommerce
-          ? selectedProduct?.title || "未命名商品视频任务"
+          ? "未命名商品视频任务"
+          : isDrama
+          ? `第 ${episodeNumber} 集`
           : creationMode === "fixed" ? rawScript.slice(0, 20) : "未命名短视频任务");
-
-      if (isCommerce && !productId) {
-        throw new Error("请先选择商品事实卡。 ");
-      }
-      if (isCommerce && !creativePlanId) {
-        throw new Error("请先在商品库生成并选择一个 Creative Plan。");
-      }
 
       if (autoSchedulePublish && (!scheduleAccountId || !scheduleAt)) {
         throw new Error("请先选择发布账号和计划发布时间。");
@@ -274,29 +235,41 @@ export function ProductionTaskDialog({
         sourceAssetId,
       });
 
+      const detail = productionMode === "commerce"
+        ? {
+            type: "commerce" as const,
+            creative_angle: creativeAngle,
+            hook: "",
+            audience: "",
+            core_message: "",
+            cta: "",
+          }
+        : productionMode === "drama"
+        ? {
+            type: "drama" as const,
+            episode_number: episodeNumber,
+            synopsis: taskTitle.trim(),
+          }
+        : {
+            type: "knowledge" as const,
+            topic: finalTitle,
+            audience: knowledgeAudience.trim(),
+            thesis: knowledgeThesis.trim(),
+            takeaway: knowledgeViewerTakeaway.trim(),
+            genre: taskGenre,
+          };
       return api.createProjectTask(projectId, {
         title: finalTitle,
         description:
           isCommerce
-            ? `商品视频：${selectedProduct?.title || finalTitle} · Creative Plan：${selectedCreativePlan?.variant_label || creativeAngle}`
+            ? `主商品营销视频 · 创意角度：${creativeAngle}`
+            : isDrama
+            ? `短剧第 ${episodeNumber} 集`
             : creationMode === "fixed"
             ? rawScript.slice(0, 200)
             : `知识主题: ${finalTitle}, 面向: ${knowledgeAudience.trim() || "普通观众"}`,
-        job_type: "video_composition",
-        product_id: isCommerce ? productId : undefined,
-        creative_plan_id: isCommerce ? creativePlanId : undefined,
-        creative_angle: isCommerce ? creativeAngle : undefined,
-        ...(!isCommerce ? {
-          knowledge_brief: {
-            audience: knowledgeAudience.trim(),
-            thesis: knowledgeThesis.trim(),
-            viewer_takeaway: knowledgeViewerTakeaway.trim(),
-            key_claims: [],
-            source_refs: [],
-            genre: taskGenre,
-          },
-        } : {}),
-        input_payload: {
+        detail,
+        generation_settings: {
           mode: creationMode,
           topic: finalTitle,
           raw_script: rawScript,
@@ -317,20 +290,7 @@ export function ProductionTaskDialog({
           image_workflow_id: imageWorkflowId || null,
           video_workflow_id: videoWorkflowId || null,
         },
-        template_id: selectedTemplateId,
-        bgm_asset_id: bgmEnabled ? bgmAssetId || null : null,
-        bgm_enabled: bgmEnabled,
-        bgm_volume: bgmVolume,
-        voice_id: taskVoiceId,
-        speed: taskSpeed,
-        content_mode: contentMode,
-        template_params: templateParams,
-        source_asset_id: contentMode === "uploaded_asset" ? sourceAssetId || null : null,
-        enable_research: enableResearch,
-        image_workflow_id: imageWorkflowId || null,
-        video_workflow_id: videoWorkflowId || null,
-        target_scene_count: targetSceneCount,
-        scheduled_publish: scheduledPublish,
+        publishing_settings: scheduledPublish ? { scheduled_publish: scheduledPublish } : {},
       });
     },
     onSuccess: (newTask) => {
@@ -348,9 +308,8 @@ export function ProductionTaskDialog({
       setKnowledgeAudience("");
       setKnowledgeThesis("");
       setKnowledgeViewerTakeaway("");
-      setProductId("");
-      setCreativePlanId("");
       setCreativeAngle("direct");
+      setEpisodeNumber(1);
       router.push(`/projects/${projectId}/tasks/${newTask.id}`);
     },
     onError: (error: any) => {
@@ -377,7 +336,9 @@ export function ProductionTaskDialog({
 
   const isFormValid =
     (isCommerce
-      ? Boolean(productId) && Boolean(creativePlanId)
+      ? Boolean(taskTitle.trim())
+      : isDrama
+      ? episodeNumber > 0 && Boolean(taskTitle.trim())
       : (creationMode === "generate" ? Boolean(taskTitle.trim()) : Boolean(rawScript.trim()))) &&
     (!contentModeSpec.requiresSourceAsset || Boolean(sourceAssetId)) &&
     (!autoSchedulePublish || (Boolean(scheduleAccountId) && Boolean(scheduleAt))) &&
@@ -426,19 +387,25 @@ export function ProductionTaskDialog({
             <div className="lg:col-span-7 p-5 sm:p-6 space-y-5">
               {isCommerce ? (
                 <CommerceTaskForm
-                  products={products}
-                  productsLoading={productsLoading}
-                  productId={productId}
-                  onProductIdChange={setProductId}
-                  creativePlans={creativePlans}
-                  creativePlansLoading={creativePlansLoading}
-                  creativePlanId={creativePlanId}
-                  onCreativePlanIdChange={setCreativePlanId}
                   creativeAngle={creativeAngle}
                   onCreativeAngleChange={setCreativeAngle}
                   taskTitle={taskTitle}
                   onTaskTitleChange={setTaskTitle}
                 />
+              ) : isDrama ? (
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-sm font-medium" htmlFor="episode-number">集数</label>
+                    <Input id="episode-number" type="number" min={1} value={episodeNumber}
+                      onChange={(event) => setEpisodeNumber(Math.max(1, Number(event.target.value)))} />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium" htmlFor="episode-title">本集标题</label>
+                    <Input id="episode-title" value={taskTitle}
+                      onChange={(event) => setTaskTitle(event.target.value)} placeholder="本集标题" />
+                  </div>
+                  <p className="text-xs text-muted-foreground">人物、地点、道具与风格继承自 Drama Project；本页只创建剧集内容。</p>
+                </div>
               ) : (
                 <KnowledgeTaskForm
                   creationMode={creationMode}
@@ -527,7 +494,7 @@ export function ProductionTaskDialog({
                       <p className="font-mono font-medium text-foreground">
                         {productionMode === "knowledge"
                           ? creationMode === "generate" ? `${targetSceneCount} 镜` : "文本拆分计算"
-                          : `${selectedCreativePlan?.scene_outline.length || 0} 个方案节拍`}
+                          : productionMode === "drama" ? `第 ${episodeNumber} 集` : "创意角度驱动"}
                       </p>
                     </div>
                     <div className="space-y-0.5">

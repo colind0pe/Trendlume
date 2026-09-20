@@ -9,7 +9,6 @@ from sqlalchemy.exc import IntegrityError
 
 from src.core.exceptions import ConflictException, NotFoundException, ValidationException
 from src.domain.content_modes import resolve_content_mode
-from src.domain.enums import ProductionMode, TaskStatus
 from src.models.project import ProjectModel
 from src.models.task import TaskModel
 from src.models.trend import (
@@ -290,18 +289,26 @@ class TrendProposalServiceMixin:
             task_payload["search_provider_id"] = str(options["search_provider_id"])[:100]
 
         try:
-            task = await TaskService(self.session).build_task(
+            task = await TaskService(self.session).create_task(
                 project.id,
                 TaskCreate(
                     title=proposal.title,
                     description=proposal.angle,
-                    production_mode=ProductionMode.KNOWLEDGE,
-                    input_payload=task_payload,
-                    target_scene_count=target_scene_count,
-                    enable_research=enable_research,
-                    research_max_queries=task_payload["research_max_queries"],
-                    research_max_results=task_payload["research_max_results"],
-                    search_provider_id=task_payload.get("search_provider_id"),
+                    detail={
+                        "type": "knowledge",
+                        "topic": proposal.title,
+                        "audience": knowledge_brief.audience,
+                        "thesis": knowledge_brief.thesis,
+                        "takeaway": knowledge_brief.viewer_takeaway,
+                        "genre": knowledge_brief.genre,
+                        "claims": [claim.model_dump() for claim in knowledge_brief.key_claims],
+                        "sources": list(knowledge_brief.source_refs),
+                    },
+                    generation_settings={
+                        key: value
+                        for key, value in task_payload.items()
+                        if key not in {"topic", "knowledge_brief"}
+                    },
                 ),
             )
         except Exception:
@@ -309,7 +316,6 @@ class TrendProposalServiceMixin:
             # rejects project/template/provider settings.
             await self.session.rollback()
             raise
-        self.session.add(task)
         proposal.task_id = task.id
         proposal.status = "task_created"
         proposal.updated_at = datetime.now(UTC)
@@ -344,31 +350,6 @@ class TrendProposalServiceMixin:
         proposal = await self.session.get(TopicProposalModel, proposal_id)
         if proposal is None:
             raise NotFoundException("Topic proposal", proposal_id)
-        return self._proposal_response(proposal)
-
-    async def mark_proposal_queue_failed(
-        self, proposal_id: str, error_message: str
-    ) -> tuple[TrendProposalResponse, Any | None]:
-        proposal = await self.session.get(TopicProposalModel, proposal_id)
-        if proposal is None:
-            raise NotFoundException("Topic proposal", proposal_id)
-        task = await self.session.get(TaskModel, proposal.task_id) if proposal.task_id else None
-        proposal.status = "queue_failed"
-        if task is not None:
-            task.status = TaskStatus.DRAFT.value
-            task.error_message = error_message[:2000]
-        proposal.updated_at = datetime.now(UTC)
-        await self.session.commit()
-        return self._proposal_response(proposal), task
-
-    async def mark_proposal_queue_queued(self, proposal_id: str) -> TrendProposalResponse:
-        proposal = await self.session.get(TopicProposalModel, proposal_id)
-        if proposal is None:
-            raise NotFoundException("Topic proposal", proposal_id)
-        if proposal.task_id:
-            proposal.status = "task_created"
-            proposal.updated_at = datetime.now(UTC)
-            await self.session.commit()
         return self._proposal_response(proposal)
 
     async def _latest_observation(self, trend_item_id: str):

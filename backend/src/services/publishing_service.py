@@ -12,13 +12,13 @@ from src.domain.enums import (
     AssetType,
     CredentialType,
     PlatformType,
-    ProductionMode,
     PublishJobStatus,
 )
 from src.models.asset import AssetModel
 from src.models.provider_config import ProviderConfigModel
 from src.models.publishing import CredentialModel, PublishingJobModel, SocialAccountModel
 from src.models.task import TaskModel
+from src.models.workflow import WorkflowArtifactModel
 from src.providers.publishing.auth_service import auth_service
 from src.providers.publishing.cookie_helper import normalize_storage_state
 from src.providers.publishing.douyin import DouyinPublishingProvider
@@ -40,7 +40,6 @@ from src.schemas.publishing import (
     QRCompleteRequest,
     SocialAccountCreate,
 )
-from src.services.commerce_preflight import CommercePreflightService
 from src.services.rendering_service import RenderingService
 from src.storage.local_storage import LocalStorageService, local_storage
 from src.tasks.broadcaster import event_broadcaster
@@ -77,26 +76,6 @@ class PublishingService:
             ProviderConfigModel.enabled.is_(True),
         )
         return (await self.session.execute(stmt)).scalars().first()
-
-    async def _assert_commerce_preflight(
-        self,
-        task_id: str,
-        *,
-        require_media: bool,
-    ) -> None:
-        result = await CommercePreflightService(self.session).run(
-            task_id,
-            require_media=require_media,
-        )
-        if result.blocking:
-            messages = [
-                item.message
-                for item in result.findings
-                if item.severity == "error"
-            ]
-            raise ValidationException(
-                "Commerce Preflight QA 未通过：" + "；".join(messages[:3])
-            )
 
     # ========================================================================
     # Credential methods
@@ -162,17 +141,36 @@ class PublishingService:
     async def _attach_task_links(self, jobs: list[PublishingJobModel]) -> None:
         if not jobs:
             return
-        assets = (await self.session.execute(select(AssetModel).where(
-            AssetModel.id.in_([job.video_asset_id for job in jobs])
-        ))).scalars().all()
+        assets = (
+            (
+                await self.session.execute(
+                    select(AssetModel).where(
+                        AssetModel.id.in_([job.video_asset_id for job in jobs])
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
         asset_tasks = {asset.id: (asset.metadata_json or {}).get("task_id") for asset in assets}
-        tasks = (await self.session.execute(select(TaskModel).where(
-            TaskModel.project_id.in_({job.project_id for job in jobs})
-        ))).scalars().all()
+        tasks = (
+            (
+                await self.session.execute(
+                    select(TaskModel).where(
+                        TaskModel.project_id.in_({job.project_id for job in jobs})
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
         tasks_by_id = {task.id: task for task in tasks}
-        video_tasks = {(task.result_payload or {}).get("final_video_asset_id"): task.id for task in tasks}
         for job in jobs:
-            task_id = (job.custom_params or {}).get("task_id") or (job.custom_params or {}).get("source_task_id") or asset_tasks.get(job.video_asset_id) or video_tasks.get(job.video_asset_id)
+            task_id = (
+                (job.custom_params or {}).get("task_id")
+                or (job.custom_params or {}).get("source_task_id")
+                or asset_tasks.get(job.video_asset_id)
+            )
             task = tasks_by_id.get(task_id)
             job.task_id = task.id if task and task.project_id == job.project_id else None
 
@@ -262,7 +260,9 @@ class PublishingService:
                 pub_provider.last_test_connected = True
                 pub_provider.last_tested_at = datetime.now(UTC)
                 display_label = acc.account_name or acc.username or "抖音账号"
-                pub_provider.last_test_message = f"抖音账号【{display_label}】凭证检测有效，发布服务就绪。"
+                pub_provider.last_test_message = (
+                    f"抖音账号【{display_label}】凭证检测有效，发布服务就绪。"
+                )
             else:
                 other_accounts = list(await self.acc_repo.list_by_platform(acc.platform))
                 has_other_valid = any(
@@ -337,7 +337,9 @@ class PublishingService:
         if pub_provider:
             pub_provider.last_test_connected = True
             pub_provider.last_tested_at = datetime.now(UTC)
-            pub_provider.last_test_message = f"抖音账号【{acc.account_name}】扫码授权成功，发布服务就绪。"
+            pub_provider.last_test_message = (
+                f"抖音账号【{acc.account_name}】扫码授权成功，发布服务就绪。"
+            )
             await self.session.commit()
 
         return acc
@@ -529,58 +531,64 @@ class PublishingService:
         if not task:
             raise NotFoundException("Task", task_id)
 
-        if task.production_mode == ProductionMode.COMMERCE.value:
-            await self._assert_commerce_preflight(task_id, require_media=False)
-
         # 1. Resolve Account
         if not account_id:
             accounts = await self.list_accounts(PlatformType.DOUYIN.value)
             if not accounts:
-                raise ValidationException("未检测到已绑定的抖音账号，请先在发布中心完成抖音创作者扫码登录。")
+                raise ValidationException(
+                    "未检测到已绑定的抖音账号，请先在发布中心完成抖音创作者扫码登录。"
+                )
             account_id = accounts[0].id
 
         # 2. Ensure Final Video Asset
-        video_asset_id = (task.result_payload or {}).get("final_video_asset_id")
+        video_asset_id = await self.session.scalar(
+            select(WorkflowArtifactModel.asset_id)
+            .where(
+                WorkflowArtifactModel.task_id == task_id,
+                WorkflowArtifactModel.kind.in_(["final_video", "composition"]),
+                WorkflowArtifactModel.asset_id.is_not(None),
+            )
+            .order_by(WorkflowArtifactModel.created_at.desc())
+            .limit(1)
+        )
         if not video_asset_id:
             composed_asset = await self.rendering_service.compose_task_video(task_id)
             video_asset_id = composed_asset.id
 
-        if task.production_mode == ProductionMode.COMMERCE.value:
-            await self._assert_commerce_preflight(task_id, require_media=True)
-
         # 3. Reuse the metadata generated with the storyboard.  Explicit
         # publish-form values still win, while old tasks fall back to the
         # historical defaults.
-        input_payload = task.input_payload or {}
-        generated_metadata = input_payload.get("metadata")
+        generation_settings = task.generation_settings or {}
+        generated_metadata = generation_settings.get("metadata")
         if not isinstance(generated_metadata, dict):
             generated_metadata = {}
         else:
             try:
-                generated_metadata = PlatformMetadata.model_validate(generated_metadata).model_dump()
+                generated_metadata = PlatformMetadata.model_validate(
+                    generated_metadata
+                ).model_dump()
             except Exception:
-                logger.warning("Ignoring malformed generated platform metadata for task %s", task_id)
+                logger.warning(
+                    "Ignoring malformed generated platform metadata for task %s", task_id
+                )
                 generated_metadata = {}
 
         pub_title = (
             title
             if title is not None and title.strip()
-            else generated_metadata.get("title")
-            or task.title
-            or "精彩短视频"
+            else generated_metadata.get("title") or task.title or "精彩短视频"
         )
         pub_desc = (
             description
             if description is not None
             else generated_metadata.get("description")
             or task.description
-            or input_payload.get("hook", "")
+            or getattr(task.commerce_detail, "hook", "")
         )
         pub_tags = (
             tags
             if tags is not None
-            else generated_metadata.get("tags")
-            or ["Trendlume", "科普", "热点视频", "AI创作"]
+            else generated_metadata.get("tags") or ["Trendlume", "科普", "热点视频", "AI创作"]
         )
 
         generated_custom_params = {
@@ -640,18 +648,6 @@ class PublishingService:
         if getattr(self.provider, "name", "") != "mock":
             await self.rendering_service._validate_media_file(video_path, require_audio=True)
 
-        task_id = (job.custom_params or {}).get("task_id")
-        linked_task = await self.task_repo.get_by_id(task_id) if task_id else None
-        if linked_task and linked_task.production_mode == ProductionMode.COMMERCE.value:
-            try:
-                await self._assert_commerce_preflight(task_id, require_media=True)
-            except ValidationException as exc:
-                job.status = PublishJobStatus.FAILED.value
-                job.error_message = str(exc)
-                await self.job_repo.update(job)
-                await self.session.commit()
-                raise
-
         job.status = PublishJobStatus.PUBLISHING.value
         job.attempt_count += 1
         await self.job_repo.update(job)
@@ -666,11 +662,13 @@ class PublishingService:
                     credential_data = self._credential_payload(cred)
 
             params = dict(job.custom_params or {})
-            params.update({
-                "job_id": job.id,
-                "account_id": account.id if account else "",
-                "account_name": account.account_name if account else "",
-            })
+            params.update(
+                {
+                    "job_id": job.id,
+                    "account_id": account.id if account else "",
+                    "account_name": account.account_name if account else "",
+                }
+            )
             attempt_started = True
             res = await self.provider.publish_video(
                 video_path=video_path,
@@ -688,11 +686,20 @@ class PublishingService:
                 # Persist a compact, redacted provider summary for diagnostics;
                 # never retain cookies, tokens, headers, or the full response.
                 raw_summary = res.raw_response if isinstance(res.raw_response, dict) else {}
-                blocked = {"token", "access_token", "refresh_token", "cookie", "cookies", "headers", "authorization"}
+                blocked = {
+                    "token",
+                    "access_token",
+                    "refresh_token",
+                    "cookie",
+                    "cookies",
+                    "headers",
+                    "authorization",
+                }
                 summary = {
                     str(key): value
                     for key, value in raw_summary.items()
-                    if str(key).lower() not in blocked and isinstance(value, (str, int, float, bool, type(None)))
+                    if str(key).lower() not in blocked
+                    and isinstance(value, (str, int, float, bool, type(None)))
                 }
                 job.custom_params = {
                     **(job.custom_params or {}),
@@ -720,7 +727,11 @@ class PublishingService:
         except Exception as e:
             safe_error = redact_sensitive_text(str(e))
             logger.error(f"Publish execution error for job {job.id}: {safe_error}")
-            job.status = PublishJobStatus.UNCERTAIN.value if attempt_started else PublishJobStatus.FAILED.value
+            job.status = (
+                PublishJobStatus.UNCERTAIN.value
+                if attempt_started
+                else PublishJobStatus.FAILED.value
+            )
             job.error_message = safe_error
             await self.job_repo.update(job)
             await self.session.commit()

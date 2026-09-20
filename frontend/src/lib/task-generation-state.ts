@@ -6,22 +6,30 @@ import {
 } from "@/lib/ui-constants";
 import type { ContentMode } from "@/lib/types";
 
-export function generationStatus(task: {
-  status?: string;
-  active_job?: { status?: string; job_type?: string } | null;
-}, liveStatus: string | null = null): string {
+export function generationStatus(
+  task: {
+    production_status?: string;
+    active_job?: { status?: string; job_type?: string } | null;
+  },
+  liveStatus: string | null = null,
+): string {
   const job = task.active_job;
   if (job && job.job_type !== "publish" && job.status) {
     if (job.status === "queued" || job.status === "pending") return "pending";
     if (job.status === "retrying") return "running";
     return job.status;
   }
-  if (["completed", "failed", "cancelled"].includes(task.status || "")) return task.status!;
-  return liveStatus || task.status || "draft";
+  if (
+    ["completed", "failed", "cancelled"].includes(task.production_status || "")
+  )
+    return task.production_status!;
+  return liveStatus || task.production_status || "draft";
 }
 
 export function isGenerationLifecycleEvent(event: string): boolean {
-  return /^(task\.(started|completed|failed|cancelled)|job\.(started|retrying|completed|failed|cancelled|uncertain))$/.test(event);
+  return /^(task\.(started|completed|failed|cancelled)|job\.(started|retrying|completed|failed|cancelled|uncertain))$/.test(
+    event,
+  );
 }
 
 export type SceneAssetRefreshAction = "workflow_unit" | "none";
@@ -68,12 +76,18 @@ export function buildGenerationOptions(
     bgm_enabled: input.bgmEnabled,
     bgm_asset_id: input.bgmEnabled ? input.bgmAssetId || null : null,
     bgm_volume: bgmVolume,
-    source_asset_id: input.contentMode === "uploaded_asset" ? input.sourceAssetId || null : null,
+    source_asset_id:
+      input.contentMode === "uploaded_asset"
+        ? input.sourceAssetId || null
+        : null,
   };
 }
 
 export function isSourceMaterialMode(contentMode: string | undefined): boolean {
-  return isContentMode(contentMode) && CONTENT_MODE_SPECS[contentMode].sourceKind === "online";
+  return (
+    isContentMode(contentMode) &&
+    CONTENT_MODE_SPECS[contentMode].sourceKind === "online"
+  );
 }
 
 export function resolveSceneAssetRefreshAction(
@@ -81,7 +95,12 @@ export function resolveSceneAssetRefreshAction(
   hasRetryUnit: boolean,
   hasSceneId: boolean,
 ): SceneAssetRefreshAction {
-  if (isContentMode(contentMode) && CONTENT_MODE_SPECS[contentMode].supportsSceneRetry && hasRetryUnit && hasSceneId) {
+  if (
+    isContentMode(contentMode) &&
+    CONTENT_MODE_SPECS[contentMode].supportsSceneRetry &&
+    hasRetryUnit &&
+    hasSceneId
+  ) {
     return "workflow_unit";
   }
   return "none";

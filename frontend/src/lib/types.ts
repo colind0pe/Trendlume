@@ -340,13 +340,10 @@ export interface Project {
   name: string;
   description: string;
   aspect_ratio: AspectRatio;
-  primary_production_mode: ProductionMode;
+  mode: ProductionMode;
   status: ProjectStatus;
-  cover_asset_id?: string | null;
-  default_voice_id?: string | null;
-  bgm_asset_id?: string | null;
-  settings: Record<string, any>;
-  template?: ProjectTemplate | null;
+  default_production_settings: Record<string, any>;
+  profile: Record<string, any>;
   created_at: string;
   updated_at: string;
 }
@@ -615,6 +612,7 @@ export interface SceneCreate {
 export interface WorkflowJob {
   id: string;
   task_id: string;
+  production_context_snapshot_id: string;
   job_type: string;
   status: JobStatus;
   progress: number;
@@ -637,25 +635,14 @@ export interface WorkflowJob {
 export interface Task {
   id: string;
   project_id: string;
-  product_id?: string | null;
-  creative_plan_id?: string | null;
-  creative_angle?: CreativeAngle | string | null;
-  project_context_version_id?: string | null;
-  context_hash?: string | null;
-  knowledge_item_id?: string | null;
-  drama_episode_id?: string | null;
   title: string;
   description: string;
-  job_type: string;
-  production_mode: ProductionMode;
-  status: TaskStatus;
-  progress_percentage: number;
-  input_payload: Record<string, any>;
-  result_payload?: Record<string, any> | null;
-  error_message?: string | null;
+  editorial_status: string;
+  production_status: string;
+  generation_settings: Record<string, any>;
+  publishing_settings: Record<string, any>;
+  detail: Record<string, any> & { type: ProductionMode };
   scenes_count?: number;
-  started_at?: string | null;
-  completed_at?: string | null;
   created_at: string;
   updated_at: string;
   active_job?: WorkflowJob | null;

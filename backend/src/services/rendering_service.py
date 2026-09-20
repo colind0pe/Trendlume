@@ -39,10 +39,12 @@ class RenderingService:
         ffmpeg_runner: Callable[[list[str], Path], Coroutine[Any, Any, bool]] | None = None,
         execution_context=None,
         durable: bool = False,
+        production_settings: dict[str, Any] | None = None,
     ):
         self.session = session
         self.execution_context = execution_context
         self.durable = durable
+        self.production_settings = production_settings
         self.commands: list[list[str]] = []
         self.storage = storage
         self.ffmpeg_runner = ffmpeg_runner
@@ -110,13 +112,13 @@ class RenderingService:
             await self.asset_repo.get_by_id(scene.audio_asset_id) if scene.audio_asset_id else None
         )
 
-        input_payload = (task.input_payload if task else {}) or {}
-        template_id = input_payload.get("template_id", "image_gallery_matted")
+        generation_settings = self.production_settings or (task.generation_settings if task else {}) or {}
+        template_id = generation_settings.get("template_id", "image_gallery_matted")
         template_item = template_catalog.get(template_id)
         if not template_item:
             raise ValidationException(f"模板不存在: {template_id}")
         content_mode = resolve_content_mode(
-            input_payload.get("content_mode"),
+            generation_settings.get("content_mode"),
             template_type=template_item["template_type"],
         )
         if not is_content_mode_supported(content_mode, template_item["template_type"]):
@@ -137,7 +139,7 @@ class RenderingService:
         if media_path and (not media_path.exists() or media_path.stat().st_size == 0):
             raise ValidationException(f"分镜画面文件不存在: {media_asset.file_path}")
 
-        template_params = dict(input_payload.get("template_params") or {})
+        template_params = dict(generation_settings.get("template_params") or {})
         template_params.update((scene.layout_params or {}).get("template_params") or {})
         template_params.setdefault("index", int(scene.sequence_index or 0) + 1)
         rendered_frame = self.storage.get_path(
@@ -192,7 +194,7 @@ class RenderingService:
                 text=scene.narration_text,
                 image_path=frame_media,
                 custom_params=template_params,
-                custom_css=(input_payload.get("custom_css") if task else None),
+                custom_css=(generation_settings.get("custom_css") if task else None),
                 transparent=media_is_video,
                 output_path=rendered_frame,
             )
@@ -470,12 +472,12 @@ class RenderingService:
         if not scenes:
             raise ValidationException("该任务没有任何分镜片段，无法合成视频。")
 
-        input_payload = (task.input_payload or {})
+        generation_settings = self.production_settings or task.generation_settings or {}
         explicit_bgm_override = bgm_asset_id is not None
-        template_id = input_payload.get("template_id", "image_gallery_matted")
+        template_id = generation_settings.get("template_id", "image_gallery_matted")
         template_item = template_catalog.get(template_id)
         content_mode = resolve_content_mode(
-            input_payload.get("content_mode"),
+            generation_settings.get("content_mode"),
             template_type=(template_item or {}).get("template_type"),
         )
         expected_scene_render_version = (
@@ -483,26 +485,6 @@ class RenderingService:
             if content_mode == "online_asset"
             else None
         )
-
-        # A completed final asset is a durable checkpoint. Reuse it when the
-        # database record and media file still pass ffprobe validation.
-        existing_final_id = (task.result_payload or {}).get("final_video_asset_id")
-        if existing_final_id and not explicit_bgm_override and not self.durable:
-            existing_final = await self.asset_repo.get_by_id(existing_final_id)
-            existing_metadata = (existing_final.metadata_json or {}) if existing_final else {}
-            if existing_final and existing_metadata.get("composition_format_version") == self.COMPOSITION_FORMAT_VERSION:
-                existing_path = self.storage.get_path(existing_final.file_path)
-                try:
-                    await self._validate_media_file(existing_path, require_audio=True)
-                    return existing_final
-                except Exception:
-                    logger.warning("Stored final video checkpoint is missing or invalid; re-rendering task %s", task_id)
-            elif existing_final:
-                logger.info(
-                    "Stored final video checkpoint uses an older composition format; "
-                    "re-rendering task %s",
-                    task_id,
-                )
 
         # 1. Ensure all scene segments are rendered
         clip_paths: list[Path] = []
@@ -632,19 +614,19 @@ class RenderingService:
         # 4b. Optionally mix project/task BGM below the narration volume.
         # Missing BGM settings mean that this render has no task-level BGM.
         project = await self.project_repo.get_by_id(task.project_id)
-        raw_bgm_enabled = input_payload.get("bgm_enabled", False)
+        raw_bgm_enabled = generation_settings.get("bgm_enabled", False)
         if isinstance(raw_bgm_enabled, str):
             bgm_enabled = raw_bgm_enabled.strip().lower() in {"true", "1", "yes", "on"}
         else:
             bgm_enabled = bool(raw_bgm_enabled)
-        selected_bgm_id = bgm_asset_id if explicit_bgm_override else input_payload.get("bgm_asset_id")
+        selected_bgm_id = bgm_asset_id if explicit_bgm_override else generation_settings.get("bgm_asset_id")
         if explicit_bgm_override:
             bgm_enabled = bool(bgm_asset_id)
         elif bgm_enabled and not selected_bgm_id:
             selected_bgm_id = project.bgm_asset_id if project else None
 
         try:
-            bgm_volume = float(input_payload.get("bgm_volume", 0.20))
+            bgm_volume = float(generation_settings.get("bgm_volume", 0.20))
         except (TypeError, ValueError) as exc:
             raise ValidationException("BGM 音量必须是 0.0 到 0.5 之间的数字。") from exc
         if not 0.0 <= bgm_volume <= 0.5:
@@ -714,8 +696,8 @@ class RenderingService:
                 "task_id": task_id,
                 "type": "final_composition",
                 "ffmpeg_commands": list(self.commands),
-                "template_id": (task.input_payload or {}).get("template_id", "image_gallery_matted"),
-                "template_version": (task.input_payload or {}).get("template_version", "1"),
+                "template_id": (task.generation_settings or {}).get("template_id", "image_gallery_matted"),
+                "template_version": (task.generation_settings or {}).get("template_version", "1"),
                 "content_mode": content_mode,
                 "layout_strategy": (
                     "online_cover_blurred_background"
@@ -736,16 +718,14 @@ class RenderingService:
             },
         )
 
-        # 6. Update Task Result Payload
-        final_result_payload = {
-            **(task.result_payload or {}),
+        final_result = {
             "video_status": "ready",
             "final_video_asset_id": final_asset.id,
             "final_video_url": self.storage.get_url(final_asset.file_path),
             "final_video_path": final_asset.file_path,
-            "template_id": (task.input_payload or {}).get("template_id", "image_gallery_matted"),
-            "template_version": (task.input_payload or {}).get("template_version", "1"),
-            "content_mode": (task.input_payload or {}).get("content_mode", "generated_image"),
+            "template_id": (task.generation_settings or {}).get("template_id", "image_gallery_matted"),
+            "template_version": (task.generation_settings or {}).get("template_version", "1"),
+            "content_mode": (task.generation_settings or {}).get("content_mode", "generated_image"),
             "total_duration": round(actual_final_duration, 2),
             "total_duration_seconds": round(actual_final_duration, 2),
             "bgm_enabled": bool(bgm_asset),
@@ -753,15 +733,14 @@ class RenderingService:
             "bgm_volume": round(bgm_volume, 3) if bgm_asset else 0.0,
             "subtitle_burned": subtitle_burned,
             "subtitle_line_count": subtitle_line_count,
-            "research": (task.input_payload or {}).get("research"),
-            "metadata": (task.input_payload or {}).get("metadata"),
+            "research": (task.generation_settings or {}).get("research"),
+            "metadata": (task.generation_settings or {}).get("metadata"),
             "composed_at": datetime.now(UTC).isoformat(),
         }
-        if not self.durable:
-            task.result_payload = final_result_payload
-            if self.execution_context:
-                await self.execution_context.fence(self.session)
-            await self.task_repo.update(task)
+        final_asset.metadata_json = {
+            **(final_asset.metadata_json or {}),
+            "production_result": final_result,
+        }
         if self.execution_context:
             await self.execution_context.fence(self.session)
         await self.session.commit()

@@ -1,80 +1,30 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from sqlalchemy import JSON, CheckConstraint, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.core.database import Base
-from src.domain.enums import ProductionMode
-
-if TYPE_CHECKING:
-    from src.models.product import ProductModel
-    from src.models.project import ProjectModel
-    from src.models.project_context import KnowledgeContentItemModel, ProjectContextVersionModel
-    from src.models.scene import SceneModel
 
 
 class TaskModel(Base):
-    __tablename__ = "tasks"
-    __table_args__ = (
-        CheckConstraint(
-            "(production_mode = 'knowledge' AND product_id IS NULL AND creative_plan_id IS NULL "
-            "AND drama_episode_id IS NULL) OR "
-            "(production_mode = 'commerce' AND knowledge_item_id IS NULL AND drama_episode_id IS NULL) OR "
-            "(production_mode = 'drama' AND knowledge_item_id IS NULL AND product_id IS NULL "
-            "AND creative_plan_id IS NULL AND drama_episode_id IS NOT NULL)",
-            name="ck_tasks_project_mode_reference_shape",
-        ),
-    )
+    """One editable video or episode; execution state belongs to WorkflowJob."""
 
+    __tablename__ = "tasks"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     project_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+        String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    product_id: Mapped[str | None] = mapped_column(
-        String(36), ForeignKey("products.id", ondelete="RESTRICT"), nullable=True, index=True
-    )
-    creative_plan_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey("commerce_creative_plans.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
-    project_context_version_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey("project_context_versions.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
-    context_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
-    knowledge_item_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey("knowledge_content_items.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
-    drama_episode_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey("drama_episodes.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
-    title: Mapped[str] = mapped_column(String(255), default="新视频生成任务", nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
-    job_type: Mapped[str] = mapped_column(String(50), default="video_composition", nullable=False)
-    production_mode: Mapped[str] = mapped_column(
-        String(20), default=ProductionMode.KNOWLEDGE.value, nullable=False
+    editorial_status: Mapped[str] = mapped_column(String(30), default="draft", nullable=False)
+    production_status: Mapped[str] = mapped_column(
+        String(30), default="not_started", nullable=False
     )
-    creative_angle: Mapped[str | None] = mapped_column(String(30), nullable=True)
-    status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False)
-    progress_percentage: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    input_payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
-    result_payload: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    generation_settings: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    publishing_settings: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(UTC), nullable=False
     )
@@ -84,17 +34,17 @@ class TaskModel(Base):
         onupdate=lambda: datetime.now(UTC),
         nullable=False,
     )
-
-    # Relationships
-    project: Mapped[ProjectModel] = relationship("ProjectModel", back_populates="tasks")
-    project_context_version: Mapped[ProjectContextVersionModel | None] = relationship(
-        "ProjectContextVersionModel", back_populates="tasks", lazy="joined"
+    project = relationship("ProjectModel", back_populates="tasks", lazy="joined")
+    knowledge_detail = relationship(
+        "KnowledgeTaskDetailModel", uselist=False, cascade="all, delete-orphan", lazy="joined"
     )
-    knowledge_item: Mapped[KnowledgeContentItemModel | None] = relationship(
-        "KnowledgeContentItemModel", back_populates="tasks", lazy="joined"
+    commerce_detail = relationship(
+        "CommerceTaskDetailModel", uselist=False, cascade="all, delete-orphan", lazy="joined"
     )
-    product: Mapped[ProductModel | None] = relationship("ProductModel", lazy="joined")
-    scenes: Mapped[list[SceneModel]] = relationship(
+    drama_episode = relationship(
+        "DramaTaskEpisodeModel", uselist=False, cascade="all, delete-orphan", lazy="joined"
+    )
+    scenes = relationship(
         "SceneModel",
         back_populates="task",
         cascade="all, delete-orphan",

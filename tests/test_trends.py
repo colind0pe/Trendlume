@@ -41,7 +41,8 @@ async def test_trend_run_normalizes_history_and_matches_project(
     project = ProjectModel(
         id="trend-project",
         name="科技项目",
-        settings={
+        mode="knowledge",
+        default_production_settings={
             "custom_setting": {"keep": True},
             "trends": {
                 "include_keywords": ["AI", "科技"],
@@ -179,7 +180,8 @@ async def test_trend_preferences_patch_preserves_unrelated_project_settings(
     project = ProjectModel(
         id="trend-preferences-project",
         name="Preferences",
-        settings={
+        mode="knowledge",
+        default_production_settings={
             "custom_setting": {"keep": True},
             "trends": {"include_keywords": ["old"], "exclude_keywords": ["blocked"]},
         },
@@ -200,16 +202,18 @@ async def test_trend_preferences_patch_preserves_unrelated_project_settings(
     }
 
     await test_session.refresh(project)
-    assert project.settings["custom_setting"] == {"keep": True}
-    assert project.settings["trends"]["include_keywords"] == ["new"]
-    assert project.settings["trends"]["exclude_keywords"] == ["blocked"]
+    assert project.default_production_settings["custom_setting"] == {"keep": True}
+    assert project.default_production_settings["trends"]["include_keywords"] == ["new"]
+    assert project.default_production_settings["trends"]["exclude_keywords"] == ["blocked"]
 
 
 @pytest.mark.asyncio
 async def test_project_subscription_api_is_idempotent_and_pauseable(
     client, test_session: AsyncSession
 ):
-    project = ProjectModel(id="subscription-api-project", name="Subscription API")
+    project = ProjectModel(
+        id="subscription-api-project", name="Subscription API", mode="knowledge"
+    )
     test_session.add(project)
     await test_session.commit()
 

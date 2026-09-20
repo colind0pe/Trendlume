@@ -59,7 +59,7 @@ export default function ProjectsPage() {
   }, [projects]);
 
   const createMutation = useMutation({
-    mutationFn: (data: { name: string; description: string; aspect_ratio: string; primary_production_mode: ProductionMode }) => api.createProject(data),
+    mutationFn: (data: Record<string, unknown>) => api.createProject(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       setIsCreateOpen(false);
@@ -80,7 +80,12 @@ export default function ProjectsPage() {
   const handleCreate = (event: React.FormEvent) => {
     event.preventDefault();
     if (!name.trim()) return;
-    createMutation.mutate({ name, description, aspect_ratio: aspectRatio, primary_production_mode: primaryProductionMode });
+    const profile = primaryProductionMode === "knowledge"
+      ? { knowledge_profile: {} }
+      : primaryProductionMode === "commerce"
+        ? { commerce_profile: {} }
+        : { drama_profile: { series_title: name }, drama_style_guide: {} };
+    createMutation.mutate({ name, description, aspect_ratio: aspectRatio, mode: primaryProductionMode, ...profile });
   };
 
   const requestDelete = (project: { id: string; name: string }) => setProjectToDelete(project);
@@ -200,7 +205,7 @@ export default function ProjectsPage() {
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-center gap-1.5">
                     <span className="rounded-md border border-primary/20 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
-                      {PRODUCTION_MODE_SPECS[project.primary_production_mode].label}
+                      {PRODUCTION_MODE_SPECS[project.mode].label}
                     </span>
                     <span className="rounded-md border border-border/80 bg-secondary/80 px-2 py-0.5 font-mono text-xs font-medium text-foreground shadow-xs">
                       {project.aspect_ratio}
@@ -227,7 +232,7 @@ export default function ProjectsPage() {
               <CardContent className="space-y-2 border-t border-border/50 p-4 sm:p-5 py-3 text-xs sm:text-sm text-muted-foreground">
                 <div className="flex justify-between items-center gap-3">
                   <span>模板风格</span>
-                  <span className="truncate font-medium text-foreground">{project.template?.name || "默认模板"}</span>
+                  <span className="truncate font-medium text-foreground">系列默认设置</span>
                 </div>
                 <div className="flex justify-between items-center gap-3">
                   <span>更新日期</span>
@@ -252,7 +257,7 @@ export default function ProjectsPage() {
               <div className="min-w-0 flex-1 space-y-1">
                 <div className="flex items-center gap-2.5">
                   <span className="rounded-md border border-primary/20 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
-                    {PRODUCTION_MODE_SPECS[project.primary_production_mode].label}
+                    {PRODUCTION_MODE_SPECS[project.mode].label}
                   </span>
                   <span className="rounded-md border border-border/80 bg-secondary/80 px-2 py-0.5 font-mono text-xs font-medium text-foreground shadow-xs">
                     {project.aspect_ratio}
@@ -264,7 +269,7 @@ export default function ProjectsPage() {
                 <p className="truncate text-xs sm:text-sm text-muted-foreground">{project.description || "暂无项目说明"}</p>
               </div>
               <div className="flex shrink-0 items-center gap-3 text-sm text-muted-foreground">
-                <span className="hidden lg:inline font-medium text-foreground/80">{project.template?.name || "默认模板"}</span>
+                <span className="hidden lg:inline font-medium text-foreground/80">系列工作区</span>
                 <span className="hidden sm:inline font-mono text-xs tabular-nums text-foreground/70">{formatDate(project.updated_at)}</span>
                 <Link href={`/projects/${project.id}`}>
                   <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs sm:text-sm">

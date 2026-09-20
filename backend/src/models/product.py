@@ -3,19 +3,27 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.core.database import Base
 
 if TYPE_CHECKING:
     from src.models.asset import AssetModel
+    from src.models.project import ProjectModel
 
 
 class ProductModel(Base):
     __tablename__ = "products"
+    __table_args__ = (
+        Index("ix_products_project", "project_id"),
+        UniqueConstraint("project_id", name="uq_products_project"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     brand: Mapped[str] = mapped_column(String(255), default="", nullable=False)
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
@@ -44,6 +52,7 @@ class ProductModel(Base):
         order_by="ProductAssetModel.sort_order, ProductAssetModel.created_at",
         lazy="selectin",
     )
+    project: Mapped[ProjectModel] = relationship("ProjectModel", back_populates="products")
 
 
 class ProductAssetModel(Base):

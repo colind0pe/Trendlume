@@ -7,6 +7,7 @@ import time
 import uuid
 import zlib
 from datetime import UTC, datetime
+from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from loguru import logger
@@ -458,11 +459,13 @@ class GenerationService:
         execution_context=None,
         task_id: str | None = None,
         job_id: str | None = None,
+        production_settings: dict[str, Any] | None = None,
     ):
         self.session = session
         self.execution_context = execution_context
         self.storage = storage
         self.provider_manager = provider_manager or ProviderManager(session)
+        self.production_settings = production_settings
         self.task_repo = TaskRepository(session)
         self.scene_repo = SceneRepository(session)
         self.project_repo = ProjectRepository(session)
@@ -472,6 +475,11 @@ class GenerationService:
         self.prompt_observations = PromptObservationRecorder(
             session, task_id=task_id, job_id=job_id
         )
+
+    def _task_settings(self, task: TaskModel | None) -> dict[str, Any]:
+        if self.production_settings is not None:
+            return self.production_settings
+        return (task.generation_settings if task else {}) or {}
 
     @staticmethod
     def _prompt_spec(prompt_id: str, prompt_versions: dict[str, str] | None = None):
@@ -776,7 +784,7 @@ class GenerationService:
         cls, task: TaskModel | None, project_aspect_ratio: str
     ) -> tuple[str, int, int]:
         """Use the selected template's media contract, as the Demo does."""
-        payload = (task.input_payload if task else {}) or {}
+        payload = self._task_settings(task)
         template_id = payload.get("template_id", "image_gallery_matted")
         template = template_catalog.get(template_id)
         if not template:
@@ -1365,7 +1373,7 @@ class GenerationService:
         task = await self.task_repo.get_by_id(task_id)
         if not task:
             raise NotFoundException("Task", task_id)
-        payload = dict(task.input_payload or {})
+        payload = dict(self._task_settings(task))
         topic = str(payload.get("topic") or task.title or "短视频创作").strip() or "短视频创作"
         cached = payload.get("research")
         if isinstance(cached, dict) and not force and cached.get("status") in {
@@ -1390,7 +1398,7 @@ class GenerationService:
             "completed_at": None,
         }
         payload["research"] = pending
-        task.input_payload = payload
+        task.generation_settings = payload
         if self.execution_context:
             await self.execution_context.fence(self.session)
         await self.task_repo.update(task)
@@ -1430,7 +1438,7 @@ class GenerationService:
             payload["research_context"] = persisted_result.format_for_prompt()
         else:
             payload.pop("research_context", None)
-        task.input_payload = payload
+        task.generation_settings = payload
         if self.execution_context:
             await self.execution_context.fence(self.session)
         await self.task_repo.update(task)
@@ -1444,7 +1452,7 @@ class GenerationService:
         task = await self.task_repo.get_by_id(task_id)
         if not task:
             raise NotFoundException("Task", task_id)
-        payload = dict(task.input_payload or {})
+        payload = dict(self._task_settings(task))
         topic = str(payload.get("topic") or task.title or "短视频创作").strip() or "短视频创作"
         cached = payload.get("research")
         if isinstance(cached, dict):
@@ -1769,13 +1777,13 @@ class GenerationService:
             raise ValidationException("请等待视频生成完成后再重新生成发布信息。")
         scenes = await self.scene_repo.list_by_task_id(task_id)
         narration = "\n".join(scene.narration_text for scene in scenes if scene.narration_text.strip())
-        narration = narration or (task.input_payload or {}).get("narration") or ""
+        narration = narration or self._task_settings(task).get("narration") or ""
         if not narration.strip():
             raise ValidationException("请先保存视频旁白，再重新生成发布信息。")
         provider = await self._get_llm_provider()
         if not provider:
             raise ValidationException("请先配置大语言模型服务。")
-        prompt_versions = (task.input_payload or {}).get("prompt_versions")
+        prompt_versions = self._task_settings(task).get("prompt_versions")
         prompt = (
             "根据视频旁白重新生成平台发布信息，保留旁白事实，不生成新分镜。只输出 JSON："
             '{"title":"30字以内的新标题","description":"1-3句发布描述","tags":["话题"]}。\n'
@@ -1799,18 +1807,13 @@ class GenerationService:
         metadata.tags = self._filter_platform_tags(metadata.tags, metadata.title)[:5]
         if not metadata.title or not metadata.description or not metadata.tags:
             raise ValidationException("模型未返回完整有效的标题、描述和话题，原发布信息已保留。")
-        previous = dict((task.input_payload or {}).get("metadata") or {})
+        previous = dict(self._task_settings(task).get("metadata") or {})
         merged = PlatformMetadata.model_validate({
             **previous, "title": metadata.title, "description": metadata.description, "tags": metadata.tags,
         })
         task.title = merged.title
         task.description = merged.description
-        task.input_payload = {**(task.input_payload or {}), "metadata": merged.model_dump()}
-        asset_id = (task.result_payload or {}).get("final_video_asset_id")
-        if asset_id:
-            asset = await self.asset_service.asset_repo.get_by_id(asset_id)
-            if asset:
-                asset.metadata_json = {**(asset.metadata_json or {}), "metadata": merged.model_dump()}
+        task.generation_settings = {**(task.generation_settings or {}), "metadata": merged.model_dump()}
         if self.execution_context:
             await self.execution_context.fence(self.session)
         await self.session.commit()
@@ -1826,19 +1829,19 @@ class GenerationService:
         task.title = script.title
         task.description = script.hook
         metadata_payload = script.metadata.model_dump()
-        if (task.input_payload or {}).get("content_mode") == "online_asset":
+        if self._task_settings(task).get("content_mode") == "online_asset":
             metadata_payload["declaration"] = "内容取材网络"
         script_payload = {
             "hook": script.hook,
             "narration": script.narration,
             "metadata": metadata_payload,
         }
-        if task.production_mode == ProductionMode.KNOWLEDGE.value:
+        if task.project.mode == ProductionMode.KNOWLEDGE.value:
             script_payload["knowledge_brief"] = (
                 script.knowledge_brief or KnowledgeBrief()
             ).model_dump()
-        task.input_payload = {
-            **(task.input_payload or {}),
+        task.generation_settings = {
+            **(task.generation_settings or {}),
             **script_payload,
         }
         if self.execution_context:
@@ -1868,7 +1871,7 @@ class GenerationService:
                                 "source_refs": list(sc.source_refs),
                             }
                         }
-                        if task.production_mode == ProductionMode.KNOWLEDGE.value
+                        if task.project.mode == ProductionMode.KNOWLEDGE.value
                         else {}
                     )
                 ),
@@ -1896,14 +1899,14 @@ class GenerationService:
         task = await self.task_repo.get_by_id(scene.task_id)
         target_voice = voice_id
         if not target_voice and task:
-            target_voice = task.input_payload.get("voice_id")
+            target_voice = self._task_settings(task).get("voice_id")
             if not target_voice:
                 project = await self.project_repo.get_by_id(task.project_id)
                 if project and project.default_voice_id:
                     target_voice = project.default_voice_id
         target_voice = target_voice or await self.provider_manager.get_default_tts_voice()
 
-        target_speed = speed or (task.input_payload.get("speed") if task else 1.0) or 1.0
+        target_speed = speed or self._task_settings(task).get("speed") or 1.0
 
         try:
             tts_provider = await self._get_tts_provider()
@@ -2056,8 +2059,8 @@ class GenerationService:
             project = await self.project_repo.get_by_id(task.project_id)
             if project:
                 aspect_ratio = project.aspect_ratio
-            workflow_snapshot = (task.input_payload or {}).get("image_workflow_snapshot") or {}
-            workflow_target = workflow_snapshot.get("path") or (task.input_payload or {}).get(
+            workflow_snapshot = self._task_settings(task).get("image_workflow_snapshot") or {}
+            workflow_target = workflow_snapshot.get("path") or self._task_settings(task).get(
                 "image_workflow_id"
             )
 
@@ -2226,8 +2229,8 @@ class GenerationService:
             project = await self.project_repo.get_by_id(task.project_id)
             if project:
                 aspect_ratio = project.aspect_ratio
-            workflow_snapshot = (task.input_payload or {}).get("video_workflow_snapshot") or {}
-            workflow_target = workflow_snapshot.get("path") or (task.input_payload or {}).get(
+            workflow_snapshot = self._task_settings(task).get("video_workflow_snapshot") or {}
+            workflow_target = workflow_snapshot.get("path") or self._task_settings(task).get(
                 "video_workflow_id"
             )
 

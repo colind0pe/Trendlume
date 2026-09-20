@@ -1,253 +1,84 @@
-from fastapi import APIRouter, Depends, Query, status
+from typing import Any
+from uuid import uuid4
+
+from fastapi import APIRouter, Depends, status
+from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.dependencies import (
-    get_asset_service,
-    get_db,
-    get_project_service,
-    get_task_service,
-    get_template_service,
-    request_session_factory,
-)
-from src.api.task_presenter import task_response
-from src.domain.enums import JobType
-from src.schemas.asset import AssetResponse
+from src.api.dependencies import get_project_service, get_task_service
+from src.core.database import get_db
+from src.core.exceptions import NotFoundException, ValidationException
+from src.models.drama import DramaCharacterModel, DramaLocationModel, DramaPropModel
+from src.models.product import ProductModel
+from src.models.project import ProjectModel
 from src.schemas.common import APIResponse
-from src.schemas.project import (
-    ProjectCreate,
-    ProjectDetailResponse,
-    ProjectResponse,
-    ProjectUpdate,
-)
-from src.schemas.project_context import (
-    CommerceProfileInput,
-    CommerceProfileResponse,
-    KnowledgeContentItemCreate,
-    KnowledgeContentItemResponse,
-    KnowledgeContentItemUpdate,
-    KnowledgeProfileInput,
-    KnowledgeProfileResponse,
-)
+from src.schemas.product import ProductCreate, ProductResponse, ProductUpdate
+from src.schemas.project import ProjectCreate, ProjectDetailResponse, ProjectResponse, ProjectUpdate
 from src.schemas.task import TaskCreate, TaskResponse
-from src.schemas.template import ProjectTemplateResponse, ProjectTemplateUpdate
-from src.services.asset_service import AssetService
-from src.services.project_context import (
-    create_knowledge_item,
-    get_commerce_profile,
-    get_knowledge_profile,
-    list_knowledge_items,
-    update_commerce_profile,
-    update_knowledge_item,
-    update_knowledge_profile,
-)
 from src.services.project_service import ProjectService
-from src.services.system_asset_service import sync_bgm_directory_assets
 from src.services.task_service import TaskService
-from src.services.template_service import ProjectTemplateService
-from src.tasks.manager import task_manager
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
 
+class DramaResourceInput(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    description: str = ""
+    visual_description: str = ""
+    continuity_data: dict[str, Any] = Field(default_factory=dict)
+    approval_status: str = "draft"
+
+
+def _columns(model):
+    return {column.name: getattr(model, column.name) for column in model.__table__.columns}
+
+
+def _task(task):
+    details = {
+        "knowledge": task.knowledge_detail,
+        "commerce": task.commerce_detail,
+        "drama": task.drama_episode,
+    }
+    kind, detail = next((key, value) for key, value in details.items() if value is not None)
+    return {**_columns(task), "detail": {"type": kind, **_columns(detail)}}
+
+
+def _project(project, include_tasks=False):
+    profile = getattr(project, f"{project.mode}_profile")
+    data = {**_columns(project), "profile": _columns(profile)}
+    if include_tasks:
+        data["tasks"] = [_task(task) for task in project.tasks]
+    return data
+
+
 @router.post("", response_model=APIResponse[ProjectResponse], status_code=status.HTTP_201_CREATED)
 async def create_project(
-    payload: ProjectCreate,
-    service: ProjectService = Depends(get_project_service),
+    payload: ProjectCreate, service: ProjectService = Depends(get_project_service)
 ):
-    project = await service.create_project(payload)
-    return APIResponse(data=ProjectResponse.model_validate(project))
+    return APIResponse(data=_project(await service.create_project(payload)))
 
 
 @router.get("", response_model=APIResponse[list[ProjectResponse]])
-async def list_projects(
-    limit: int = Query(default=50, ge=1, le=100),
-    offset: int = Query(default=0, ge=0),
-    service: ProjectService = Depends(get_project_service),
-):
-    projects = await service.list_projects(limit=limit, offset=offset)
-    return APIResponse(data=[ProjectResponse.model_validate(p) for p in projects])
-
-
-@router.get(
-    "/{project_id}/knowledge/items",
-    response_model=APIResponse[list[KnowledgeContentItemResponse]],
-)
-async def list_project_knowledge_items(
-    project_id: str,
-    db: AsyncSession = Depends(get_db),
-):
-    items = await list_knowledge_items(db, project_id)
-    return APIResponse(data=[KnowledgeContentItemResponse.model_validate(item) for item in items])
-
-
-@router.post(
-    "/{project_id}/knowledge/items",
-    response_model=APIResponse[KnowledgeContentItemResponse],
-    status_code=status.HTTP_201_CREATED,
-)
-async def create_project_knowledge_item(
-    project_id: str,
-    payload: KnowledgeContentItemCreate,
-    db: AsyncSession = Depends(get_db),
-):
-    item = await create_knowledge_item(db, project_id, payload)
-    return APIResponse(data=KnowledgeContentItemResponse.model_validate(item))
-
-
-@router.patch(
-    "/{project_id}/knowledge/items/{item_id}",
-    response_model=APIResponse[KnowledgeContentItemResponse],
-)
-async def update_project_knowledge_item(
-    project_id: str,
-    item_id: str,
-    payload: KnowledgeContentItemUpdate,
-    db: AsyncSession = Depends(get_db),
-):
-    item = await update_knowledge_item(db, project_id, item_id, payload)
-    return APIResponse(data=KnowledgeContentItemResponse.model_validate(item))
-
-
-@router.get(
-    "/{project_id}/knowledge/profile",
-    response_model=APIResponse[KnowledgeProfileResponse],
-)
-async def get_project_knowledge_profile(
-    project_id: str,
-    db: AsyncSession = Depends(get_db),
-):
-    profile = await get_knowledge_profile(db, project_id)
-    return APIResponse(data=KnowledgeProfileResponse.model_validate(profile))
-
-
-@router.put(
-    "/{project_id}/knowledge/profile",
-    response_model=APIResponse[KnowledgeProfileResponse],
-)
-async def update_project_knowledge_profile(
-    project_id: str,
-    payload: KnowledgeProfileInput,
-    db: AsyncSession = Depends(get_db),
-):
-    profile = await update_knowledge_profile(db, project_id, payload)
-    return APIResponse(data=KnowledgeProfileResponse.model_validate(profile))
-
-
-@router.get(
-    "/{project_id}/commerce/profile",
-    response_model=APIResponse[CommerceProfileResponse],
-)
-async def get_project_commerce_profile(
-    project_id: str,
-    db: AsyncSession = Depends(get_db),
-):
-    profile = await get_commerce_profile(db, project_id)
-    return APIResponse(data=CommerceProfileResponse.model_validate(profile))
-
-
-@router.put(
-    "/{project_id}/commerce/profile",
-    response_model=APIResponse[CommerceProfileResponse],
-)
-async def update_project_commerce_profile(
-    project_id: str,
-    payload: CommerceProfileInput,
-    db: AsyncSession = Depends(get_db),
-):
-    profile = await update_commerce_profile(db, project_id, payload)
-    return APIResponse(data=CommerceProfileResponse.model_validate(profile))
-
-
-@router.get("/{project_id}/bgm", response_model=APIResponse[list[AssetResponse]])
-async def list_project_bgm(
-    project_id: str,
-    project_service: ProjectService = Depends(get_project_service),
-    asset_service: AssetService = Depends(get_asset_service),
-):
-    """Return legal project BGM assets and the read-only system catalog."""
-    await project_service.get_project(project_id)
-    if await sync_bgm_directory_assets(asset_service.session, asset_service.storage):
-        await asset_service.session.commit()
-    assets = await asset_service.list_project_bgm(project_id)
-    return APIResponse(data=[AssetResponse.model_validate(asset) for asset in assets])
+async def list_projects(service: ProjectService = Depends(get_project_service)):
+    return APIResponse(data=[_project(item) for item in await service.list_projects()])
 
 
 @router.get("/{project_id}", response_model=APIResponse[ProjectDetailResponse])
-async def get_project_detail(
-    project_id: str,
-    service: ProjectService = Depends(get_project_service),
-):
-    project = await service.get_project_detail(project_id)
-    return APIResponse(data=ProjectDetailResponse.model_validate(project))
+async def get_project(project_id: str, service: ProjectService = Depends(get_project_service)):
+    return APIResponse(data=_project(await service.get_project(project_id), True))
 
 
 @router.patch("/{project_id}", response_model=APIResponse[ProjectResponse])
 async def update_project(
-    project_id: str,
-    payload: ProjectUpdate,
-    service: ProjectService = Depends(get_project_service),
+    project_id: str, payload: ProjectUpdate, service: ProjectService = Depends(get_project_service)
 ):
-    project = await service.update_project(project_id, payload)
-    return APIResponse(data=ProjectResponse.model_validate(project))
+    return APIResponse(data=_project(await service.update_project(project_id, payload)))
 
 
 @router.delete("/{project_id}", response_model=APIResponse[bool])
-async def delete_project(
-    project_id: str,
-    service: ProjectService = Depends(get_project_service),
-):
-    result = await service.delete_project(project_id)
-    return APIResponse(data=result)
-
-
-# Template Sub-resource (1:1 with Project)
-@router.get("/{project_id}/template", response_model=APIResponse[ProjectTemplateResponse])
-async def get_project_template(
-    project_id: str,
-    template_service: ProjectTemplateService = Depends(get_template_service),
-):
-    template = await template_service.get_template_by_project(project_id)
-    return APIResponse(data=ProjectTemplateResponse.model_validate(template))
-
-
-@router.put("/{project_id}/template", response_model=APIResponse[ProjectTemplateResponse])
-async def update_project_template(
-    project_id: str,
-    payload: ProjectTemplateUpdate,
-    template_service: ProjectTemplateService = Depends(get_template_service),
-):
-    template = await template_service.update_template(project_id, payload)
-    return APIResponse(data=ProjectTemplateResponse.model_validate(template))
-
-
-# Tasks Sub-resource (1:N with Project)
-@router.get("/{project_id}/tasks", response_model=APIResponse[list[TaskResponse]])
-async def list_project_tasks(
-    project_id: str,
-    status_filter: str | None = Query(None, alias="status"),
-    limit: int = Query(default=50, ge=1, le=100),
-    offset: int = Query(default=0, ge=0),
-    task_service: TaskService = Depends(get_task_service),
-    db: AsyncSession = Depends(get_db),
-):
-    tasks = await task_service.list_tasks(
-        project_id=project_id,
-        status=status_filter,
-        limit=limit,
-        offset=offset,
-    )
-    factory = request_session_factory(db)
-    responses = []
-    for task in tasks:
-        job = await task_manager.get_latest_job(
-            task.id,
-            job_type=JobType.FULL_PIPELINE.value,
-            session_factory=factory,
-        )
-        if not job:
-            job = await task_manager.get_latest_job(task.id, session_factory=factory)
-        responses.append(task_response(task, job))
-    return APIResponse(data=responses)
+async def delete_project(project_id: str, service: ProjectService = Depends(get_project_service)):
+    return APIResponse(data=await service.delete_project(project_id))
 
 
 @router.post(
@@ -256,9 +87,139 @@ async def list_project_tasks(
     status_code=status.HTTP_201_CREATED,
 )
 async def create_project_task(
-    project_id: str,
-    payload: TaskCreate,
-    task_service: TaskService = Depends(get_task_service),
+    project_id: str, payload: TaskCreate, service: TaskService = Depends(get_task_service)
 ):
-    task = await task_service.create_task(project_id, payload)
-    return APIResponse(data=task_response(task, scenes_count=0))
+    return APIResponse(data=_task(await service.create_task(project_id, payload)))
+
+
+@router.get("/{project_id}/tasks", response_model=APIResponse[list[TaskResponse]])
+async def list_project_tasks(project_id: str, service: TaskService = Depends(get_task_service)):
+    return APIResponse(data=[_task(item) for item in await service.list_tasks(project_id)])
+
+
+@router.get("/{project_id}/product", response_model=APIResponse[ProductResponse])
+async def get_project_product(project_id: str, db: AsyncSession = Depends(get_db)):
+    product = await db.scalar(select(ProductModel).where(ProductModel.project_id == project_id))
+    if product is None:
+        raise NotFoundException("Product", project_id)
+    return APIResponse(data=product)
+
+
+@router.put("/{project_id}/product", response_model=APIResponse[ProductResponse])
+async def put_project_product(
+    project_id: str,
+    payload: ProductCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    project = await db.get(ProjectModel, project_id)
+    if project is None:
+        raise NotFoundException("Project", project_id)
+    if project.mode != "commerce":
+        raise ValidationException("只有 Commerce Project 可以配置主商品。")
+    product = await db.scalar(select(ProductModel).where(ProductModel.project_id == project_id))
+    values = payload.model_dump(exclude={"name", "selling_points"})
+    if product is None:
+        product = ProductModel(id=f"product_{uuid4().hex[:12]}", project_id=project_id, **values)
+        db.add(product)
+    else:
+        for key, value in values.items():
+            setattr(product, key, value)
+    await db.commit()
+    await db.refresh(product)
+    return APIResponse(data=product)
+
+
+@router.patch("/{project_id}/product", response_model=APIResponse[ProductResponse])
+async def patch_project_product(
+    project_id: str,
+    payload: ProductUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    product = await db.scalar(select(ProductModel).where(ProductModel.project_id == project_id))
+    if product is None:
+        raise NotFoundException("Product", project_id)
+    for key, value in payload.model_dump(exclude_unset=True, exclude={"selling_points"}).items():
+        setattr(product, key, value)
+    await db.commit()
+    return APIResponse(data=product)
+
+
+async def _drama_project(db: AsyncSession, project_id: str) -> ProjectModel:
+    project = await db.get(ProjectModel, project_id)
+    if project is None:
+        raise NotFoundException("Project", project_id)
+    if project.mode != "drama":
+        raise ValidationException("Drama 资源只能归属 Drama Project。")
+    return project
+
+
+@router.get("/{project_id}/characters", response_model=APIResponse[list[dict[str, Any]]])
+async def list_project_characters(project_id: str, db: AsyncSession = Depends(get_db)):
+    await _drama_project(db, project_id)
+    rows = (await db.scalars(select(DramaCharacterModel).where(
+        DramaCharacterModel.project_id == project_id
+    ))).all()
+    return APIResponse(data=[_columns(row) for row in rows])
+
+
+@router.post("/{project_id}/characters", response_model=APIResponse[dict[str, Any]], status_code=201)
+async def create_project_character(
+    project_id: str, payload: DramaResourceInput, db: AsyncSession = Depends(get_db)
+):
+    await _drama_project(db, project_id)
+    row = DramaCharacterModel(
+        id=f"character_{uuid4().hex[:12]}", project_id=project_id,
+        name=payload.name, description=payload.description,
+        approval_status=payload.approval_status,
+    )
+    db.add(row)
+    await db.commit()
+    return APIResponse(data=_columns(row))
+
+
+@router.get("/{project_id}/locations", response_model=APIResponse[list[dict[str, Any]]])
+async def list_project_locations(project_id: str, db: AsyncSession = Depends(get_db)):
+    await _drama_project(db, project_id)
+    rows = (await db.scalars(select(DramaLocationModel).where(
+        DramaLocationModel.project_id == project_id
+    ))).all()
+    return APIResponse(data=[_columns(row) for row in rows])
+
+
+@router.post("/{project_id}/locations", response_model=APIResponse[dict[str, Any]], status_code=201)
+async def create_project_location(
+    project_id: str, payload: DramaResourceInput, db: AsyncSession = Depends(get_db)
+):
+    await _drama_project(db, project_id)
+    row = DramaLocationModel(
+        id=f"location_{uuid4().hex[:12]}", project_id=project_id,
+        name=payload.name, visual_description=payload.visual_description or payload.description,
+        continuity_data=payload.continuity_data, approval_status=payload.approval_status,
+    )
+    db.add(row)
+    await db.commit()
+    return APIResponse(data=_columns(row))
+
+
+@router.get("/{project_id}/props", response_model=APIResponse[list[dict[str, Any]]])
+async def list_project_props(project_id: str, db: AsyncSession = Depends(get_db)):
+    await _drama_project(db, project_id)
+    rows = (await db.scalars(select(DramaPropModel).where(
+        DramaPropModel.project_id == project_id
+    ))).all()
+    return APIResponse(data=[_columns(row) for row in rows])
+
+
+@router.post("/{project_id}/props", response_model=APIResponse[dict[str, Any]], status_code=201)
+async def create_project_prop(
+    project_id: str, payload: DramaResourceInput, db: AsyncSession = Depends(get_db)
+):
+    await _drama_project(db, project_id)
+    row = DramaPropModel(
+        id=f"prop_{uuid4().hex[:12]}", project_id=project_id,
+        name=payload.name, description=payload.description,
+        continuity_data=payload.continuity_data, approval_status=payload.approval_status,
+    )
+    db.add(row)
+    await db.commit()
+    return APIResponse(data=_columns(row))

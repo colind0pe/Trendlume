@@ -22,11 +22,11 @@ def _apply_job(
     scenes_count: int | None = None,
 ) -> TaskResponse:
     response.scenes_count = len(task.scenes or []) if scenes_count is None else scenes_count
-    response.scheduled_publish = (task.input_payload or {}).get("scheduled_publish")
+    response.scheduled_publish = (task.publishing_settings or {}).get("scheduled_publish")
     if job:
         response.active_job = WorkflowJobResponse.model_validate(job)
         response.current_stage = job.current_stage
-        response.current_stage_label = _stage_label(task.production_mode, job.current_stage)
+        response.current_stage_label = _stage_label(task.project.mode, job.current_stage)
         response.resume_count = job.retry_count
         response.last_heartbeat_at = job.heartbeat_at
         response.can_resume = job.status in {"failed", "cancelled", "missed", "uncertain"}

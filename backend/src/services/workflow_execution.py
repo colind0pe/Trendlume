@@ -67,7 +67,10 @@ async def mark_steps_stale(session: AsyncSession, task_id: str, steps: set[str],
 async def mark_manual_storyboard(session: AsyncSession, task_id: str) -> None:
     task = await session.get(TaskModel, task_id)
     if task:
-        task.input_payload = {**(task.input_payload or {}), "manual_storyboard_version": uuid.uuid4().hex}
+        task.generation_settings = {
+            **(task.generation_settings or {}),
+            "manual_storyboard_version": uuid.uuid4().hex,
+        }
 
 
 async def interrupt_steps(session: AsyncSession, job_id: str, status: str = "interrupted") -> None:
