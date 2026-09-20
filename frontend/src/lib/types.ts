@@ -630,6 +630,8 @@ export interface WorkflowJob {
   heartbeat_at?: string | null;
   completed_at?: string | null;
   updated_at?: string;
+  stages?: WorkflowStepRun[];
+  artifacts?: WorkflowArtifact[];
 }
 
 export interface Task {
@@ -843,22 +845,6 @@ export interface CreativePlan {
   selected_at?: string | null;
   created_at: string;
   updated_at: string;
-}
-
-export interface CommercePreflightFinding {
-  code: string;
-  severity: "pass" | "warning" | "error";
-  message: string;
-  scene_ids: string[];
-}
-
-export interface CommercePreflightResponse {
-  task_id: string;
-  status: "pass" | "warning" | "fail";
-  blocking: boolean;
-  checked_at: string;
-  findings: CommercePreflightFinding[];
-  summary: Record<string, any>;
 }
 
 export interface StructuredScript {
@@ -1109,7 +1095,7 @@ export interface VerificationRequestItem {
   error_message?: string | null;
 }
 export interface WorkflowArtifact {
-  id: string; task_id: string; step_run_id: string; kind: string;
+  id: string; job_id: string; task_id: string; step_run_id: string; kind: string;
   relative_path: string; size_bytes: number; sha256: string; source: string;
 }
 export interface WorkflowStepRun {

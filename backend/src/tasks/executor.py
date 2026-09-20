@@ -48,6 +48,9 @@ class VideoWorkflowExecutor:
                     await pipeline.runtime.assert_lease()
                     record = await session.get(WorkflowJobModel, job.id)
                     record.status, record.lease_token = 'failed', None
+                    task = await session.get(TaskModel, job.task_id)
+                    if task is not None:
+                        task.production_status = 'failed'
                     await session.commit()
                 raise
             if getattr(pipeline, 'owns_job', False):

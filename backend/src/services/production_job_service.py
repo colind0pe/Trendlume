@@ -85,6 +85,8 @@ class ProductionJobService:
             available_at=_now(),
         )
         self.session.add(retry)
+        task = await self.session.get(TaskModel, source.task_id)
+        task.production_status = "queued"
         await self.session.commit()
         await self.session.refresh(retry)
         return retry

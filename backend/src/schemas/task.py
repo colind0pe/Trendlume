@@ -65,7 +65,6 @@ class TaskUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
     detail: TaskDetailInput | None = None
-    editorial_status: str | None = None
     generation_settings: dict[str, Any] | None = None
     publishing_settings: dict[str, Any] | None = None
 

@@ -145,6 +145,8 @@ async def test_new_production_gets_new_snapshot_and_retry_reuses_original(
     assert snapshot.context_payload["task"]["title"] == "one"
     retry_model.status = "failed"
     await test_session.commit()
+    assert (await client.post(f"/api/v1/tasks/{task['id']}/jobs")).status_code == 422
+    await client.post(f"/api/v1/tasks/{task['id']}/approve")
     second = (await client.post(f"/api/v1/tasks/{task['id']}/jobs")).json()["data"]
     second_model = await test_session.get(WorkflowJobModel, second["id"])
     assert second_model.production_context_snapshot_id != snapshot.id

@@ -1,3 +1,4 @@
+from src.api.routes.artifacts import router as artifacts_router
 from src.api.routes.assets import router as assets_router
 from src.api.routes.events import router as events_router
 from src.api.routes.generation import router as generation_router
@@ -12,6 +13,7 @@ from src.api.routes.templates import router as templates_router
 from src.api.routes.trends import router as trends_router
 
 __all__ = [
+    "artifacts_router",
     "health_router",
     "projects_router",
     "tasks_router",

@@ -7,7 +7,6 @@ import {
   ProjectTemplate,
   ProjectTemplateUpdate,
   Product,
-  CommercePreflightResponse,
   ProductionMode,
   ProviderConfigItem,
   ProviderCreatePayload,
@@ -29,7 +28,6 @@ import {
   VerificationRequestItem,
   VoiceInfo,
   WorkflowJob,
-  WorkflowSnapshot,
   QRStartResponse,
   QRStatusResponse,
   TrendFeedResponse,
@@ -89,9 +87,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 }
 
 export const api = {
-  getWorkflow: (taskId: string) => request<WorkflowSnapshot>(`/tasks/${taskId}/workflow`),
-  retryWorkflowStep: (taskId: string, step: string, unitKey?: string) => request<WorkflowJob>(`/tasks/${taskId}/steps/${step}/retry`, { method: "POST", body: JSON.stringify({ unit_key: unitKey }) }),
-  workflowArtifactUrl: (taskId: string, artifactId: string) => `${BASE_URL}/artifacts/${encodeURIComponent(artifactId)}/download?task_id=${encodeURIComponent(taskId)}`,
+  workflowArtifactUrl: (jobId: string, artifactId: string) => `${BASE_URL}/artifacts/${encodeURIComponent(artifactId)}/download?job_id=${encodeURIComponent(jobId)}`,
 
   // Projects
   listProjects: (limit = 50, offset = 0) =>
@@ -206,7 +202,9 @@ export const api = {
     }),
 
   getProjectBgm: (projectId: string) =>
-    request<Asset[]>(`/projects/${projectId}/bgm`),
+    request<Array<{ asset: Asset }>>(`/projects/${projectId}/assets?purpose=bgm`).then(
+      (bindings) => bindings.map((binding) => binding.asset),
+    ),
 
   deleteProject: (id: string) =>
     request<boolean>(`/projects/${id}`, {
@@ -275,18 +273,12 @@ export const api = {
     }),
 
   // Tasks Resource & Workflow Actions
-  listAllTasks: (limit = 50, offset = 0, status?: string) =>
+  listAllTasks: (limit = 50, offset = 0, productionStatus?: string) =>
     request<Task[]>(
-      `/tasks?limit=${limit}&offset=${offset}${status ? `&status=${status}` : ""}`
+      `/tasks?limit=${limit}&offset=${offset}${productionStatus ? `&production_status=${productionStatus}` : ""}`
     ),
 
   getTask: (taskId: string) => request<TaskDetail>(`/tasks/${taskId}`),
-
-  getCommercePreflight: (taskId: string, requireMedia = false) =>
-    request<CommercePreflightResponse>(
-      `/tasks/${taskId}/commerce-preflight?require_media=${requireMedia ? "true" : "false"}`,
-      { method: "POST" },
-    ),
 
   getTaskResearch: (taskId: string) =>
     request<ResearchResponse>(`/tasks/${taskId}/research`),
@@ -302,88 +294,31 @@ export const api = {
       method: "DELETE",
     }),
 
-  generateTaskVideo: (taskId: string) =>
-    request<WorkflowJob>(`/tasks/${taskId}/generate`, {
+  approveTask: (taskId: string) =>
+    request<TaskDetail>(`/tasks/${taskId}/approve`, { method: "POST" }),
+
+  createWorkflowJob: (taskId: string) =>
+    request<WorkflowJob>(`/tasks/${taskId}/jobs`, {
       method: "POST",
     }),
 
-  cancelTaskGeneration: (taskId: string) =>
-    request<boolean>(`/tasks/${taskId}/cancel`, {
-      method: "POST",
-    }),
+  listTaskJobs: (taskId: string) =>
+    request<WorkflowJob[]>(`/tasks/${taskId}/jobs`),
 
-  cancelScheduledPublish: (taskId: string) =>
-    request<boolean>(`/tasks/${taskId}/scheduled-publish/cancel`, {
-      method: "POST",
-    }),
+  getWorkflowJob: (jobId: string) =>
+    request<WorkflowJob>(`/workflow-jobs/${jobId}`),
 
-  retryTaskGeneration: (taskId: string) =>
-    request<WorkflowJob>(`/tasks/${taskId}/retry`, {
-      method: "POST",
-    }),
+  retryWorkflowJob: (jobId: string) =>
+    request<WorkflowJob>(`/workflow-jobs/${jobId}/retry`, { method: "POST" }),
+
+  cancelWorkflowJob: (jobId: string) =>
+    request<WorkflowJob>(`/workflow-jobs/${jobId}/cancel`, { method: "POST" }),
 
   duplicateTask: (
     taskId: string,
     payload: { mode?: "settings_only" | "settings_and_script"; title?: string } = {}
   ) =>
     request<TaskDetail>(`/tasks/${taskId}/duplicate`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }),
-
-  rerenderTask: (
-    taskId: string,
-    payload: {
-      template_id?: string;
-      template_params?: Record<string, any>;
-      bgm_enabled?: boolean | null;
-      bgm_asset_id?: string | null;
-      bgm_volume?: number | null;
-    } = {}
-  ) =>
-    request<{ task_id: string; job: WorkflowJob }>(`/tasks/${taskId}/rerender`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }),
-
-  resumeTaskGeneration: (taskId: string, jobId?: string) =>
-    request<WorkflowJob>(`/tasks/${taskId}/resume`, {
-      method: "POST",
-      body: JSON.stringify(jobId ? { job_id: jobId } : {}),
-    }),
-
-  composeTaskVideo: (taskId: string) =>
-    request<Asset>(`/tasks/${taskId}/compose`, {
-      method: "POST",
-    }),
-
-  publishTaskVideo: (
-    taskId: string,
-    payload: {
-    account_id?: string;
-    title?: string;
-    description?: string;
-    tags?: string[];
-    cover_asset_id?: string | null;
-    } = {}
-  ) =>
-    request<PublishingJob>(`/tasks/${taskId}/publish`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }),
-
-  scheduleTaskVideo: (
-    taskId: string,
-    payload: {
-      scheduled_at: string;
-      account_id?: string;
-      title?: string;
-      description?: string;
-      tags?: string[];
-      cover_asset_id?: string | null;
-    }
-  ) =>
-    request<PublishingJob>(`/tasks/${taskId}/schedule`, {
       method: "POST",
       body: JSON.stringify(payload),
     }),
@@ -619,6 +554,21 @@ export const api = {
     const query = params.toString();
     return request<PublishingJob[]>(`/publishing/jobs${query ? `?${query}` : ""}`);
   },
+
+  createPublishingJob: (data: {
+    project_id: string;
+    workflow_job_id: string;
+    artifact_id: string;
+    account_id: string;
+    platform: "douyin";
+    title: string;
+    description?: string;
+    tags?: string[];
+    scheduled_at?: string | null;
+  }) => request<PublishingJob>("/publishing/jobs", {
+    method: "POST",
+    body: JSON.stringify(data),
+  }),
 
   executePublishingJob: (jobId: string) =>
     request<PublishingJob>(`/publishing/jobs/${jobId}/publish`, {

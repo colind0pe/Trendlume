@@ -397,11 +397,25 @@ class PublishingService:
         project_id: str,
         expected_type: AssetType,
         label: str,
+        *,
+        ownership_verified: bool = False,
     ) -> AssetModel:
         asset = await self.asset_repo.get_by_id(asset_id)
         if not asset:
             raise ValidationException(f"{label}素材不存在或已被删除。")
-        if asset.project_id != project_id:
+        from src.models.project import ProjectAssetBindingModel
+
+        bound = await self.session.scalar(
+            select(ProjectAssetBindingModel.id).where(
+                ProjectAssetBindingModel.project_id == project_id,
+                ProjectAssetBindingModel.asset_id == asset_id,
+            )
+        )
+        if (
+            not ownership_verified
+            and not bound
+            and (asset.metadata_json or {}).get("project_id") != project_id
+        ):
             raise ValidationException(f"{label}素材不属于当前项目。")
         if asset.asset_type != expected_type.value:
             raise ValidationException(f"{label}素材类型必须为 {expected_type.value}。")
@@ -446,17 +460,38 @@ class PublishingService:
         return metadata, params
 
     async def create_publishing_job(self, data: PublishingJobCreate) -> PublishingJobModel:
+        from src.models.workflow import WorkflowArtifactModel, WorkflowJobModel
+
         metadata, normalized_params = self._normalize_publish_metadata(
             data.title,
             data.description,
             data.tags,
             data.custom_params,
         )
+        workflow_job = await self.session.get(WorkflowJobModel, data.workflow_job_id)
+        artifact = await self.session.get(WorkflowArtifactModel, data.artifact_id)
+        if (
+            workflow_job is None
+            or workflow_job.status != "completed"
+            or artifact is None
+            or artifact.job_id != workflow_job.id
+            or artifact.task_id != workflow_job.task_id
+            or artifact.kind != "final_video"
+            or not artifact.asset_id
+        ):
+            raise ValidationException("发布来源必须是成功 WorkflowJob 的最终视频 Artifact。")
+        task = await self.session.get(TaskModel, workflow_job.task_id)
+        if task is None or task.project_id != data.project_id:
+            raise ValidationException("WorkflowJob 不属于当前项目。")
+        account = await self.get_account(data.account_id)
+        if account.status != "active":
+            raise ValidationException("发布账号当前不可用。")
         await self._validate_publish_asset(
-            data.video_asset_id,
+            artifact.asset_id,
             data.project_id,
             AssetType.VIDEO,
             "视频",
+            ownership_verified=True,
         )
         if data.cover_asset_id:
             await self._validate_publish_asset(
@@ -467,10 +502,15 @@ class PublishingService:
             )
 
         job_id = f"pub_{uuid.uuid4().hex[:12]}"
+        normalized_params.update({
+            "source_workflow_job_id": workflow_job.id,
+            "source_artifact_id": artifact.id,
+            "task_id": workflow_job.task_id,
+        })
         job = PublishingJobModel(
             id=job_id,
             project_id=data.project_id,
-            video_asset_id=data.video_asset_id,
+            video_asset_id=artifact.asset_id,
             account_id=data.account_id,
             platform=data.platform.value,
             title=metadata.title,

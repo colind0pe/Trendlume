@@ -6,18 +6,22 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.dependencies import get_project_service, get_task_service
+from src.api.dependencies import get_project_service, get_task_service, get_template_service
 from src.core.database import get_db
 from src.core.exceptions import NotFoundException, ValidationException
+from src.domain.enums import AssetType
+from src.models.asset import AssetModel
 from src.models.drama import DramaCharacterModel, DramaLocationModel, DramaPropModel
 from src.models.product import ProductModel
-from src.models.project import ProjectModel
+from src.models.project import ProjectAssetBindingModel, ProjectModel
 from src.schemas.common import APIResponse
 from src.schemas.product import ProductCreate, ProductResponse, ProductUpdate
 from src.schemas.project import ProjectCreate, ProjectDetailResponse, ProjectResponse, ProjectUpdate
 from src.schemas.task import TaskCreate, TaskResponse
+from src.schemas.template import ProjectTemplateResponse, ProjectTemplateUpdate
 from src.services.project_service import ProjectService
 from src.services.task_service import TaskService
+from src.services.template_service import ProjectTemplateService
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
@@ -28,6 +32,12 @@ class DramaResourceInput(BaseModel):
     visual_description: str = ""
     continuity_data: dict[str, Any] = Field(default_factory=dict)
     approval_status: str = "draft"
+
+
+class ProjectAssetBindingInput(BaseModel):
+    asset_id: str
+    purpose: str = Field(min_length=1, max_length=40)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 def _columns(model):
@@ -95,6 +105,95 @@ async def create_project_task(
 @router.get("/{project_id}/tasks", response_model=APIResponse[list[TaskResponse]])
 async def list_project_tasks(project_id: str, service: TaskService = Depends(get_task_service)):
     return APIResponse(data=[_task(item) for item in await service.list_tasks(project_id)])
+
+
+@router.get("/{project_id}/template", response_model=APIResponse[ProjectTemplateResponse])
+async def get_project_template(
+    project_id: str,
+    service: ProjectTemplateService = Depends(get_template_service),
+):
+    return APIResponse(data=await service.get_template_by_project(project_id))
+
+
+@router.put("/{project_id}/template", response_model=APIResponse[ProjectTemplateResponse])
+async def update_project_template(
+    project_id: str,
+    payload: ProjectTemplateUpdate,
+    service: ProjectTemplateService = Depends(get_template_service),
+):
+    return APIResponse(data=await service.update_template(project_id, payload))
+
+
+@router.get("/{project_id}/assets", response_model=APIResponse[list[dict[str, Any]]])
+async def list_project_assets(
+    project_id: str,
+    purpose: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    if await db.get(ProjectModel, project_id) is None:
+        raise NotFoundException("Project", project_id)
+    statement = (
+        select(ProjectAssetBindingModel, AssetModel)
+        .join(AssetModel, AssetModel.id == ProjectAssetBindingModel.asset_id)
+        .where(ProjectAssetBindingModel.project_id == project_id)
+    )
+    if purpose:
+        statement = statement.where(ProjectAssetBindingModel.purpose == purpose)
+    rows = (await db.execute(statement)).all()
+    return APIResponse(data=[{
+        "binding_id": binding.id,
+        "purpose": binding.purpose,
+        "metadata": binding.metadata_json,
+        "asset": _columns(asset),
+    } for binding, asset in rows])
+
+
+@router.post("/{project_id}/assets", response_model=APIResponse[dict[str, Any]], status_code=201)
+async def bind_project_asset(
+    project_id: str,
+    payload: ProjectAssetBindingInput,
+    db: AsyncSession = Depends(get_db),
+):
+    project = await db.get(ProjectModel, project_id)
+    asset = await db.get(AssetModel, payload.asset_id)
+    if project is None:
+        raise NotFoundException("Project", project_id)
+    if asset is None:
+        raise NotFoundException("Asset", payload.asset_id)
+    if payload.purpose == "bgm" and asset.asset_type not in {
+        AssetType.BGM.value,
+        AssetType.AUDIO.value,
+    }:
+        raise ValidationException("BGM 绑定只能使用音频素材。")
+    binding = ProjectAssetBindingModel(
+        id=f"binding_{uuid4().hex[:12]}",
+        project_id=project_id,
+        asset_id=asset.id,
+        purpose=payload.purpose,
+        metadata_json=payload.metadata,
+    )
+    db.add(binding)
+    await db.commit()
+    return APIResponse(data={
+        "binding_id": binding.id,
+        "purpose": binding.purpose,
+        "metadata": binding.metadata_json,
+        "asset": _columns(asset),
+    })
+
+
+@router.delete("/{project_id}/assets/{binding_id}", response_model=APIResponse[bool])
+async def unbind_project_asset(
+    project_id: str,
+    binding_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    binding = await db.get(ProjectAssetBindingModel, binding_id)
+    if binding is None or binding.project_id != project_id:
+        raise NotFoundException("ProjectAssetBinding", binding_id)
+    await db.delete(binding)
+    await db.commit()
+    return APIResponse(data=True)
 
 
 @router.get("/{project_id}/product", response_model=APIResponse[ProductResponse])

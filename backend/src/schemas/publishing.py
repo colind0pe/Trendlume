@@ -130,7 +130,8 @@ class UncertainPublishResolveRequest(BaseModel):
 
 class PublishingJobCreate(BaseModel):
     project_id: str
-    video_asset_id: str
+    workflow_job_id: str
+    artifact_id: str
     account_id: str
     platform: PlatformType
     title: str = Field(min_length=1, max_length=255)

@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class WorkflowJobResponse(BaseModel):
@@ -27,6 +27,8 @@ class WorkflowJobResponse(BaseModel):
     error_message: str | None = None
     created_at: datetime
     updated_at: datetime
+    stages: list["WorkflowStepRunResponse"] = Field(default_factory=list)
+    artifacts: list["WorkflowArtifactResponse"] = Field(default_factory=list)
 
     @field_validator(
         "available_at", "scheduled_at", "started_at", "heartbeat_at", "completed_at", "created_at", "updated_at",
@@ -80,7 +82,7 @@ class WorkflowStepRunResponse(BaseModel):
     duration_ms: int | None = None
     error_message: str | None = None
     warning: str | None = None
-    artifacts: list[WorkflowArtifactResponse] = []
+    artifacts: list[WorkflowArtifactResponse] = Field(default_factory=list)
 
 
 class WorkflowStepRetryRequest(BaseModel):

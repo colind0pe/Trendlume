@@ -52,17 +52,60 @@ class TaskService:
         await self.session.commit()
         return await self.get_task(task.id)
 
-    async def list_tasks(self, project_id: str) -> list[TaskModel]:
+    async def list_tasks(
+        self,
+        project_id: str | None = None,
+        *,
+        editorial_status: str | None = None,
+        production_status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[TaskModel]:
+        statement = select(TaskModel)
+        if project_id:
+            statement = statement.where(TaskModel.project_id == project_id)
+        if editorial_status:
+            statement = statement.where(TaskModel.editorial_status == editorial_status)
+        if production_status:
+            statement = statement.where(TaskModel.production_status == production_status)
         return list(
             (
                 await self.session.scalars(
-                    select(TaskModel)
-                    .where(TaskModel.project_id == project_id)
-                    .order_by(TaskModel.created_at.desc())
+                    statement.order_by(TaskModel.created_at.desc()).offset(offset).limit(limit)
                 )
             )
             .unique()
             .all()
+        )
+
+    async def delete_task(self, task_id: str) -> bool:
+        task = await self.get_task(task_id)
+        await self.session.delete(task)
+        await self.session.commit()
+        return True
+
+    async def duplicate_task(self, task_id: str) -> TaskModel:
+        source = await self.get_task(task_id)
+        detail = source.knowledge_detail or source.commerce_detail or source.drama_episode
+        detail_type = source.project.mode
+        values = {
+            column.name: getattr(detail, column.name)
+            for column in detail.__table__.columns
+            if column.name not in {"id", "task_id", "project_id", "created_at", "updated_at"}
+        }
+        values["type"] = detail_type
+        values["review_status"] = "draft"
+        return await self.create_task(
+            source.project_id,
+            TaskCreate.model_validate(
+                {
+                    "title": f"{source.title}（副本）",
+                    "description": source.description,
+                    "detail": values,
+                    "generation_settings": dict(source.generation_settings),
+                    "publishing_settings": dict(source.publishing_settings),
+                }
+            ),
         )
 
     async def get_task(self, task_id: str) -> TaskModel:
@@ -85,6 +128,7 @@ class TaskService:
     async def update_task(self, task_id: str, data: TaskUpdate) -> TaskModel:
         task = await self.get_task(task_id)
         project = await self.session.get(ProjectModel, task.project_id)
+        was_approved = task.editorial_status == "approved"
         values = data.model_dump(exclude_unset=True, exclude={"detail"})
         for key, value in values.items():
             setattr(task, key, value)
@@ -98,6 +142,9 @@ class TaskService:
             }[project.mode]
             for key, value in data.detail.model_dump(exclude={"type"}).items():
                 setattr(current, key, value)
+        if was_approved and data.model_fields_set:
+            task.editorial_status = "draft"
+            (task.knowledge_detail or task.commerce_detail or task.drama_episode).review_status = "draft"
         await self.session.commit()
         return await self.get_task(task_id)
 

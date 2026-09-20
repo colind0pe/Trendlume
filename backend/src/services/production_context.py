@@ -152,6 +152,7 @@ class ProductionContextCompiler:
                     "default_production_settings": project.default_production_settings,
                 },
                 "project_profile": mode_context,
+                "project_template": self._columns(project.template),
                 "project_assets": [
                     {
                         "binding": self._columns(binding),

@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
 from src.api.routes import (
+    artifacts_router,
     assets_router,
     events_router,
     generation_router,
@@ -105,6 +106,7 @@ def create_app() -> FastAPI:
     app.include_router(tasks_router, prefix=api_v1_prefix)
     app.include_router(scenes_router, prefix=api_v1_prefix)
     app.include_router(assets_router, prefix=api_v1_prefix)
+    app.include_router(artifacts_router, prefix=api_v1_prefix)
     app.include_router(generation_router, prefix=api_v1_prefix)
     app.include_router(jobs_router, prefix=api_v1_prefix)
     app.include_router(publishing_router, prefix=api_v1_prefix)
