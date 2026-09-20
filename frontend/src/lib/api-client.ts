@@ -506,7 +506,6 @@ export const api = {
       title: string;
       description?: string;
       job_type?: string;
-      production_mode?: ProductionMode;
       product_id?: string | null;
       creative_plan_id?: string | null;
       creative_angle?: CreativeAngle | string | null;

@@ -13,7 +13,6 @@ import {
   LockKeyhole,
   MapPin,
   Pencil,
-  RefreshCcw,
   Save,
   ShieldCheck,
   Sparkles,
@@ -35,7 +34,7 @@ import type {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Field, Select } from "@/components/ui/field";
+import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { PageContainer, PageHeader, SectionHeader } from "@/components/ui/page-shell";
 import { StatusBadge, type StatusTone } from "@/components/ui/status-badge";
@@ -568,21 +567,16 @@ function StoryboardPanel({ detail, onRefresh }: { detail: DramaDetail; onRefresh
 export function DramaWorkspace({ projectId }: { projectId: string }) {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = React.useState("bible");
-  const [selectedDramaId, setSelectedDramaId] = React.useState("");
-  const [showNew, setShowNew] = React.useState(false);
   const [localDetail, setLocalDetail] = React.useState<DramaDetail | undefined>();
   const projectQuery = useQuery({ queryKey: ["project", projectId], queryFn: () => api.getProject(projectId) });
   const dramasQuery = useQuery({ queryKey: ["project-dramas", projectId], queryFn: () => api.listDramas(projectId) });
-  const detailQuery = useQuery({ queryKey: ["drama", selectedDramaId], queryFn: () => api.getDrama(selectedDramaId), enabled: Boolean(selectedDramaId) });
-
-  React.useEffect(() => {
-    if (!selectedDramaId && dramasQuery.data?.[0]?.id) setSelectedDramaId(dramasQuery.data[0].id);
-  }, [dramasQuery.data, selectedDramaId]);
+  const dramaId = dramasQuery.data?.[0]?.id || "";
+  const detailQuery = useQuery({ queryKey: ["drama", dramaId], queryFn: () => api.getDrama(dramaId), enabled: Boolean(dramaId) });
   React.useEffect(() => {
     if (detailQuery.data) setLocalDetail(detailQuery.data);
   }, [detailQuery.data]);
 
-  const detail = localDetail?.id === selectedDramaId ? localDetail : detailQuery.data;
+  const detail = localDetail || detailQuery.data;
   const project = projectQuery.data;
 
   const refresh = React.useCallback((next: DramaDetail) => {
@@ -605,11 +599,10 @@ export function DramaWorkspace({ projectId }: { projectId: string }) {
         title="Drama workspace"
         description="把故事拆成可审阅的制作事实：Bible、角色、场景、单集和逐 Shot Storyboard。"
         back={<Link href={`/projects/${projectId}`} className="mb-1 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"><ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" /> 返回项目</Link>}
-        actions={<div className="flex items-center gap-2"><Select aria-label="选择 Drama Bible" value={selectedDramaId} onChange={(event) => { setSelectedDramaId(event.target.value); setShowNew(false); }} className="h-9 max-w-56 text-xs"><option value="">新建 Drama Bible</option>{(dramasQuery.data || []).map((drama) => <option key={drama.id} value={drama.id}>{drama.title}</option>)}</Select><Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={() => { setSelectedDramaId(""); setLocalDetail(undefined); setShowNew(true); }}><RefreshCcw className="h-3.5 w-3.5" aria-hidden="true" /> 新建</Button></div>}
       />
 
-      {!detail || showNew ? (
-        <div className="grid gap-5 xl:grid-cols-[240px_minmax(0,1fr)]"><StageRail /><IntakePanel project={project} onCreated={(next) => { refresh(next); setShowNew(false); setSelectedDramaId(next.id); setActiveTab("bible"); }} /></div>
+      {!detail ? (
+        <div className="grid gap-5 xl:grid-cols-[240px_minmax(0,1fr)]"><StageRail /><IntakePanel project={project} onCreated={(next) => { refresh(next); setActiveTab("bible"); }} /></div>
       ) : (
         <div className="grid gap-5 xl:grid-cols-[240px_minmax(0,1fr)]">
           <StageRail detail={detail} />

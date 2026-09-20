@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, CheckConstraint, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.core.database import Base
@@ -12,11 +12,22 @@ from src.domain.enums import ProductionMode
 if TYPE_CHECKING:
     from src.models.product import ProductModel
     from src.models.project import ProjectModel
+    from src.models.project_context import KnowledgeContentItemModel, ProjectContextVersionModel
     from src.models.scene import SceneModel
 
 
 class TaskModel(Base):
     __tablename__ = "tasks"
+    __table_args__ = (
+        CheckConstraint(
+            "(production_mode = 'knowledge' AND product_id IS NULL AND creative_plan_id IS NULL "
+            "AND drama_episode_id IS NULL) OR "
+            "(production_mode = 'commerce' AND knowledge_item_id IS NULL AND drama_episode_id IS NULL) OR "
+            "(production_mode = 'drama' AND knowledge_item_id IS NULL AND product_id IS NULL "
+            "AND creative_plan_id IS NULL AND drama_episode_id IS NOT NULL)",
+            name="ck_tasks_project_mode_reference_shape",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     project_id: Mapped[str] = mapped_column(
@@ -28,6 +39,25 @@ class TaskModel(Base):
     creative_plan_id: Mapped[str | None] = mapped_column(
         String(36),
         ForeignKey("commerce_creative_plans.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    project_context_version_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("project_context_versions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    context_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    knowledge_item_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("knowledge_content_items.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    drama_episode_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("drama_episodes.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -57,6 +87,12 @@ class TaskModel(Base):
 
     # Relationships
     project: Mapped[ProjectModel] = relationship("ProjectModel", back_populates="tasks")
+    project_context_version: Mapped[ProjectContextVersionModel | None] = relationship(
+        "ProjectContextVersionModel", back_populates="tasks", lazy="joined"
+    )
+    knowledge_item: Mapped[KnowledgeContentItemModel | None] = relationship(
+        "KnowledgeContentItemModel", back_populates="tasks", lazy="joined"
+    )
     product: Mapped[ProductModel | None] = relationship("ProductModel", lazy="joined")
     scenes: Mapped[list[SceneModel]] = relationship(
         "SceneModel",

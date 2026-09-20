@@ -16,7 +16,7 @@ from src.models import Base
 ROOT_DIR = Path(__file__).resolve().parent.parent
 BACKEND_DIR = ROOT_DIR / "backend"
 BASELINE_REVISION = "001_release_baseline"
-RELEASE_REVISION = "011_canonicalize_production_contracts"
+RELEASE_REVISION = "012_project_context_versions"
 
 
 def _migration_database(tmp_path: Path, filename: str) -> tuple[Path, str]:
@@ -224,6 +224,15 @@ def test_baseline_database_upgrades_and_downgrades_current_schema(tmp_path: Path
         assert connection.execute(
             "SELECT production_mode FROM tasks WHERE id = 'task_legacy'"
         ).fetchone() == ("knowledge",)
+        assert connection.execute(
+            "SELECT context_hash FROM tasks WHERE id = 'task_legacy'"
+        ).fetchone()[0]
+        assert connection.execute(
+            "SELECT COUNT(*) FROM project_context_versions WHERE project_id = 'project_legacy'"
+        ).fetchone() == (1,)
+        assert connection.execute(
+            "SELECT COUNT(*) FROM knowledge_content_items WHERE project_id = 'project_legacy'"
+        ).fetchone()[0] >= 1
         settings_value, payload_value = connection.execute(
             "SELECT settings, input_payload FROM projects "
             "JOIN tasks ON tasks.project_id = projects.id WHERE projects.id = 'project_legacy'"

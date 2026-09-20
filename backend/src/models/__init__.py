@@ -12,6 +12,12 @@ from src.models.drama import (
 )
 from src.models.product import ProductAssetModel, ProductModel
 from src.models.project import ProjectModel
+from src.models.project_context import (
+    CommerceProjectProfileModel,
+    KnowledgeContentItemModel,
+    KnowledgeProjectProfileModel,
+    ProjectContextVersionModel,
+)
 from src.models.prompt_observation import PromptCallObservationModel
 from src.models.provider_config import ProviderConfigModel
 from src.models.publishing import CredentialModel, PublishingJobModel, SocialAccountModel
@@ -38,6 +44,10 @@ from src.models.workflow import (
 __all__ = [
     "Base",
     "ProjectModel",
+    "ProjectContextVersionModel",
+    "CommerceProjectProfileModel",
+    "KnowledgeProjectProfileModel",
+    "KnowledgeContentItemModel",
     "ProductModel",
     "ProductAssetModel",
     "CreativePlanModel",

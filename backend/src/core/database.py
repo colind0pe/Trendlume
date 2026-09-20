@@ -80,11 +80,24 @@ _REQUIRED_TABLES = {
     "drama_scenes",
     "drama_shots",
     "drama_dialogue_lines",
+    "project_context_versions",
+    "knowledge_project_profiles",
+    "commerce_project_profiles",
+    "knowledge_content_items",
 }
 
 _REQUIRED_COLUMNS = {
     "projects": {"primary_production_mode"},
-    "tasks": {"production_mode", "product_id", "creative_angle", "creative_plan_id"},
+    "tasks": {
+        "production_mode",
+        "product_id",
+        "creative_angle",
+        "creative_plan_id",
+        "project_context_version_id",
+        "context_hash",
+        "knowledge_item_id",
+        "drama_episode_id",
+    },
     "products": {"title", "source_snapshot", "truth_sheet"},
     "product_assets": {"product_id", "asset_id", "source_kind"},
     "scenes": {"visual_role", "claim_refs", "source_refs", "production_metadata"},
@@ -110,6 +123,17 @@ _REQUIRED_COLUMNS = {
         "approval_status",
     },
     "drama_dialogue_lines": {"shot_id", "speaker_name", "text"},
+    "project_context_versions": {"project_id", "version", "context_hash", "context_payload"},
+    "knowledge_project_profiles": {"project_id", "positioning", "evidence_strategy"},
+    "commerce_project_profiles": {"project_id", "brand", "marketing_goal", "platform_defaults"},
+    "knowledge_content_items": {
+        "project_id",
+        "topic",
+        "audience",
+        "genre",
+        "source_refs",
+        "review_status",
+    },
 }
 
 

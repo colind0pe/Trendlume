@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy import select
 
 from src.domain.drama import DramaSourceType
+from src.domain.enums import ProductionMode
 from src.models.asset import AssetModel
 from src.models.scene import SceneModel
 from src.models.workflow import WorkflowArtifactModel, WorkflowStepRunModel
@@ -63,7 +64,12 @@ NO_DIALOGUE_SCRIPT = """# 标题：无台词的一天
 
 
 async def _approved_drama(session, source_text=SCRIPT):
-    project = await ProjectService(session).create_project(ProjectCreate(name="Drama production"))
+    project = await ProjectService(session).create_project(
+        ProjectCreate(
+            name="Drama production",
+            primary_production_mode=ProductionMode.DRAMA,
+        )
+    )
     service = DramaProductionService(session)
     bible = await service.create_bible(
         project.id,

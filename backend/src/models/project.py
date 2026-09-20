@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import JSON, DateTime, String, Text
+from sqlalchemy import JSON, CheckConstraint, DateTime, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.core.database import Base
@@ -12,12 +12,24 @@ from src.domain.enums import ProductionMode
 if TYPE_CHECKING:
     from src.models.asset import AssetModel
     from src.models.drama import DramaBibleModel
+    from src.models.project_context import (
+        CommerceProjectProfileModel,
+        KnowledgeContentItemModel,
+        KnowledgeProjectProfileModel,
+        ProjectContextVersionModel,
+    )
     from src.models.task import TaskModel
     from src.models.template import ProjectTemplateModel
 
 
 class ProjectModel(Base):
     __tablename__ = "projects"
+    __table_args__ = (
+        CheckConstraint(
+            "primary_production_mode IN ('knowledge', 'commerce', 'drama')",
+            name="ck_projects_primary_production_mode",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -68,5 +80,33 @@ class ProjectModel(Base):
         back_populates="project",
         cascade="all, delete-orphan",
         order_by="DramaBibleModel.updated_at.desc()",
+        lazy="selectin",
+    )
+    context_versions: Mapped[list[ProjectContextVersionModel]] = relationship(
+        "ProjectContextVersionModel",
+        back_populates="project",
+        cascade="all, delete-orphan",
+        order_by="ProjectContextVersionModel.version.desc()",
+        lazy="selectin",
+    )
+    knowledge_profile: Mapped[KnowledgeProjectProfileModel | None] = relationship(
+        "KnowledgeProjectProfileModel",
+        back_populates="project",
+        uselist=False,
+        cascade="all, delete-orphan",
+        lazy="joined",
+    )
+    commerce_profile: Mapped[CommerceProjectProfileModel | None] = relationship(
+        "CommerceProjectProfileModel",
+        back_populates="project",
+        uselist=False,
+        cascade="all, delete-orphan",
+        lazy="joined",
+    )
+    knowledge_items: Mapped[list[KnowledgeContentItemModel]] = relationship(
+        "KnowledgeContentItemModel",
+        back_populates="project",
+        cascade="all, delete-orphan",
+        order_by="KnowledgeContentItemModel.updated_at.desc()",
         lazy="selectin",
     )

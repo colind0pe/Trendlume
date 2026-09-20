@@ -49,6 +49,8 @@ async def test_project_and_task_persist_knowledge_production_mode_by_default(tes
 
     assert project.primary_production_mode == ProductionMode.KNOWLEDGE.value
     assert task.production_mode == ProductionMode.KNOWLEDGE.value
+    assert task.project_context_version_id
+    assert task.context_hash
     assert "production_mode" not in task.input_payload
 
 
@@ -64,7 +66,6 @@ async def test_commerce_task_requires_and_persists_product_context(test_session)
             TaskCreate(title="Commerce task", production_mode=ProductionMode.COMMERCE),
         )
 
-    from src.services.product_service import ProductService
 
     product = await ProductService(test_session).create_product(
         ProductCreate(title="可追溯商品", brand="Demo")
@@ -89,20 +90,18 @@ async def test_commerce_task_requires_and_persists_product_context(test_session)
 
 
 @pytest.mark.asyncio
-async def test_task_can_override_project_mode_without_mutating_project(test_session):
+async def test_task_mode_must_match_project_mode(test_session):
     project = await ProjectService(test_session).create_project(
         ProjectCreate(name="Commerce project", primary_production_mode=ProductionMode.COMMERCE)
     )
 
-    task = await TaskService(test_session).create_task(
-        project.id,
-        TaskCreate(title="Knowledge override", production_mode=ProductionMode.KNOWLEDGE),
-    )
+    with pytest.raises(ValidationException, match="继承所属 Project"):
+        await TaskService(test_session).create_task(
+            project.id,
+            TaskCreate(title="Knowledge override", production_mode=ProductionMode.KNOWLEDGE),
+        )
 
     assert project.primary_production_mode == ProductionMode.COMMERCE.value
-    assert task.production_mode == ProductionMode.KNOWLEDGE.value
-    assert "production_mode" not in task.input_payload
-    assert task.input_payload["knowledge_brief"]["genre"] == "auto"
 
 
 @pytest.mark.asyncio
@@ -116,7 +115,7 @@ async def test_generic_task_creation_cannot_bypass_drama_approval_workspace(test
 
 
 @pytest.mark.asyncio
-async def test_mode_update_removes_previous_mode_payload(test_session):
+async def test_task_mode_cannot_change_after_creation(test_session):
     project = await ProjectService(test_session).create_project(
         ProjectCreate(name="Mode update project")
     )
@@ -125,20 +124,12 @@ async def test_mode_update_removes_previous_mode_payload(test_session):
         project.id,
         TaskCreate(title="切换模式", knowledge_brief={"thesis": "知识主张"}),
     )
-    product = await ProductService(test_session).create_product(
-        ProductCreate(title="模式切换商品", brand="Demo")
-    )
+    with pytest.raises(ValidationException, match="创建后不能切换"):
+        await task_service.update_task(
+            task.id,
+            TaskUpdate(production_mode=ProductionMode.COMMERCE),
+        )
 
-    updated = await task_service.update_task(
-        task.id,
-        TaskUpdate(
-            production_mode=ProductionMode.COMMERCE,
-            product_id=product.id,
-            creative_angle=CreativeAngle.DEMO,
-        ),
-    )
-
-    assert updated.production_mode == ProductionMode.COMMERCE.value
-    assert not {"product_id", "creative_plan_id", "creative_angle"} & updated.input_payload.keys()
-    assert "knowledge_brief" not in updated.input_payload
-    assert "enable_research" not in updated.input_payload
+    unchanged = await task_service.get_task(task.id)
+    assert unchanged.production_mode == ProductionMode.KNOWLEDGE.value
+    assert unchanged.input_payload["knowledge_brief"]["thesis"] == "知识主张"

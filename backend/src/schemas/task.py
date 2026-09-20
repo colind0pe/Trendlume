@@ -26,6 +26,8 @@ class TaskCreate(BaseModel):
     product_id: str | None = None
     creative_plan_id: str | None = None
     creative_angle: CreativeAngle | None = None
+    knowledge_item_id: str | None = None
+    drama_episode_id: str | None = None
     knowledge_brief: KnowledgeBrief | None = None
     input_payload: dict[str, Any] = Field(default_factory=dict)
     template_id: str = "image_gallery_matted"
@@ -55,6 +57,7 @@ class TaskUpdate(BaseModel):
     product_id: str | None = None
     creative_plan_id: str | None = None
     creative_angle: CreativeAngle | None = None
+    knowledge_item_id: str | None = None
     status: TaskStatus | None = None
     input_payload: dict[str, Any] | None = None
     result_payload: dict[str, Any] | None = None
@@ -82,6 +85,10 @@ class TaskResponse(BaseModel):
     product_id: str | None = None
     creative_plan_id: str | None = None
     creative_angle: str | None = None
+    project_context_version_id: str | None = None
+    context_hash: str | None = None
+    knowledge_item_id: str | None = None
+    drama_episode_id: str | None = None
     title: str
     description: str
     job_type: str

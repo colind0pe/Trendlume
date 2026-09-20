@@ -4,6 +4,7 @@ import pytest
 
 from src.core.exceptions import ValidationException
 from src.domain.drama import ApprovalStatus, DramaSourceType, DramaStage, character_prompt_anchor
+from src.domain.enums import ProductionMode
 from src.schemas.drama import DramaBibleCreate, DramaPlanRequest, DramaShotUpdate
 from src.schemas.project import ProjectCreate
 from src.services.drama_production_service import DramaProductionService
@@ -42,7 +43,9 @@ SCRIPT = """# 标题：夜班之后
 
 @pytest.mark.asyncio
 async def test_script_entry_builds_explicit_episode_scene_shot_hierarchy(test_session):
-    project = await ProjectService(test_session).create_project(ProjectCreate(name="Drama project"))
+    project = await ProjectService(test_session).create_project(
+        ProjectCreate(name="Drama project", primary_production_mode=ProductionMode.DRAMA)
+    )
     service = DramaProductionService(test_session)
     bible = await service.create_bible(
         project.id,
@@ -69,7 +72,9 @@ async def test_script_entry_builds_explicit_episode_scene_shot_hierarchy(test_se
 
 @pytest.mark.asyncio
 async def test_approval_gate_blocks_render_adapter_until_every_shot_is_approved(test_session):
-    project = await ProjectService(test_session).create_project(ProjectCreate(name="Approval project"))
+    project = await ProjectService(test_session).create_project(
+        ProjectCreate(name="Approval project", primary_production_mode=ProductionMode.DRAMA)
+    )
     service = DramaProductionService(test_session)
     bible = await service.create_bible(
         project.id,
@@ -114,7 +119,9 @@ async def test_approval_gate_blocks_render_adapter_until_every_shot_is_approved(
 
 @pytest.mark.asyncio
 async def test_shot_editor_rebuilds_dialogue_lines_with_voice_and_timing_metadata(test_session):
-    project = await ProjectService(test_session).create_project(ProjectCreate(name="Dialogue editor"))
+    project = await ProjectService(test_session).create_project(
+        ProjectCreate(name="Dialogue editor", primary_production_mode=ProductionMode.DRAMA)
+    )
     service = DramaProductionService(test_session)
     bible = await service.create_bible(
         project.id,
@@ -147,7 +154,9 @@ async def test_shot_editor_rebuilds_dialogue_lines_with_voice_and_timing_metadat
 
 @pytest.mark.asyncio
 async def test_script_entry_preserves_episode_headings(test_session):
-    project = await ProjectService(test_session).create_project(ProjectCreate(name="Multi episode"))
+    project = await ProjectService(test_session).create_project(
+        ProjectCreate(name="Multi episode", primary_production_mode=ProductionMode.DRAMA)
+    )
     service = DramaProductionService(test_session)
     source = """# 标题：两集短剧
 ## 角色

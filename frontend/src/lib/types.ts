@@ -640,6 +640,10 @@ export interface Task {
   product_id?: string | null;
   creative_plan_id?: string | null;
   creative_angle?: CreativeAngle | string | null;
+  project_context_version_id?: string | null;
+  context_hash?: string | null;
+  knowledge_item_id?: string | null;
+  drama_episode_id?: string | null;
   title: string;
   description: string;
   job_type: string;

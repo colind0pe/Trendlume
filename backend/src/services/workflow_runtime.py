@@ -191,7 +191,12 @@ class WorkflowRuntime:
         if job is None:
             raise LeaseLostError('Workflow job does not exist')
         task_id = job.task_id
-        payload = redact(inputs)
+        task = await self.db.get(TaskModel, task_id)
+        context_hash = getattr(task, "context_hash", None)
+        fingerprint_inputs = dict(inputs or {})
+        if context_hash:
+            fingerprint_inputs["_project_context_hash"] = context_hash
+        payload = redact(fingerprint_inputs)
         # Preserve producer lineage even when a forced rerun emits identical
         # bytes. Downstream stages must still checkpoint against the new run.
         digest = fingerprint({'version': '1', 'inputs': payload,

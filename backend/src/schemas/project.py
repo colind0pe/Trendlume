@@ -4,6 +4,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.domain.enums import AspectRatio, ProductionMode, ProjectStatus
+from src.schemas.project_context import CommerceProfileInput, KnowledgeProfileInput
 from src.schemas.task import TaskResponse
 from src.schemas.template import ProjectTemplateResponse
 
@@ -16,6 +17,8 @@ class ProjectCreate(BaseModel):
     default_voice_id: str | None = "zh-CN-YunxiNeural"
     bgm_asset_id: str | None = None
     settings: dict[str, Any] = Field(default_factory=dict)
+    knowledge_profile: KnowledgeProfileInput | None = None
+    commerce_profile: CommerceProfileInput | None = None
 
 
 class ProjectUpdate(BaseModel):

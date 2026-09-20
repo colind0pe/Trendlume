@@ -4,6 +4,7 @@ from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.exceptions import NotFoundException, ValidationException
@@ -18,6 +19,8 @@ from src.domain.enums import (
 )
 from src.domain.production_workflows import get_production_workflow
 from src.models.asset import AssetModel
+from src.models.drama import DramaBibleModel, DramaEpisodeModel
+from src.models.project_context import KnowledgeContentItemModel
 from src.models.publishing import SocialAccountModel
 from src.models.scene import SceneModel
 from src.models.task import TaskModel
@@ -28,6 +31,7 @@ from src.schemas.generation import KnowledgeBrief
 from src.schemas.task import ScheduledPublishConfig, TaskCreate, TaskUpdate
 from src.services.commerce_task_service import resolve_commerce_task_context
 from src.services.production_pipeline import production_pipeline_registry
+from src.services.project_context import create_context_version
 from src.services.provider_manager import ProviderManager
 from src.services.system_asset_service import is_system_asset
 from src.services.template_catalog import template_catalog
@@ -65,6 +69,10 @@ _TASK_COLUMN_KEYS = frozenset(
         "product_id",
         "creative_plan_id",
         "creative_angle",
+        "project_context_version_id",
+        "context_hash",
+        "knowledge_item_id",
+        "drama_episode_id",
     }
 )
 
@@ -85,6 +93,17 @@ def _sync_commerce_snapshot(
     else:
         normalized.pop("creative_plan_snapshot", None)
     return normalized
+
+
+def _knowledge_brief_from_item(item: KnowledgeContentItemModel) -> dict:
+    return {
+        "audience": item.audience,
+        "thesis": item.thesis,
+        "viewer_takeaway": item.takeaway,
+        "key_claims": item.key_claims or [],
+        "source_refs": item.source_refs or [],
+        "genre": item.genre,
+    }
 
 
 def _normalize_production_payload(
@@ -180,23 +199,62 @@ class TaskService:
             raise NotFoundException("Project", project_id)
 
         task_id = f"task_{uuid.uuid4().hex[:12]}"
-        payload = _without_task_column_keys(dict(data.input_payload or {}))
+        raw_input_payload = dict(data.input_payload or {})
+        payload = _without_task_column_keys(raw_input_payload)
+        project_mode = ProductionMode(
+            getattr(project, "primary_production_mode", ProductionMode.KNOWLEDGE.value)
+        )
         requested_production_mode = data.production_mode
-        if requested_production_mode is None:
-            requested_production_mode = getattr(
-                project, "primary_production_mode", ProductionMode.KNOWLEDGE.value
-            )
+        if requested_production_mode is not None:
+            try:
+                requested_mode = ProductionMode(str(requested_production_mode))
+            except ValueError as exc:
+                raise ValidationException("不支持的生产模式。") from exc
+            if requested_mode != project_mode:
+                raise ValidationException("任务生产模式必须继承所属 Project，不能在 Task 级别覆盖。")
+        requested_production_mode = project_mode
         try:
             production_mode = ProductionMode(str(requested_production_mode))
         except ValueError as exc:
             raise ValidationException("不支持的生产模式。") from exc
         if not production_pipeline_registry.is_registered(production_mode):
             raise ValidationException(f"生产模式 {production_mode.value} 暂未开放。")
-        if production_mode == ProductionMode.DRAMA:
-            raise ValidationException("Drama Task 必须从 Drama workspace 的已批准 Episode 创建。")
         product_id = data.product_id
         creative_plan_id = data.creative_plan_id
         creative_angle = data.creative_angle
+        requested_knowledge_item_id = data.knowledge_item_id or raw_input_payload.get(
+            "knowledge_item_id"
+        )
+        requested_episode_id = data.drama_episode_id or raw_input_payload.get(
+            "drama_episode_id"
+        )
+        knowledge_item = None
+        drama_episode = None
+        if production_mode == ProductionMode.KNOWLEDGE and requested_knowledge_item_id:
+            knowledge_item = await self.session.get(
+                KnowledgeContentItemModel, requested_knowledge_item_id
+            )
+            if not knowledge_item or knowledge_item.project_id != project_id:
+                raise ValidationException("Knowledge 内容条目不存在或不属于当前项目。")
+        elif requested_knowledge_item_id:
+            raise ValidationException("Knowledge 内容条目只能用于 Knowledge Project。")
+        if production_mode == ProductionMode.DRAMA:
+            if not requested_episode_id:
+                raise ValidationException("Drama Task 必须从 Drama workspace 的已批准 Episode 创建。")
+            drama_episode = await self.session.scalar(
+                select(DramaEpisodeModel)
+                .join(DramaBibleModel, DramaEpisodeModel.bible_id == DramaBibleModel.id)
+                .where(
+                    DramaEpisodeModel.id == str(requested_episode_id),
+                    DramaBibleModel.project_id == project_id,
+                )
+            )
+            if not drama_episode:
+                raise ValidationException("Drama Episode 不存在或不属于当前项目。")
+            if drama_episode.approval_status != "approved":
+                raise ValidationException("Drama Episode 必须审批通过后才能创建 Task。")
+        elif requested_episode_id:
+            raise ValidationException("Drama Episode 只能用于 Drama Project。")
         payload.pop("creative_plan_snapshot", None)
         if production_mode == ProductionMode.COMMERCE:
             commerce = await resolve_commerce_task_context(
@@ -214,8 +272,31 @@ class TaskService:
         else:
             product_id = creative_plan_id = creative_angle = None
             payload.pop("creative_plan_snapshot", None)
-        if production_mode == ProductionMode.KNOWLEDGE and data.knowledge_brief is not None:
-            payload.setdefault("knowledge_brief", data.knowledge_brief.model_dump())
+        if production_mode == ProductionMode.KNOWLEDGE:
+            if data.knowledge_brief is not None:
+                payload.setdefault("knowledge_brief", data.knowledge_brief.model_dump())
+            if knowledge_item is None:
+                knowledge_payload = payload.get("knowledge_brief")
+                if not isinstance(knowledge_payload, dict):
+                    knowledge_payload = {}
+                knowledge_item = KnowledgeContentItemModel(
+                    project_id=project_id,
+                    topic=str(payload.get("topic") or data.title),
+                    audience=str(knowledge_payload.get("audience") or ""),
+                    thesis=str(knowledge_payload.get("thesis") or ""),
+                    takeaway=str(
+                        knowledge_payload.get("viewer_takeaway")
+                        or knowledge_payload.get("takeaway")
+                        or ""
+                    ),
+                    genre=str(knowledge_payload.get("genre") or "auto"),
+                    key_claims=knowledge_payload.get("key_claims") or [],
+                    source_refs=knowledge_payload.get("source_refs") or [],
+                    review_status="legacy",
+                )
+                self.session.add(knowledge_item)
+                await self.session.flush()
+            payload["knowledge_brief"] = _knowledge_brief_from_item(knowledge_item)
         requested_template_id = payload.get("template_id", data.template_id)
         if requested_template_id == "image_gallery_matted" and "template_id" not in payload:
             project_template = getattr(project, "template", None)
@@ -364,6 +445,14 @@ class TaskService:
             input_payload["scheduled_publish"] = scheduled_publish
         if project_template and getattr(project_template, "custom_css", ""):
             input_payload["custom_css"] = project_template.custom_css
+        context_version = await create_context_version(
+            self.session,
+            project_id,
+            knowledge_item_id=knowledge_item.id if knowledge_item else None,
+            product_id=str(product_id) if product_id else None,
+            creative_plan_id=str(creative_plan_id) if creative_plan_id else None,
+            drama_episode_id=drama_episode.id if drama_episode else None,
+        )
         task = TaskModel(
             id=task_id,
             project_id=project_id,
@@ -373,6 +462,10 @@ class TaskService:
             description=data.description,
             job_type=data.job_type.value,
             production_mode=production_mode.value,
+            project_context_version_id=context_version.id,
+            context_hash=context_version.context_hash,
+            knowledge_item_id=knowledge_item.id if knowledge_item else None,
+            drama_episode_id=drama_episode.id if drama_episode else None,
             creative_angle=(
                 creative_angle.value
                 if isinstance(creative_angle, CreativeAngle)
@@ -438,17 +531,27 @@ class TaskService:
                 raise ValidationException("不支持的生产模式。") from exc
             if not production_pipeline_registry.is_registered(production_mode):
                 raise ValidationException(f"生产模式 {production_mode.value} 暂未开放。")
-            if production_mode == ProductionMode.DRAMA:
-                raise ValidationException("现有 Task 不能直接切换为 Drama；请从 Drama workspace 创建。")
             if task.production_mode != production_mode.value:
-                changed.add("production_mode")
-                task.production_mode = production_mode.value
+                raise ValidationException("任务生产模式继承所属 Project，创建后不能切换。")
         final_production_mode = ProductionMode(task.production_mode)
         requested_product_id = data.product_id if data.product_id is not None else task.product_id
         requested_plan_id = (
             data.creative_plan_id if data.creative_plan_id is not None else task.creative_plan_id
         )
         requested_angle = data.creative_angle if data.creative_angle is not None else task.creative_angle
+        requested_knowledge_item_id = (
+            data.knowledge_item_id
+            if data.knowledge_item_id is not None
+            else task.knowledge_item_id
+        )
+        if final_production_mode == ProductionMode.KNOWLEDGE and requested_knowledge_item_id:
+            knowledge_item = await self.session.get(
+                KnowledgeContentItemModel, requested_knowledge_item_id
+            )
+            if not knowledge_item or knowledge_item.project_id != task.project_id:
+                raise ValidationException("Knowledge 内容条目不存在或不属于当前项目。")
+        elif requested_knowledge_item_id:
+            raise ValidationException("Knowledge 内容条目只能用于 Knowledge Project。")
         commerce_plan_snapshot = None
         if final_production_mode == ProductionMode.COMMERCE:
             commerce = await resolve_commerce_task_context(
@@ -482,7 +585,12 @@ class TaskService:
         if task.creative_plan_id != normalized_plan_id:
             changed.add("creative_plan_id")
             task.creative_plan_id = normalized_plan_id
+        if task.knowledge_item_id != requested_knowledge_item_id:
+            changed.add("knowledge_item_id")
+            task.knowledge_item_id = requested_knowledge_item_id
         if new_payload is not None:
+            if final_production_mode == ProductionMode.KNOWLEDGE and requested_knowledge_item_id:
+                new_payload["knowledge_brief"] = _knowledge_brief_from_item(knowledge_item)
             new_payload = _sync_commerce_snapshot(
                 new_payload,
                 final_production_mode,
@@ -518,10 +626,9 @@ class TaskService:
         handled = {"bgm_enabled", "bgm_asset_id", "bgm_volume", "voice_id", "speed",
                    "template_id", "template_version", "template_params", "custom_css", "content_mode",
                    "source_asset_id", "image_workflow_id", "video_workflow_id",
-                   "production_mode", "product_id", "creative_plan_id", "creative_angle"}
-        if "production_mode" in changed:
-            steps.update(workflow.stage_keys)
-        if changed & {"product_id", "creative_plan_id", "creative_angle"}:
+                   "production_mode", "product_id", "creative_plan_id", "creative_angle",
+                   "knowledge_item_id"}
+        if changed & {"product_id", "creative_plan_id", "creative_angle", "knowledge_item_id"}:
             steps.update(workflow.stage_keys)
         if changed - handled or (data.title is not None and data.title != task.title):
             steps.update(workflow.stage_keys)
@@ -535,10 +642,13 @@ class TaskService:
             task.status = data.status.value
         if data.input_payload is not None:
             task.input_payload = new_payload
-        elif changed & {"product_id", "creative_plan_id", "creative_angle"} or "production_mode" in changed:
+        elif changed & {"product_id", "creative_plan_id", "creative_angle", "knowledge_item_id"}:
+            current_payload = dict(task.input_payload or {})
+            if final_production_mode == ProductionMode.KNOWLEDGE and requested_knowledge_item_id:
+                current_payload["knowledge_brief"] = _knowledge_brief_from_item(knowledge_item)
             normalized_payload = _normalize_production_payload(
                 _sync_commerce_snapshot(
-                    dict(task.input_payload or {}),
+                    current_payload,
                     final_production_mode,
                     commerce_plan_snapshot,
                 ),
@@ -550,6 +660,18 @@ class TaskService:
             task.result_payload = data.result_payload
         if data.error_message is not None:
             task.error_message = data.error_message
+
+        if changed & {"product_id", "creative_plan_id", "creative_angle", "knowledge_item_id"}:
+            context_version = await create_context_version(
+                self.session,
+                task.project_id,
+                knowledge_item_id=task.knowledge_item_id,
+                product_id=task.product_id,
+                creative_plan_id=task.creative_plan_id,
+                drama_episode_id=task.drama_episode_id,
+            )
+            task.project_context_version_id = context_version.id
+            task.context_hash = context_version.context_hash
 
         await self.task_repo.update(task)
         await self.session.commit()
@@ -572,6 +694,10 @@ class TaskService:
             project_id=source.project_id,
             product_id=source.product_id,
             creative_plan_id=source.creative_plan_id,
+            project_context_version_id=source.project_context_version_id,
+            context_hash=source.context_hash,
+            knowledge_item_id=source.knowledge_item_id,
+            drama_episode_id=source.drama_episode_id,
             title=title or f"{source.title} - 副本",
             description=source.description,
             job_type=source.job_type,

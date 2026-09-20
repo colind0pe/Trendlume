@@ -23,8 +23,6 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/components/ui/toast";
 import { KnowledgeTaskForm } from "@/components/projects/knowledge-task-form";
 import { CommerceTaskForm } from "@/components/projects/commerce-task-form";
-import { ProductionModeSelector } from "@/components/projects/production-mode-selector";
-import { DramaTaskLauncher } from "@/components/projects/drama-task-launcher";
 import {
   HOOK_OPTIONS,
   SCENE_COUNT_MIN,
@@ -44,7 +42,6 @@ import {
   CreativePlan,
   Project,
   Product,
-  ProductionMode,
   SocialAccount,
   TemplateCatalogItem,
   VoiceInfo,
@@ -115,9 +112,6 @@ export function ProductionTaskDialog({
   const [productId, setProductId] = React.useState("");
   const [creativePlanId, setCreativePlanId] = React.useState("");
   const [creativeAngle, setCreativeAngle] = React.useState<CreativeAngle>("direct");
-  const [productionMode, setProductionMode] = React.useState<ProductionMode>(
-    project.primary_production_mode,
-  );
 
   // Visual style
   const [taskStylePreset, setTaskStylePreset] = React.useState("stick_figure");
@@ -130,11 +124,8 @@ export function ProductionTaskDialog({
   const [sourceAssetId, setSourceAssetId] = React.useState("");
 
   const projectAspect = project?.aspect_ratio || "9:16";
+  const productionMode = project.primary_production_mode;
   const isCommerce = productionMode === "commerce";
-
-  React.useEffect(() => {
-    if (open) setProductionMode(project.primary_production_mode);
-  }, [open, project.primary_production_mode]);
 
   const { data: products = [], isLoading: productsLoading } = useQuery<Product[]>({
     queryKey: ["products"],
@@ -292,7 +283,6 @@ export function ProductionTaskDialog({
             ? rawScript.slice(0, 200)
             : `知识主题: ${finalTitle}, 面向: ${knowledgeAudience.trim() || "普通观众"}`,
         job_type: "video_composition",
-        production_mode: productionMode,
         product_id: isCommerce ? productId : undefined,
         creative_plan_id: isCommerce ? creativePlanId : undefined,
         creative_angle: isCommerce ? creativeAngle : undefined,
@@ -417,18 +407,18 @@ export function ProductionTaskDialog({
       </div>
 
       <div className="border-b border-border bg-card/60 px-5 py-4 sm:px-6">
-        <ProductionModeSelector value={productionMode} onChange={setProductionMode} />
-        {productionMode !== project.primary_production_mode && (
-          <p className="mt-2 text-xs text-muted-foreground">
-            此任务将覆盖 Project 默认模式；Project 仍保持 {project.primary_production_mode}。
-          </p>
-        )}
+        <div className="flex flex-wrap items-center gap-2" role="status" aria-live="polite">
+          <span className="text-sm font-semibold text-foreground">Project 模式</span>
+          <span className="rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+            {productionMode}
+          </span>
+          <span className="text-xs text-muted-foreground">
+            Task 会继承此模式，创建后不能在 Task 级别切换。
+          </span>
+        </div>
       </div>
 
       {/* Studio Two-Column Body */}
-      {productionMode === "drama" ? (
-        <DramaTaskLauncher projectId={projectId} onClose={() => onOpenChange(false)} />
-      ) : (
       <form onSubmit={handleSubmit} className="flex-1 flex flex-col min-h-0 overflow-hidden">
         <div className="flex-1 overflow-y-auto min-h-0">
             <div className="grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-border">
@@ -999,7 +989,6 @@ export function ProductionTaskDialog({
           </Button>
         </div>
       </form>
-      )}
     </Dialog>
   );
 }

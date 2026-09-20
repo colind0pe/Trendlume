@@ -51,6 +51,7 @@ from src.schemas.drama import (
     DramaShotUpdate,
 )
 from src.services.drama_render_adapter import adapt_approved_shots_to_render_scenes
+from src.services.project_context import create_context_version
 from src.services.provider_manager import ProviderManager
 from src.services.template_catalog import template_catalog
 from src.services.workflow_service import workflow_service
@@ -378,6 +379,15 @@ class DramaProductionService:
         project = await self.session.get(ProjectModel, project_id)
         if not project:
             raise NotFoundException("Project", project_id)
+        if project.primary_production_mode != ProductionMode.DRAMA.value:
+            raise ValidationException("Drama Bible 只能创建在 Drama Project 中。")
+        existing = await self.session.scalar(
+            select(DramaBibleModel.id)
+            .where(DramaBibleModel.project_id == project_id)
+            .limit(1)
+        )
+        if existing:
+            raise ValidationException("一个 Drama Project 只能包含一个 Drama Bible。")
 
         bible = DramaBibleModel(
             id=_make_id("drama"),
@@ -1250,6 +1260,8 @@ class DramaProductionService:
         project = await self.session.get(ProjectModel, bible.project_id)
         if not project:
             raise NotFoundException("Project", bible.project_id)
+        if project.primary_production_mode != ProductionMode.DRAMA.value:
+            raise ValidationException("Drama 资源只能用于 Drama Project。")
         template = template_catalog.get(payload.template_id)
         if not template:
             raise NotFoundException("Template", payload.template_id)
@@ -1349,9 +1361,17 @@ class DramaProductionService:
                     raise ValidationException(
                         "当前 Episode 已有制作任务正在运行；请等待完成或恢复失败任务后再修改制作设置。"
                     )
+        context_version = await create_context_version(
+            self.session,
+            project.id,
+            drama_episode_id=episode.id,
+        )
         task = TaskModel(
             id=task_id,
             project_id=project.id,
+            drama_episode_id=episode.id,
+            project_context_version_id=context_version.id,
+            context_hash=context_version.context_hash,
             title=episode.title,
             description=episode.synopsis or bible.logline,
             job_type=JobType.FULL_PIPELINE.value,

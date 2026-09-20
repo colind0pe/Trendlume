@@ -283,10 +283,12 @@ export default function ProjectDetailPage() {
                 </Button>
               </Link>
             )}
-            <Button variant={isDramaProject ? "outline" : "default"} onClick={() => setIsCreateTaskOpen(true)} className="gap-1.5 h-9 px-3.5 text-sm shadow-xs">
-              <Plus aria-hidden="true" className="h-4 w-4" />
-              {isDramaProject ? "新建其他模式 Task" : "新建 Production Task"}
-            </Button>
+            {!isDramaProject && (
+              <Button onClick={() => setIsCreateTaskOpen(true)} className="gap-1.5 h-9 px-3.5 text-sm shadow-xs">
+                <Plus aria-hidden="true" className="h-4 w-4" />
+                新建 Production Task
+              </Button>
+            )}
           </>
         )}
       />
@@ -780,7 +782,7 @@ export default function ProjectDetailPage() {
         </TabsContent>
       </Tabs>
       {/* Two-Column Studio Task Creation Modal */}
-      {project && (
+      {project && !isDramaProject && (
         <ProductionTaskDialog
           open={isCreateTaskOpen}
           onOpenChange={setIsCreateTaskOpen}

@@ -80,6 +80,18 @@ async def test_marked_stale_run_is_not_reused(test_session, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_context_hash_is_part_of_stage_fingerprint(test_session, tmp_path):
+    rt, job = await runtime(test_session, tmp_path)
+    task = await test_session.get(TaskModel, job.task_id)
+    task.context_hash = "context-v1"
+    await test_session.commit()
+
+    run = await rt.begin("topic", {"topic": "stable"})
+
+    assert run.input_payload["_project_context_hash"] == "context-v1"
+
+
+@pytest.mark.asyncio
 async def test_lost_lease_rejects_completion_and_pending_mutation(test_session, tmp_path):
     rt, job = await runtime(test_session, tmp_path)
     run = await rt.begin('topic', {})

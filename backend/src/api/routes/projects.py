@@ -19,9 +19,27 @@ from src.schemas.project import (
     ProjectResponse,
     ProjectUpdate,
 )
+from src.schemas.project_context import (
+    CommerceProfileInput,
+    CommerceProfileResponse,
+    KnowledgeContentItemCreate,
+    KnowledgeContentItemResponse,
+    KnowledgeContentItemUpdate,
+    KnowledgeProfileInput,
+    KnowledgeProfileResponse,
+)
 from src.schemas.task import TaskCreate, TaskResponse
 from src.schemas.template import ProjectTemplateResponse, ProjectTemplateUpdate
 from src.services.asset_service import AssetService
+from src.services.project_context import (
+    create_knowledge_item,
+    get_commerce_profile,
+    get_knowledge_profile,
+    list_knowledge_items,
+    update_commerce_profile,
+    update_knowledge_item,
+    update_knowledge_profile,
+)
 from src.services.project_service import ProjectService
 from src.services.system_asset_service import sync_bgm_directory_assets
 from src.services.task_service import TaskService
@@ -48,6 +66,96 @@ async def list_projects(
 ):
     projects = await service.list_projects(limit=limit, offset=offset)
     return APIResponse(data=[ProjectResponse.model_validate(p) for p in projects])
+
+
+@router.get(
+    "/{project_id}/knowledge/items",
+    response_model=APIResponse[list[KnowledgeContentItemResponse]],
+)
+async def list_project_knowledge_items(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    items = await list_knowledge_items(db, project_id)
+    return APIResponse(data=[KnowledgeContentItemResponse.model_validate(item) for item in items])
+
+
+@router.post(
+    "/{project_id}/knowledge/items",
+    response_model=APIResponse[KnowledgeContentItemResponse],
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_project_knowledge_item(
+    project_id: str,
+    payload: KnowledgeContentItemCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    item = await create_knowledge_item(db, project_id, payload)
+    return APIResponse(data=KnowledgeContentItemResponse.model_validate(item))
+
+
+@router.patch(
+    "/{project_id}/knowledge/items/{item_id}",
+    response_model=APIResponse[KnowledgeContentItemResponse],
+)
+async def update_project_knowledge_item(
+    project_id: str,
+    item_id: str,
+    payload: KnowledgeContentItemUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    item = await update_knowledge_item(db, project_id, item_id, payload)
+    return APIResponse(data=KnowledgeContentItemResponse.model_validate(item))
+
+
+@router.get(
+    "/{project_id}/knowledge/profile",
+    response_model=APIResponse[KnowledgeProfileResponse],
+)
+async def get_project_knowledge_profile(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    profile = await get_knowledge_profile(db, project_id)
+    return APIResponse(data=KnowledgeProfileResponse.model_validate(profile))
+
+
+@router.put(
+    "/{project_id}/knowledge/profile",
+    response_model=APIResponse[KnowledgeProfileResponse],
+)
+async def update_project_knowledge_profile(
+    project_id: str,
+    payload: KnowledgeProfileInput,
+    db: AsyncSession = Depends(get_db),
+):
+    profile = await update_knowledge_profile(db, project_id, payload)
+    return APIResponse(data=KnowledgeProfileResponse.model_validate(profile))
+
+
+@router.get(
+    "/{project_id}/commerce/profile",
+    response_model=APIResponse[CommerceProfileResponse],
+)
+async def get_project_commerce_profile(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    profile = await get_commerce_profile(db, project_id)
+    return APIResponse(data=CommerceProfileResponse.model_validate(profile))
+
+
+@router.put(
+    "/{project_id}/commerce/profile",
+    response_model=APIResponse[CommerceProfileResponse],
+)
+async def update_project_commerce_profile(
+    project_id: str,
+    payload: CommerceProfileInput,
+    db: AsyncSession = Depends(get_db),
+):
+    profile = await update_commerce_profile(db, project_id, payload)
+    return APIResponse(data=CommerceProfileResponse.model_validate(profile))
 
 
 @router.get("/{project_id}/bgm", response_model=APIResponse[list[AssetResponse]])

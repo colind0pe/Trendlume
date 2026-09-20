@@ -4,9 +4,13 @@ from collections.abc import Sequence
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.exceptions import NotFoundException, ValidationException
-from src.domain.enums import AssetType, ProjectStatus
+from src.domain.enums import AssetType, ProductionMode, ProjectStatus
 from src.models.asset import AssetModel
 from src.models.project import ProjectModel
+from src.models.project_context import (
+    CommerceProjectProfileModel,
+    KnowledgeProjectProfileModel,
+)
 from src.models.template import ProjectTemplateModel
 from src.repositories.project_repository import ProjectRepository
 from src.repositories.template_repository import ProjectTemplateRepository
@@ -25,6 +29,11 @@ class ProjectService:
     async def create_project(self, data: ProjectCreate) -> ProjectModel:
         project_id = f"proj_{uuid.uuid4().hex[:12]}"
         template_id = f"tpl_{uuid.uuid4().hex[:12]}"
+
+        if data.primary_production_mode != ProductionMode.KNOWLEDGE and data.knowledge_profile:
+            raise ValidationException("Knowledge profile 只能用于 Knowledge Project。")
+        if data.primary_production_mode != ProductionMode.COMMERCE and data.commerce_profile:
+            raise ValidationException("Commerce profile 只能用于 Commerce Project。")
 
         default_bgm = None
         try:
@@ -91,6 +100,24 @@ class ProjectService:
             params={},
         )
         await self.template_repo.create(template)
+        if data.primary_production_mode == ProductionMode.KNOWLEDGE:
+            profile_values = (
+                data.knowledge_profile.model_dump()
+                if data.knowledge_profile
+                else {}
+            )
+            self.session.add(
+                KnowledgeProjectProfileModel(project_id=project_id, **profile_values)
+            )
+        elif data.primary_production_mode == ProductionMode.COMMERCE:
+            profile_values = (
+                data.commerce_profile.model_dump()
+                if data.commerce_profile
+                else {}
+            )
+            self.session.add(
+                CommerceProjectProfileModel(project_id=project_id, **profile_values)
+            )
         await self.session.commit()
 
         # Re-fetch with template
@@ -120,7 +147,10 @@ class ProjectService:
         if data.aspect_ratio is not None:
             project.aspect_ratio = data.aspect_ratio.value
         if data.primary_production_mode is not None:
-            project.primary_production_mode = data.primary_production_mode.value
+            requested_mode = data.primary_production_mode.value
+            current_mode = project.primary_production_mode or ProductionMode.KNOWLEDGE.value
+            if requested_mode != current_mode:
+                raise ValidationException("项目生产模式在创建时确定，创建后不能切换。")
         if data.status is not None:
             project.status = data.status.value
         if data.cover_asset_id is not None:
