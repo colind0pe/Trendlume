@@ -333,8 +333,10 @@ class DramaProductionPipeline(DurableProductionPipeline):
                     f"{role}参考资产 {missing_reference.get('reference_asset_id')} 不存在或文件缺失；"
                     "请重新上传或清除参考资产后再生成，不能静默退回文生图。"
                 )
-            reference = next((item for item in references if item.get("path_exists")), None)
+            reference_paths = [item["path"] for item in references if item.get("path_exists")]
             continuity = dict(draft.layout_params.get("continuity_input") or {})
+            if reference_paths:
+                continuity["reference_image_paths"] = reference_paths
             last_frame_asset_id = continuity.get("last_frame_asset_id")
             if last_frame_asset_id:
                 last_frame_asset = await self.db.get(AssetModel, last_frame_asset_id)
@@ -365,27 +367,34 @@ class DramaProductionPipeline(DurableProductionPipeline):
                 ),
             }
 
-            async def action(run, scene_id=scene.id, draft=draft, reference=reference, continuity=continuity):
+            async def action(run, scene_id=scene.id, draft=draft, reference_paths=reference_paths, continuity=continuity):
                 current = await SceneRepository(self.db).get_by_id(scene_id)
                 if not current:
                     raise ValidationException("Drama Render Scene 不存在。")
                 if content_mode == "generated_video":
-                    if reference and not current.media_asset_id:
-                        # Existing video Providers already accept image_url as
-                        # a first-frame input. Keep this as an adapter-level
-                        # capability; a dedicated last-frame Provider remains optional.
-                        current.media_asset_id = reference["reference_asset_id"]
-                        await self.db.flush()
+                    video_continuity = dict(continuity)
+                    if reference_paths and not current.media_asset_id:
+                        # Resolve all character/location references into one
+                        # provider-generated key frame before animation. This
+                        # avoids dropping secondary references in video APIs
+                        # that accept only a first frame.
+                        await self.gen.generate_scene_image(
+                            current.id,
+                            prompt_override=draft.visual_prompt,
+                            reference_image_paths=reference_paths,
+                            continuity_input=continuity,
+                        )
+                        video_continuity.pop("reference_image_paths", None)
                     await self.gen.generate_scene_video(
                         current.id,
                         prompt_override=draft.visual_prompt,
-                        continuity_input=continuity,
+                        continuity_input=video_continuity,
                     )
                 else:
                     await self.gen.generate_scene_image(
                         current.id,
                         prompt_override=draft.visual_prompt,
-                        reference_image_path=reference.get("path") if reference else None,
+                        reference_image_paths=reference_paths,
                         continuity_input=continuity,
                     )
                 await self.save()

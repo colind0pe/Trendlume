@@ -2034,6 +2034,7 @@ class GenerationService:
         prompt_override: str | None = None,
         *,
         reference_image_path: str | None = None,
+        reference_image_paths: list[str] | None = None,
         continuity_input: dict | None = None,
     ) -> SceneModel:
         """Generate a real visual image for a scene and bind it to the scene."""
@@ -2069,7 +2070,20 @@ class GenerationService:
                 await self.execution_context.fence(self.session)
             await self.session.commit()
             raise ValidationException("未配置可用的图片 Provider，无法生成真实分镜画面。")
-        if reference_image_path and not self._provider_accepts(
+        reference_paths = [item for item in (reference_image_paths or []) if item]
+        if reference_image_path and reference_image_path not in reference_paths:
+            reference_paths.insert(0, reference_image_path)
+        accepts_multiple_references = self._provider_accepts(
+            image_provider, "reference_image_paths", "generate_image", strict=True
+        )
+        if len(reference_paths) > 1 and not accepts_multiple_references:
+            message = "当前图片 Provider 不支持多参考图输入；不能只取第一张并静默丢弃角色或场景约束。"
+            await self._set_scene_generation_status(scene, "image", "failed", message)
+            if self.execution_context:
+                await self.execution_context.fence(self.session)
+            await self.session.commit()
+            raise ValidationException(message)
+        if reference_paths and not accepts_multiple_references and not self._provider_accepts(
             image_provider, "reference_image_path", "generate_image", strict=True
         ):
             message = (
@@ -2101,8 +2115,10 @@ class GenerationService:
                     "width": media_width,
                     "height": media_height,
                     **(
-                        {"reference_image_path": reference_image_path}
-                        if reference_image_path and self._provider_accepts(image_provider, "reference_image_path", "generate_image", strict=True)
+                        {"reference_image_paths": reference_paths}
+                        if reference_paths and accepts_multiple_references
+                        else {"reference_image_path": reference_paths[0]}
+                        if reference_paths and self._provider_accepts(image_provider, "reference_image_path", "generate_image", strict=True)
                         else {}
                     ),
                     **(
@@ -2149,10 +2165,10 @@ class GenerationService:
                     "provider": getattr(image_provider, "name", "unknown"),
                     "reference_strategy": (
                         "provider_reference"
-                        if reference_image_path and self._provider_accepts(image_provider, "reference_image_path", "generate_image", strict=True)
+                        if reference_paths
                         else "deterministic_prompt_anchor"
                     ),
-                    "reference_image_path": reference_image_path if reference_image_path else None,
+                    "reference_image_paths": reference_paths,
                     "continuity_input": continuity_input or {},
                 },
             )
@@ -2223,6 +2239,23 @@ class GenerationService:
                 first_frame_path = str(self.storage.get_path(source_asset.file_path))
 
         last_frame_path = (continuity_input or {}).get("last_frame_path")
+        reference_image_paths = [
+            item for item in ((continuity_input or {}).get("reference_image_paths") or []) if item
+        ]
+        accepts_video_references = self._provider_accepts(
+            video_provider, "reference_image_urls", "generate_video", strict=True
+        )
+        if reference_image_paths and not accepts_video_references and not first_frame_path:
+            if self._provider_accepts(video_provider, "image_url", "generate_video", strict=True):
+                first_frame_path = reference_image_paths[0]
+                reference_image_paths = []
+            else:
+                message = "当前视频 Provider 不支持短剧参考图输入；不能静默退化为纯文生视频。"
+                await self._set_scene_generation_status(scene, "video", "failed", message)
+                if self.execution_context:
+                    await self.execution_context.fence(self.session)
+                await self.session.commit()
+                raise ValidationException(message)
         if first_frame_path and not self._provider_accepts(video_provider, "image_url", "generate_video", strict=True):
             message = (
                 "当前视频 Provider 不支持首帧参考图输入；请配置 image-to-video 工作流，"
@@ -2267,6 +2300,8 @@ class GenerationService:
                 # image_url. Use it as a generic continuity hand-off when a
                 # dedicated last-frame parameter is unavailable.
                 video_kwargs["image_url"] = last_frame_path
+            if reference_image_paths and accepts_video_references:
+                video_kwargs["reference_image_urls"] = reference_image_paths
             if self.execution_context:
                 await self.execution_context.fence(self.session)
             await self.session.commit()

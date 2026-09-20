@@ -26,6 +26,7 @@ class VideoProvider(Protocol):
         width: int | None = None,
         height: int | None = None,
         last_frame_url: str | None = None,
+        reference_image_urls: list[str] | None = None,
     ) -> VideoResult:
         """Generate animated video segment for a scene"""
         ...

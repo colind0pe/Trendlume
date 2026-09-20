@@ -26,6 +26,7 @@ class ImageProvider(Protocol):
         width: int | None = None,
         height: int | None = None,
         reference_image_path: str | None = None,
+        reference_image_paths: list[str] | None = None,
         continuity_input: dict | None = None,
     ) -> ImageResult:
         """Generate high resolution visual image for a storyboard scene"""

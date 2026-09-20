@@ -528,6 +528,72 @@ async def test_workflow_is_snapshotted_and_passed_to_image_provider(
 
 
 @pytest.mark.asyncio
+async def test_image_provider_receives_all_short_drama_reference_images(
+    test_session: AsyncSession,
+    tmp_path,
+):
+    storage = LocalStorageService(base_storage_dir=tmp_path / "storage")
+    _, task, service = await _create_project_task(
+        test_session,
+        storage=storage,
+        title="多参考图测试",
+    )
+    task = await service.apply_script_to_task(
+        task.id,
+        StructuredScript(
+            title="测试",
+            hook="测试",
+            narration="多参考图",
+            scenes=[
+                StructuredSceneScript(
+                    sequence_index=0,
+                    narration_text="多参考图",
+                    visual_prompt="保持人物和场景一致",
+                )
+            ],
+        ),
+    )
+    references = [tmp_path / "character.png", tmp_path / "location.png"]
+    for reference in references:
+        reference.write_bytes(create_solid_color_png(10, 10))
+
+    class RecordingImage:
+        name = "recording-multi-reference"
+
+        def __init__(self):
+            self.references: list[str] = []
+
+        async def generate_image(
+            self,
+            prompt: str,
+            aspect_ratio: str,
+            workflow: str | None = None,
+            width: int | None = None,
+            height: int | None = None,
+            reference_image_paths: list[str] | None = None,
+        ):
+            self.references = list(reference_image_paths or [])
+            return ImageResult(
+                image_bytes=create_solid_color_png(10, 10),
+                width=10,
+                height=10,
+            )
+
+    provider = RecordingImage()
+    service._get_image_provider = lambda: _resolved(provider)
+    scene = await service.generate_scene_image(
+        task.scenes[0].id,
+        reference_image_paths=[str(reference) for reference in references],
+    )
+
+    assert provider.references == [str(reference) for reference in references]
+    asset = await test_session.get(AssetModel, scene.media_asset_id)
+    assert asset is not None
+    assert asset.metadata_json["reference_strategy"] == "provider_reference"
+    assert asset.metadata_json["reference_image_paths"] == provider.references
+
+
+@pytest.mark.asyncio
 async def test_video_provider_uses_tts_duration_without_overwriting_scene_duration(
     test_session: AsyncSession, tmp_path
 ):
