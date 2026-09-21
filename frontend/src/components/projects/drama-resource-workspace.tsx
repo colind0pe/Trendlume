@@ -19,6 +19,7 @@ import {
 import { EmptyState } from "@/components/ui/empty-state";
 import { IconButton } from "@/components/ui/icon-button";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/field";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/toast";
 
@@ -41,6 +42,11 @@ function descriptionOf(item: DramaResource) {
   return item.description;
 }
 
+function referenceAssetIdOf(item: DramaResource) {
+  if ("appearance_rules" in item) return String(item.appearance_rules?.reference_asset_id || "");
+  return String(item.continuity_data?.reference_asset_id || "");
+}
+
 export function DramaResourceWorkspace({ projectId }: { projectId: string }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -56,6 +62,7 @@ export function DramaResourceWorkspace({ projectId }: { projectId: string }) {
   const [description, setDescription] = React.useState("");
   const [continuityNotes, setContinuityNotes] = React.useState("");
   const [wardrobeNotes, setWardrobeNotes] = React.useState("");
+  const [referenceAssetId, setReferenceAssetId] = React.useState("");
 
   const characters = useQuery({
     queryKey: ["drama-characters", projectId],
@@ -68,6 +75,10 @@ export function DramaResourceWorkspace({ projectId }: { projectId: string }) {
   const props = useQuery({
     queryKey: ["drama-props", projectId],
     queryFn: () => api.listDramaProps(projectId),
+  });
+  const assets = useQuery({
+    queryKey: ["assets", projectId, "drama-reference"],
+    queryFn: () => api.listAssets(projectId, "image"),
   });
 
   const groups: Array<{ kind: ResourceKind; items: DramaResource[] }> = [
@@ -92,19 +103,19 @@ export function DramaResourceWorkspace({ projectId }: { projectId: string }) {
         ? {
             ...common,
             description: description.trim(),
-            appearance_rules: { notes: continuityNotes.trim() },
+            appearance_rules: { notes: continuityNotes.trim(), reference_asset_id: referenceAssetId || null },
             wardrobe_rules: { notes: wardrobeNotes.trim() },
           }
         : editor.kind === "location"
           ? {
               ...common,
               visual_description: description.trim(),
-              continuity_data: { notes: continuityNotes.trim() },
+              continuity_data: { notes: continuityNotes.trim(), reference_asset_id: referenceAssetId || null },
             }
           : {
               ...common,
               description: description.trim(),
-              continuity_data: { notes: continuityNotes.trim() },
+              continuity_data: { notes: continuityNotes.trim(), reference_asset_id: referenceAssetId || null },
             };
       if (editor.item) {
         if (editor.kind === "character") return api.updateDramaCharacter(projectId, editor.item.id, payload);
@@ -154,6 +165,7 @@ export function DramaResourceWorkspace({ projectId }: { projectId: string }) {
     setDescription(item ? descriptionOf(item) : "");
     setContinuityNotes(item ? notesOf(item) : "");
     setWardrobeNotes(item && "wardrobe_rules" in item ? String(item.wardrobe_rules?.notes || "") : "");
+    setReferenceAssetId(item ? referenceAssetIdOf(item) : "");
     setEditor({ kind, item });
   };
 
@@ -205,6 +217,7 @@ export function DramaResourceWorkspace({ projectId }: { projectId: string }) {
                       </CardHeader>
                       <CardContent className="space-y-3 p-4 pt-2">
                         <p className="line-clamp-3 text-sm leading-6 text-muted-foreground">{descriptionOf(item) || "暂无描述"}</p>
+                        <p className="text-xs text-muted-foreground">{referenceAssetIdOf(item) ? "已绑定参考图" : "未绑定参考图"}</p>
                         {item.approval_status !== "approved" && <Button type="button" size="sm" className="w-full min-h-9 gap-1.5" disabled={approveMutation.isPending} onClick={() => approveMutation.mutate({ kind, id: item.id })}><Check aria-hidden="true" className="h-4 w-4" />确认并审批</Button>}
                       </CardContent>
                     </Card>
@@ -222,6 +235,7 @@ export function DramaResourceWorkspace({ projectId }: { projectId: string }) {
           <label className="block space-y-1.5 text-sm font-medium"><span>名称</span><Input value={name} onChange={(event) => setName(event.target.value)} placeholder={editor?.kind === "character" ? "例如：林夏" : editor?.kind === "location" ? "例如：旧城区咖啡馆" : "例如：银色怀表"} autoFocus /></label>
           <label className="block space-y-1.5 text-sm font-medium"><span>{editor?.kind === "location" ? "视觉描述" : "设定描述"}</span><Textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={4} placeholder="写清不可漂移的识别特征、质感与叙事用途。" /></label>
           <label className="block space-y-1.5 text-sm font-medium"><span>连续性备注</span><Textarea value={continuityNotes} onChange={(event) => setContinuityNotes(event.target.value)} rows={3} placeholder="例如：左右位置、损耗状态、昼夜变化等。" /></label>
+          <label className="block space-y-1.5 text-sm font-medium"><span>已审批参考图</span><Select value={referenceAssetId} onChange={(event) => setReferenceAssetId(event.target.value)}><option value="">请选择项目图片素材</option>{(assets.data || []).map((asset) => <option key={asset.id} value={asset.id}>{asset.file_name}</option>)}</Select><span className="block text-xs font-normal text-muted-foreground">正式动态短剧会用这张图约束关键帧与逐镜 I2V；未绑定时不会退回纯文生视频。</span></label>
           {editor?.kind === "character" && <label className="block space-y-1.5 text-sm font-medium"><span>服装规则</span><Textarea value={wardrobeNotes} onChange={(event) => setWardrobeNotes(event.target.value)} rows={3} placeholder="常服、场景换装和不可变化的配饰。" /></label>}
         </div>
         <DialogFooter><Button type="button" variant="outline" onClick={() => setEditor(null)}>取消</Button><Button type="button" disabled={!name.trim() || saveMutation.isPending} onClick={() => saveMutation.mutate()}>{saveMutation.isPending ? "保存中…" : "保存为待审批"}</Button></DialogFooter>

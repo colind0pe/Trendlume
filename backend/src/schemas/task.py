@@ -3,8 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from src.domain.production_recipes import MediaPlan, resolve_recipe
 from src.schemas.workflow import WorkflowJobResponse
 
 
@@ -60,6 +61,16 @@ class TaskCreate(BaseModel):
     detail: TaskDetailInput
     generation_settings: dict[str, Any] = Field(default_factory=dict)
     publishing_settings: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_production_settings(self) -> TaskCreate:
+        resolve_recipe(self.detail.type, self.generation_settings.get("recipe_id"))
+        overrides = self.generation_settings.get("media_plan_overrides") or {}
+        if not isinstance(overrides, dict):
+            raise ValueError("media_plan_overrides 必须是对象")
+        for value in overrides.values():
+            MediaPlan.model_validate(value)
+        return self
 
 
 class TaskUpdate(BaseModel):

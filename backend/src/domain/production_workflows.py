@@ -60,10 +60,9 @@ KNOWLEDGE_PRODUCTION_WORKFLOW = ProductionWorkflow(
 COMMERCE_PRODUCTION_WORKFLOW = ProductionWorkflow(
     mode=ProductionMode.COMMERCE,
     stages=(
-        ProductionStage("product_ingest", "商品输入"),
-        ProductionStage("product_truth", "商品事实"),
-        ProductionStage("creative_strategy", "Creative Planning"),
-        ProductionStage("variant_selection", "Variant Selection"),
+        ProductionStage("topic", "商品与事实"),
+        ProductionStage("research", "事实核验"),
+        ProductionStage("planning", "创意方案"),
         ProductionStage("script", "脚本"),
         ProductionStage("storyboard", "商业分镜"),
         ProductionStage("assets", "商品与画面素材", supports_units=True),
@@ -78,11 +77,14 @@ COMMERCE_PRODUCTION_WORKFLOW = ProductionWorkflow(
 DRAMA_PRODUCTION_WORKFLOW = ProductionWorkflow(
     mode=ProductionMode.DRAMA,
     stages=(
-        ProductionStage("qa_before", "生成前 QA"),
-        ProductionStage("media", "Shot Media", supports_units=True),
-        ProductionStage("audio", "Shot Audio", supports_units=True),
+        ProductionStage("topic", "故事与集数"),
+        ProductionStage("research", "连续性核验"),
+        ProductionStage("planning", "节奏与镜头计划"),
+        ProductionStage("script", "台词与剧本"),
+        ProductionStage("storyboard", "已审批镜头"),
+        ProductionStage("assets", "动态镜头", supports_units=True),
+        ProductionStage("voice", "多角色音频", supports_units=True),
         ProductionStage("subtitles", "Dialogue 字幕"),
-        ProductionStage("qa_after", "生成后 QA"),
         ProductionStage("composition", "Episode Video", supports_units=True),
         ProductionStage("export", "导出"),
     ),

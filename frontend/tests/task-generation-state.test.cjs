@@ -31,12 +31,12 @@ vm.runInNewContext(output, context);
 const { generationStatus, isGenerationLifecycleEvent, resolveSceneAssetRefreshAction } = context.exports;
 
 test("publication failures and jobs do not replace completed generation status", () => {
-  assert.equal(generationStatus({ status: "completed", active_job: { job_type: "publish", status: "running" } }), "completed");
-  assert.equal(generationStatus({ status: "failed", active_job: { job_type: "full_pipeline", status: "completed" } }), "completed");
+  assert.equal(generationStatus({ production_status: "completed", latest_job: { job_type: "publish", status: "running" } }), "completed");
+  assert.equal(generationStatus({ production_status: "failed", latest_job: { job_type: "full_pipeline", status: "completed" } }), "completed");
 });
 test("new queued job replaces old failure and terminal job stops stale live running", () => {
-  assert.equal(generationStatus({ status: "failed", active_job: { job_type: "full_pipeline", status: "queued" } }), "pending");
-  assert.equal(generationStatus({ status: "running", active_job: { job_type: "full_pipeline", status: "cancelled" } }, "running"), "cancelled");
+  assert.equal(generationStatus({ production_status: "failed", latest_job: { job_type: "full_pipeline", status: "queued" } }), "pending");
+  assert.equal(generationStatus({ production_status: "running", latest_job: { job_type: "full_pipeline", status: "cancelled" } }, "running"), "cancelled");
 });
 test("individual asset, scene and preview updates do not start a generation workflow", () => {
   for (const event of ["asset.created", "scene.status_changed", "video.preview_ready", "research.warning"]) {

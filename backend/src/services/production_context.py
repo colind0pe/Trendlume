@@ -8,13 +8,23 @@ from sqlalchemy import func, inspect, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.exceptions import ValidationException
+from src.domain.production_recipes import (
+    compile_production_plan,
+    missing_capabilities,
+    resolve_recipe,
+)
 from src.models.asset import AssetModel
 from src.models.drama import DramaCharacterModel, DramaLocationModel, DramaPropModel
 from src.models.product import ProductAssetModel, ProductModel
 from src.models.production_context import ProductionContextSnapshotModel
 from src.models.project import ProjectAssetBindingModel, ProjectModel
 from src.models.task import TaskModel
-from src.models.task_detail import DramaTaskSceneModel, DramaTaskShotModel
+from src.models.task_detail import (
+    DramaTaskDialogueLineModel,
+    DramaTaskSceneModel,
+    DramaTaskShotModel,
+)
+from src.services.provider_manager import ProviderManager
 
 
 def _stable(value: Any) -> Any:
@@ -60,6 +70,13 @@ class ProductionContextCompiler:
             "项目模板已配置。" if has_template else "请先配置项目模板。",
         )
         detail = self._detail(project, task)
+        recipe = resolve_recipe(project.mode, (task.generation_settings or {}).get("recipe_id"))
+        add(
+            "recipe",
+            "生产方案",
+            True,
+            f"已选择：{recipe.name}（{recipe.cost_tier} 成本）。",
+        )
         if project.mode == "knowledge":
             has_topic = bool(detail.topic.strip())
             add(
@@ -106,6 +123,17 @@ class ProductionContextCompiler:
                 if asset_count
                 else "请至少绑定一个商品图片或视频。",
             )
+            dynamic_facts = (product.truth_sheet or {}).get("dynamic_facts", []) if product else []
+            stale_facts = [
+                item for item in dynamic_facts
+                if isinstance(item, dict) and not (item.get("confirmed") or item.get("verified_at"))
+            ]
+            add(
+                "commerce_dynamic_facts",
+                "动态商品事实",
+                not stale_facts,
+                "价格与活动事实已确认。" if not stale_facts else "请确认价格或活动等动态事实。",
+            )
         else:
             groups = []
             for key, label, model in (
@@ -138,6 +166,64 @@ class ProductionContextCompiler:
                 if not unapproved
                 else "请审批：" + "、".join(unapproved),
             )
+            if recipe.recipe_id == "drama_reference_i2v":
+                missing_references = [
+                    item.name for item in groups if not self._drama_reference_asset_ids(item)
+                ]
+                add(
+                    "drama_reference_assets",
+                    "Drama 参考素材",
+                    not missing_references,
+                    "人物、地点和道具参考素材已绑定。"
+                    if not missing_references
+                    else "请为以下资源绑定参考素材：" + "、".join(missing_references),
+                )
+                approved_scenes = list((await self.session.scalars(
+                    select(DramaTaskSceneModel).where(
+                        DramaTaskSceneModel.task_id == task.id,
+                        DramaTaskSceneModel.approval_status == "approved",
+                    )
+                )).all())
+                approved_scene_ids = [item.id for item in approved_scenes]
+                approved_shots = list((await self.session.scalars(
+                    select(DramaTaskShotModel).where(
+                        DramaTaskShotModel.scene_id.in_(approved_scene_ids),
+                        DramaTaskShotModel.approval_status == "approved",
+                    )
+                )).all()) if approved_scene_ids else []
+                add(
+                    "drama_approved_shots",
+                    "已审批逐镜",
+                    bool(approved_shots),
+                    f"已审批 {len(approved_shots)} 个 Shot；正式 Recipe 会逐镜生成动态 clip。"
+                    if approved_shots
+                    else "请先完成剧本、Scene 和 Shot 审核；关键帧不会作为最终镜头。",
+                )
+                add(
+                    "drama_audio_boundary",
+                    "音画时间线",
+                    True,
+                    "speaker、shot 和时长会进入快照；当前执行器按 Shot 混合台词配音，逐角色独立声轨与原声审计尚未实现。",
+                )
+        providers = await ProviderManager(self.session).capture_snapshot(
+            search_provider_id=(task.generation_settings or {}).get("search_provider_id"),
+            material_provider_id=(task.generation_settings or {}).get("material_provider_id"),
+        )
+        for capability in sorted(recipe.required_capabilities):
+            configured = bool(providers.get(capability))
+            add(
+                f"provider_{capability}",
+                f"{capability} Provider",
+                configured,
+                f"{capability} Provider 已快照。" if configured
+                else f"Recipe {recipe.name} 需要可用的 {capability} Provider。",
+            )
+        add(
+            "estimated_cost",
+            "预计操作成本",
+            True,
+            {"low": "主要为确定性处理或低成本素材操作。", "medium": "包含部分生成或素材获取操作。", "high": "包含逐镜图像/视频生成等昂贵操作。"}[recipe.cost_tier],
+        )
         return {
             "task_id": task.id,
             "mode": project.mode,
@@ -168,8 +254,12 @@ class ProductionContextCompiler:
             )
         ).all()
         mode_context: dict[str, Any]
+        planning_units: list[Any] = []
+        reference_asset_ids: list[str] = []
         if project.mode == "knowledge":
             mode_context = self._columns(project.knowledge_profile)
+            planning_units = list(task.scenes or [])
+            reference_asset_ids = [asset.id for _, asset in asset_rows]
         elif project.mode == "commerce":
             products = list(
                 (
@@ -184,6 +274,11 @@ class ProductionContextCompiler:
                 "profile": self._columns(project.commerce_profile),
                 "product": self._columns(products[0]),
             }
+            product_assets = list((await self.session.scalars(
+                select(ProductAssetModel).where(ProductAssetModel.product_id == products[0].id)
+            )).all())
+            reference_asset_ids = [item.asset_id for item in product_assets if item.asset_id]
+            planning_units = list(task.scenes or [])
         elif project.mode == "drama":
             characters = list(
                 (
@@ -226,6 +321,12 @@ class ProductionContextCompiler:
             drama_shots = list((await self.session.scalars(
                 select(DramaTaskShotModel).where(DramaTaskShotModel.scene_id.in_(scene_ids))
             )).all()) if scene_ids else []
+            shot_ids = [shot.id for shot in drama_shots]
+            drama_dialogue = list((await self.session.scalars(
+                select(DramaTaskDialogueLineModel).where(
+                    DramaTaskDialogueLineModel.shot_id.in_(shot_ids)
+                )
+            )).all()) if shot_ids else []
             project_location_ids = {item.id for item in locations}
             project_character_ids = {item.id for item in characters}
             project_prop_ids = {item.id for item in props}
@@ -260,14 +361,36 @@ class ProductionContextCompiler:
                 "props": [self._columns(item) for item in props],
                 "scenes": [self._columns(item) for item in drama_scenes],
                 "shots": [self._columns(item) for item in drama_shots],
+                "dialogue": [self._columns(item) for item in drama_dialogue],
             }
+            planning_units = [self._drama_shot_unit(item) for item in drama_shots]
+            reference_asset_ids = sorted({
+                asset_id
+                for item in [*characters, *locations, *props]
+                for asset_id in self._drama_reference_asset_ids(item)
+            })
+            bound_asset_ids = {asset.id for _, asset in asset_rows}
+            if not set(reference_asset_ids).issubset(bound_asset_ids):
+                raise ValidationException("Drama 参考素材必须属于当前 Project。")
         else:
             raise ValidationException("项目生产模式无效。")
 
+        production_plan = compile_production_plan(
+            project.mode,
+            task.generation_settings or {},
+            planning_units,
+            default_reference_asset_ids=reference_asset_ids,
+        )
+        missing = missing_capabilities(production_plan, provider_snapshot)
+        if missing:
+            raise ValidationException(
+                f"Recipe {production_plan.recipe.name} 缺少 Provider 能力：" + "、".join(missing)
+            )
         payload = _stable(
             {
-                "schema_version": 1,
+                "schema_version": 2,
                 "mode": project.mode,
+                "production_plan": production_plan.model_dump(mode="json"),
                 "project": {
                     "id": project.id,
                     "name": project.name,
@@ -332,4 +455,29 @@ class ProductionContextCompiler:
             attribute.key: getattr(model, attribute.key)
             for attribute in inspect(model).mapper.column_attrs
             if attribute.key not in {"created_at", "updated_at"}
+        }
+
+    @staticmethod
+    def _drama_reference_asset_ids(model) -> list[str]:
+        values: list[str] = []
+        for container_name in ("appearance_rules", "continuity_data"):
+            container = getattr(model, container_name, None) or {}
+            candidate = container.get("reference_asset_id")
+            if isinstance(candidate, str) and candidate:
+                values.append(candidate)
+            values.extend(
+                item for item in container.get("reference_asset_ids", [])
+                if isinstance(item, str) and item
+            )
+        return values
+
+    @staticmethod
+    def _drama_shot_unit(shot: DramaTaskShotModel) -> dict[str, Any]:
+        return {
+            "id": shot.id,
+            "visual_role": "concept",
+            "production_metadata": {
+                "drama_shot_id": shot.id,
+                "duration_seconds": shot.duration_hint,
+            },
         }

@@ -39,6 +39,18 @@ export type ContentMode = (typeof CONTENT_MODE_VALUES)[number];
 export type DramaContentMode = Extract<ContentMode, "generated_image" | "generated_video">;
 export const PRODUCTION_MODE_VALUES = ["knowledge", "commerce", "drama"] as const;
 export type ProductionMode = (typeof PRODUCTION_MODE_VALUES)[number];
+export type MediaStrategy = "static_card" | "online_asset" | "uploaded_asset" | "text_to_image" | "image_to_image" | "text_to_video" | "image_to_video";
+export interface ProductionRecipe {
+  recipe_id: string;
+  mode: ProductionMode;
+  name: string;
+  description: string;
+  cost_tier: "low" | "medium" | "high";
+  required_capabilities: string[];
+  requires_reference_assets: boolean;
+  allowed_strategies: MediaStrategy[];
+  default_strategy: MediaStrategy;
+}
 export type DramaSourceType = "idea" | "script";
 export type DramaStage = "story" | "bible" | "assets" | "episode" | "storyboard" | "approval";
 export type DramaWorkflowStatus = "draft" | "in_progress" | "paused" | "completed" | "failed";

@@ -5,8 +5,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.api.dependencies import get_task_service
 from src.api.routes.projects import _task
 from src.core.database import get_db
+from src.domain.production_recipes import recipes_for_mode
 from src.models.workflow import WorkflowJobModel
 from src.schemas.common import APIResponse
+from src.schemas.scene import SceneResponse
 from src.schemas.task import TaskDetailResponse, TaskResponse, TaskUpdate
 from src.schemas.workflow import WorkflowJobResponse
 from src.services.production_context import ProductionContextCompiler
@@ -14,6 +16,13 @@ from src.services.production_job_service import ProductionJobService
 from src.services.task_service import TaskService
 
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
+
+
+def _task_detail(task):
+    return {
+        **_task(task),
+        "scenes": [SceneResponse.model_validate(scene) for scene in task.scenes],
+    }
 
 
 @router.get("", response_model=APIResponse[list[TaskResponse]])
@@ -47,10 +56,17 @@ async def list_tasks(
     return APIResponse(data=[{**_task(task), "latest_job": latest.get(task.id)} for task in tasks])
 
 
+@router.get("/recipes", response_model=APIResponse[list[dict]])
+async def list_production_recipes(mode: str = Query(...)):
+    return APIResponse(
+        data=[item.model_dump(mode="json") for item in recipes_for_mode(mode)]
+    )
+
+
 @router.get("/{task_id}", response_model=APIResponse[TaskDetailResponse])
 async def get_task(task_id: str, service: TaskService = Depends(get_task_service)):
     task = await service.get_task(task_id)
-    return APIResponse(data={**_task(task), "scenes": task.scenes})
+    return APIResponse(data=_task_detail(task))
 
 
 @router.patch("/{task_id}", response_model=APIResponse[TaskDetailResponse])
@@ -58,13 +74,13 @@ async def update_task(
     task_id: str, payload: TaskUpdate, service: TaskService = Depends(get_task_service)
 ):
     task = await service.update_task(task_id, payload)
-    return APIResponse(data={**_task(task), "scenes": task.scenes})
+    return APIResponse(data=_task_detail(task))
 
 
 @router.post("/{task_id}/approve", response_model=APIResponse[TaskDetailResponse])
 async def approve_task(task_id: str, service: TaskService = Depends(get_task_service)):
     task = await service.approve(task_id)
-    return APIResponse(data={**_task(task), "scenes": task.scenes})
+    return APIResponse(data=_task_detail(task))
 
 
 @router.get("/{task_id}/readiness", response_model=APIResponse[dict])
@@ -80,7 +96,7 @@ async def delete_task(task_id: str, service: TaskService = Depends(get_task_serv
 @router.post("/{task_id}/duplicate", response_model=APIResponse[TaskDetailResponse])
 async def duplicate_task(task_id: str, service: TaskService = Depends(get_task_service)):
     task = await service.duplicate_task(task_id)
-    return APIResponse(data={**_task(task), "scenes": task.scenes})
+    return APIResponse(data=_task_detail(task))
 
 
 @router.get("/{task_id}/jobs", response_model=APIResponse[list[WorkflowJobResponse]])
@@ -101,3 +117,13 @@ async def list_task_jobs(task_id: str, db: AsyncSession = Depends(get_db)):
 @router.post("/{task_id}/jobs", response_model=APIResponse[WorkflowJobResponse])
 async def produce_task(task_id: str, db: AsyncSession = Depends(get_db)):
     return APIResponse(data=await ProductionJobService(db).create(task_id))
+
+
+@router.post(
+    "/{task_id}/scenes/{scene_id}/retry",
+    response_model=APIResponse[WorkflowJobResponse],
+)
+async def retry_scene_media(
+    task_id: str, scene_id: str, db: AsyncSession = Depends(get_db)
+):
+    return APIResponse(data=await ProductionJobService(db).retry_scene(task_id, scene_id))

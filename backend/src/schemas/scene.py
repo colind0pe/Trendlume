@@ -1,9 +1,16 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.domain.enums import VisualRole
+from src.domain.production_recipes import MediaPlan
+
+
+def _validate_production_metadata(value: dict[str, Any] | None):
+    if value and value.get("media_plan") is not None:
+        MediaPlan.model_validate(value["media_plan"])
+    return value
 
 
 class SceneCreate(BaseModel):
@@ -19,6 +26,8 @@ class SceneCreate(BaseModel):
     audio_asset_id: str | None = None
     media_asset_id: str | None = None
 
+    _media_plan = field_validator("production_metadata")(_validate_production_metadata)
+
 
 class SceneUpdate(BaseModel):
     sequence_index: int | None = None
@@ -32,6 +41,8 @@ class SceneUpdate(BaseModel):
     production_metadata: dict[str, Any] | None = None
     audio_asset_id: str | None = None
     media_asset_id: str | None = None
+
+    _media_plan = field_validator("production_metadata")(_validate_production_metadata)
 
 
 class SceneResponse(BaseModel):

@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.core.exceptions import NotFoundException, ValidationException
+from src.domain.production_recipes import MediaPlan, resolve_recipe
 from src.models.drama import DramaCharacterModel, DramaLocationModel, DramaPropModel
 from src.models.project import ProjectModel
 from src.models.task import TaskModel
@@ -30,6 +31,7 @@ class TaskService:
             raise ValidationException(
                 f"{project.mode} Project 不能创建 {data.detail.type} Task Detail。"
             )
+        self._validate_generation_settings(project.mode, data.generation_settings)
         if project.mode == "drama":
             await self._validate_drama_continuity(project_id, data.detail.continuity_data)
         task = TaskModel(
@@ -133,6 +135,8 @@ class TaskService:
         project = await self.session.get(ProjectModel, task.project_id)
         was_approved = task.editorial_status == "approved"
         values = data.model_dump(exclude_unset=True, exclude={"detail"})
+        if data.generation_settings is not None:
+            self._validate_generation_settings(project.mode, data.generation_settings)
         for key, value in values.items():
             setattr(task, key, value)
         if data.detail is not None:
@@ -194,3 +198,19 @@ class TaskService:
             )
             if owned_ids != ids:
                 raise ValidationException(f"Drama Task 不能引用其他 Project 的{label}资源。")
+
+    @staticmethod
+    def _validate_generation_settings(mode: str, settings: dict) -> None:
+        recipe = resolve_recipe(mode, settings.get("recipe_id"))
+        overrides = settings.get("media_plan_overrides") or {}
+        if not isinstance(overrides, dict):
+            raise ValidationException("media_plan_overrides 必须是按 Scene/Shot ID 索引的对象。")
+        for unit_id, value in overrides.items():
+            try:
+                plan = MediaPlan.model_validate(value)
+            except ValueError as exc:
+                raise ValidationException(f"Scene/Shot {unit_id} 的 MediaPlan 无效：{exc}") from exc
+            if plan.strategy not in recipe.allowed_strategies:
+                raise ValidationException(
+                    f"Scene/Shot {unit_id} 的画面方式不属于 Recipe {recipe.name}。"
+                )

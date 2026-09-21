@@ -11,6 +11,7 @@ import {
   ProjectTemplateUpdate,
   Product,
   ProductionMode,
+  ProductionRecipe,
   ProductionReadiness,
   ProviderConfigItem,
   ProviderCreatePayload,
@@ -413,6 +414,9 @@ export const api = {
 
   getTask: (taskId: string) => request<TaskDetail>(`/tasks/${taskId}`),
 
+  listProductionRecipes: (mode: ProductionMode) =>
+    request<ProductionRecipe[]>(`/tasks/recipes?mode=${encodeURIComponent(mode)}`),
+
   getTaskReadiness: (taskId: string) =>
     request<ProductionReadiness>(`/tasks/${taskId}/readiness`),
 
@@ -435,6 +439,11 @@ export const api = {
 
   createWorkflowJob: (taskId: string) =>
     request<WorkflowJob>(`/tasks/${taskId}/jobs`, {
+      method: "POST",
+    }),
+
+  retrySceneMedia: (taskId: string, sceneId: string) =>
+    request<WorkflowJob>(`/tasks/${taskId}/scenes/${sceneId}/retry`, {
       method: "POST",
     }),
 

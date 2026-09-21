@@ -44,6 +44,7 @@ import {
   ContentMode,
   CreativeAngle,
   Project,
+  ProductionRecipe,
   TemplateCatalogItem,
   VoiceInfo,
 } from "@/lib/types";
@@ -173,8 +174,25 @@ export function ProductionTaskDialog({
 
   const projectAspect = project?.aspect_ratio || "9:16";
   const productionMode = project.mode;
+  const [recipeId, setRecipeId] = React.useState("");
   const isCommerce = productionMode === "commerce";
   const isDrama = productionMode === "drama";
+  const { data: recipes = [] } = useQuery({
+    queryKey: ["production-recipes", productionMode],
+    queryFn: () => api.listProductionRecipes(productionMode),
+    enabled: open,
+  });
+  React.useEffect(() => {
+    if (!open || recipes.length === 0) return;
+    const preferred = productionMode === "knowledge"
+      ? "knowledge_smart_mix"
+      : productionMode === "commerce"
+      ? "commerce_product_showcase"
+      : "drama_reference_i2v";
+    if (!recipes.some((item) => item.recipe_id === recipeId)) {
+      setRecipeId(recipes.find((item) => item.recipe_id === preferred)?.recipe_id || recipes[0].recipe_id);
+    }
+  }, [open, productionMode, recipeId, recipes]);
   const { data: dramaCharacters = [] } = useQuery({
     queryKey: ["drama-characters", projectId],
     queryFn: () => api.listDramaCharacters(projectId),
@@ -332,6 +350,7 @@ export function ProductionTaskDialog({
             : `知识主题: ${finalTitle}, 面向: ${knowledgeAudience.trim() || "普通观众"}`,
         detail,
         generation_settings: {
+          recipe_id: recipeId,
           mode: creationMode,
           topic: finalTitle,
           raw_script: rawScript,
@@ -447,6 +466,33 @@ export function ProductionTaskDialog({
             <div className="grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-border">
             {/* Left Column: Creative Core (58%) */}
             <div className="lg:col-span-7 p-5 sm:p-6 space-y-5">
+              <section className="space-y-2.5" aria-labelledby="recipe-heading">
+                <div>
+                  <h3 id="recipe-heading" className="text-sm font-semibold">选择成片方案</h3>
+                  <p className="mt-1 text-xs text-muted-foreground">先选想要的结果；Provider、模型与 workflow 可在高级设置中调整。</p>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {recipes.map((recipe: ProductionRecipe) => (
+                    <button
+                      key={recipe.recipe_id}
+                      type="button"
+                      aria-pressed={recipeId === recipe.recipe_id}
+                      onClick={() => setRecipeId(recipe.recipe_id)}
+                      className={`rounded-xl border p-3 text-left transition-colors ${recipeId === recipe.recipe_id ? "border-primary bg-primary/10" : "border-border bg-card hover:bg-secondary/40"}`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm font-medium">{recipe.name}</span>
+                        <Badge variant="outline">{recipe.cost_tier === "high" ? "较高成本" : recipe.cost_tier === "medium" ? "中等成本" : "低成本"}</Badge>
+                      </div>
+                      <p className="mt-1 text-xs leading-5 text-muted-foreground">{recipe.description}</p>
+                      <p className="mt-2 text-[11px] text-muted-foreground">
+                        {recipe.requires_reference_assets ? "需要参考/真实素材" : "可不提供参考素材"}
+                        {recipe.required_capabilities.length ? ` · 需要 ${recipe.required_capabilities.join(" / ")} Provider` : " · 无昂贵 Provider 前置"}
+                      </p>
+                    </button>
+                  ))}
+                </div>
+              </section>
               {isCommerce ? (
                 <CommerceTaskForm
                   creativeAngle={creativeAngle}

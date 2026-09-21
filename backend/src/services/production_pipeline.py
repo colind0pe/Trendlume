@@ -6,7 +6,11 @@ from typing import Any
 
 from src.core.exceptions import ValidationException
 from src.domain.enums import ProductionMode
-from src.domain.production_workflows import ProductionWorkflow, normalize_production_mode
+from src.domain.production_workflows import (
+    ProductionWorkflow,
+    get_production_workflow,
+    normalize_production_mode,
+)
 
 
 class BaseProductionPipeline(ABC):
@@ -80,7 +84,10 @@ class ProductionPipelineRegistry:
         factory = self._factories.get(normalized)
         if factory is None:
             raise ValidationException(f"生产模式 {normalized.value} 暂未开放。")
-        return factory(session, job, rendering_service_factory)
+        pipeline = factory(session, job, rendering_service_factory)
+        pipeline.production_mode = normalized
+        pipeline.workflow = get_production_workflow(normalized)
+        return pipeline
 
 
 production_pipeline_registry = ProductionPipelineRegistry()

@@ -12,9 +12,11 @@ from sqlalchemy import select
 from src.core.exceptions import ValidationException
 from src.domain.content_modes import resolve_content_mode
 from src.domain.enums import ProductionMode
+from src.domain.production_recipes import MediaPlan, MediaStrategy
 from src.domain.production_workflows import KNOWLEDGE_PRODUCTION_WORKFLOW
 from src.models.asset import AssetModel
 from src.models.production_context import ProductionContextSnapshotModel
+from src.models.scene import SceneModel
 from src.models.workflow import WorkflowJobModel, WorkflowStepRunModel
 from src.repositories.project_repository import ProjectRepository
 from src.repositories.scene_repository import SceneRepository
@@ -294,6 +296,7 @@ class DurableProductionPipeline(BaseProductionPipeline):
         if snapshot is None:
             raise ValidationException('WorkflowJob 缺少生产上下文快照。')
         snapshot_task = dict(snapshot.context_payload.get('task') or {})
+        production_plan = dict(snapshot.context_payload.get('production_plan') or {})
         payload = dict(snapshot_task.get('generation_settings') or {})
         payload.update(snapshot_task.get('detail') or {})
         renderer.production_settings = payload
@@ -350,6 +353,50 @@ class DurableProductionPipeline(BaseProductionPipeline):
             prompt_selection,
             single,
         )
+        if snapshot.mode == ProductionMode.DRAMA.value:
+            mode_prepared = True
+            drama_profile = snapshot.context_payload.get('project_profile') or {}
+            shots = list(drama_profile.get('shots') or [])
+            dialogue = list(drama_profile.get('dialogue') or [])
+            existing = {
+                scene.id: scene for scene in await SceneRepository(self.db).list_by_task_id(task_id)
+            }
+            for index, shot in enumerate(shots):
+                shot_id = str(shot['id'])
+                lines = sorted(
+                    (item for item in dialogue if item.get('shot_id') == shot_id),
+                    key=lambda item: item.get('sequence_index', 0),
+                )
+                narration = '\n'.join(
+                    f"{item.get('speaker_name')}: {item.get('text')}" for item in lines
+                ) or str(shot.get('action') or '')
+                values = {
+                    'sequence_index': index,
+                    'narration_text': narration,
+                    'visual_prompt': str(shot.get('visual_prompt') or shot.get('action') or ''),
+                    'duration_seconds': float(shot.get('duration_hint') or 4),
+                    'visual_role': 'concept',
+                    'production_metadata': {
+                        'drama_shot_id': shot_id,
+                        'camera': shot.get('camera'),
+                        'framing': shot.get('framing'),
+                        'movement': shot.get('movement'),
+                        'dialogue': lines,
+                    },
+                }
+                if shot_id in existing:
+                    for key, value in values.items():
+                        setattr(existing[shot_id], key, value)
+                else:
+                    self.db.add(SceneModel(
+                        id=shot_id,
+                        task_id=task_id,
+                        layout_params={'input_source': 'drama_snapshot'},
+                        claim_refs=[],
+                        source_refs=[],
+                        **values,
+                    ))
+            await self.save()
         task = await TaskRepository(self.db).get_by_id(task_id)
         scenes = await SceneRepository(self.db).list_by_task_id(task.id)
         prior_script = await self.db.scalar(select(WorkflowStepRunModel).where(WorkflowStepRunModel.task_id == task.id, WorkflowStepRunModel.step_key == 'script').limit(1))
@@ -528,7 +575,12 @@ class DurableProductionPipeline(BaseProductionPipeline):
             storage=self.storage,
             provider_manager=pm,
             execution_context=self.context,
-        ) if mode == 'online_asset' else None
+        ) if any(
+            item.get('strategy') == MediaStrategy.ONLINE_ASSET.value
+            for item in (production_plan.get('scene_plans') or {}).values()
+        ) or MediaStrategy.ONLINE_ASSET.value in (
+            production_plan.get('planning_rules') or {}
+        ).values() or mode == 'online_asset' else None
         online_external_ids: set[str] = set()
         if mode == 'online_asset':
             for bound_scene in all_scenes:
@@ -542,6 +594,35 @@ class DurableProductionPipeline(BaseProductionPipeline):
 
         for scene in scenes if single != 'voice' else []:
             scene_id = scene.id
+            raw_media_plan = (production_plan.get('scene_plans') or {}).get(scene_id)
+            if raw_media_plan is None:
+                strategy = (production_plan.get('planning_rules') or {}).get(
+                    getattr(scene, 'visual_role', 'concept')
+                ) or (production_plan.get('recipe') or {}).get('default_strategy')
+                if not strategy:
+                    raise ValidationException(f'分镜 {scene_id} 缺少快照化 MediaPlan。')
+                raw_media_plan = {
+                    'strategy': strategy,
+                    'reference_asset_ids': (
+                        production_plan.get('default_reference_asset_ids') or []
+                    ) if strategy in {'image_to_image', 'image_to_video'} else [],
+                    'source_asset_id': (
+                        (production_plan.get('default_reference_asset_ids') or [None])[0]
+                    ) if strategy == 'uploaded_asset' else None,
+                    'image_workflow_id': payload.get('image_workflow_id'),
+                    'video_workflow_id': payload.get('video_workflow_id'),
+                    'cost_tier': (production_plan.get('recipe') or {}).get('cost_tier', 'low'),
+                }
+            media_plan = MediaPlan.model_validate(raw_media_plan)
+            scene_mode = {
+                MediaStrategy.STATIC_CARD: 'static',
+                MediaStrategy.ONLINE_ASSET: 'online_asset',
+                MediaStrategy.UPLOADED_ASSET: 'uploaded_asset',
+                MediaStrategy.TEXT_TO_IMAGE: 'generated_image',
+                MediaStrategy.IMAGE_TO_IMAGE: 'generated_image',
+                MediaStrategy.TEXT_TO_VIDEO: 'generated_video',
+                MediaStrategy.IMAGE_TO_VIDEO: 'generated_video',
+            }[media_plan.strategy]
             # Uploaded and manual assets are authoritative. Generated pointers are outputs, not inputs.
             layout_params = scene.layout_params or {}
             media_source = layout_params.get('media_source')
@@ -559,7 +640,7 @@ class DurableProductionPipeline(BaseProductionPipeline):
                 or layout_params.get('commerce_asset_id')
             )
             user_media = (
-                mode == 'uploaded_asset'
+                scene_mode == 'uploaded_asset'
                 or media_source in {'manual', 'uploaded'}
                 or (locked_media and bool(locked_media_id))
             )
@@ -568,37 +649,45 @@ class DurableProductionPipeline(BaseProductionPipeline):
             # existing regeneration/reuse policy.
             force_online_refresh = single == 'assets' and self.params.get('content_mode_override') == 'online_asset'
             generated_media = (
-                mode == 'online_asset'
+                scene_mode == 'online_asset'
                 and media_source == 'generated'
                 and not force_online_refresh
             )
             existing_id = locked_media_id or scene.media_asset_id or (
-                payload.get('source_asset_id') if mode == 'uploaded_asset' else None
+                media_plan.source_asset_id if scene_mode == 'uploaded_asset' else None
             )
             media_digest = None
             if user_media and existing_id:
                 _, media_digest = await self.asset(existing_id)
-            if mode == 'online_asset':
+            if scene_mode == 'online_asset':
                 prompt = str(scene.narration_text or '').strip() or str(task.title or '').strip() or '通用实拍素材'
             else:
                 prompt = self.params.get('prompt_override') or scene.visual_prompt or scene.narration_text
-            if mode == 'online_asset' and scene.media_asset_id:
+            if scene_mode == 'online_asset' and scene.media_asset_id:
                 current_asset = await self.db.get(AssetModel, scene.media_asset_id)
                 current_source = (current_asset.metadata_json or {}) if current_asset else {}
                 if current_source.get('source_kind') == 'online_asset' and current_source.get('external_id'):
                     online_external_ids.add(str(current_source['external_id']))
-            inputs = {'mode': mode, 'prompt': prompt,
+            reference_digests = []
+            for reference_asset_id in media_plan.reference_asset_ids:
+                _, digest = await self.asset(reference_asset_id)
+                reference_digests.append(digest)
+            inputs = {'mode': scene_mode, 'strategy': media_plan.strategy.value, 'prompt': prompt,
                 'style': payload.get('style_preset'), 'prompt_prefix': payload.get('prompt_prefix'),
-                'provider': provider_inputs.get('material' if mode == 'online_asset' else ('video' if mode == 'generated_video' else 'image')),
+                'provider': provider_inputs.get('material' if scene_mode == 'online_asset' else ('video' if scene_mode == 'generated_video' else 'image')),
                 'media_size': template_catalog.get_media_size(template_id), 'uploaded_sha256': media_digest,
-                'workflow_sha256': workflow_hashes['video' if mode == 'generated_video' else 'image'] if mode != 'online_asset' else None,
-                'material_provider_id': payload.get('material_provider_id') if mode == 'online_asset' else None,
+                'workflow_sha256': workflow_hashes['video' if scene_mode == 'generated_video' else 'image'] if scene_mode != 'online_asset' else None,
+                'workflow_id': media_plan.video_workflow_id if scene_mode == 'generated_video' else media_plan.image_workflow_id,
+                'reference_sha256': reference_digests,
+                'continuity_inputs': media_plan.continuity_inputs,
+                'fallback_policy': media_plan.fallback_policy,
+                'material_provider_id': payload.get('material_provider_id') if scene_mode == 'online_asset' else None,
                 # Existing task bindings are runtime exclusions. Keep them out
                 # of the normal full-run fingerprint so a resumable stage can
                 # still reuse its validated artifact; forced single-scene
                 # refreshes include the current ID in their fingerprint.
-                'excluded_external_ids': sorted(online_external_ids) if mode == 'online_asset' and single == 'assets' else None,
-                'duration_seconds': scene.duration_seconds if mode in {'generated_video', 'online_asset'} else None,
+                'excluded_external_ids': sorted(online_external_ids) if scene_mode == 'online_asset' and single == 'assets' else None,
+                'duration_seconds': scene.duration_seconds if scene_mode in {'generated_video', 'online_asset'} else None,
                 'locked_media_source': media_policy.get('source') or ('product' if commerce_metadata else None),
                 'locked_media': locked_media,
                 'locked_media_id': existing_id if locked_media else None}
@@ -608,12 +697,14 @@ class DurableProductionPipeline(BaseProductionPipeline):
                 existing_id=existing_id,
                 user_media=user_media,
                 generated_media=generated_media,
+                media_plan=media_plan,
+                scene_mode=scene_mode,
             ):
                 current_scene = await SceneRepository(self.db).get_by_id(scene_id)
                 if not current_scene:
                     raise ValidationException('分镜不存在，无法生成视觉素材。')
-                if mode == 'static':
-                    return [], {'mode': mode}, None, True
+                if scene_mode == 'static':
+                    return [], {'mode': scene_mode, 'strategy': media_plan.strategy.value}, None, True
                 adopted = None
                 if user_media or generated_media:
                     if not existing_id:
@@ -640,7 +731,7 @@ class DurableProductionPipeline(BaseProductionPipeline):
                         if generated_media
                         else 'existing'
                     )
-                elif mode == 'online_asset':
+                elif scene_mode == 'online_asset':
                     if material_service is None:
                         raise ValidationException('在线素材服务未初始化。')
                     asset, material_source, _ = await material_service.acquire_for_scene(
@@ -661,15 +752,46 @@ class DurableProductionPipeline(BaseProductionPipeline):
                     await self.save()
                     source = 'online'
                 else:
-                    if mode == 'generated_video':
-                        await gen.generate_scene_video(current_scene.id, prompt_override=self.params.get('prompt_override'))
+                    reference_paths = []
+                    for reference_asset_id in media_plan.reference_asset_ids:
+                        reference_asset, _ = await self.asset(reference_asset_id)
+                        reference_paths.append(str(self.storage.get_path(reference_asset.file_path)))
+                    if scene_mode == 'generated_video':
+                        source_asset_id = media_plan.source_asset_id
+                        if media_plan.strategy == MediaStrategy.IMAGE_TO_VIDEO and not source_asset_id:
+                            source_asset_id = media_plan.reference_asset_ids[0]
+                        if source_asset_id:
+                            current_scene.media_asset_id = source_asset_id
+                            await self.db.flush()
+                        gen.production_settings = {
+                            **payload,
+                            'video_workflow_id': media_plan.video_workflow_id
+                            or payload.get('video_workflow_id'),
+                        }
+                        await gen.generate_scene_video(
+                            current_scene.id,
+                            prompt_override=self.params.get('prompt_override'),
+                            continuity_input={
+                                **media_plan.continuity_inputs,
+                                'reference_image_paths': reference_paths,
+                            },
+                        )
                     else:
-                        await gen.generate_scene_image(current_scene.id, prompt_override=self.params.get('prompt_override'))
+                        gen.production_settings = {
+                            **payload,
+                            'image_workflow_id': media_plan.image_workflow_id
+                            or payload.get('image_workflow_id'),
+                        }
+                        await gen.generate_scene_image(
+                            current_scene.id,
+                            prompt_override=self.params.get('prompt_override'),
+                            reference_image_paths=reference_paths or None,
+                        )
                     await self.save()
                     asset, _ = await self.asset(current_scene.media_asset_id)
                     source = 'generated'
                 return [ArtifactSpec(self.storage.get_path(asset.file_path), 'visual', asset.id, source)], {
-                    'asset_id': asset.id,
+                    'asset_id': asset.id, 'strategy': media_plan.strategy.value,
                 }, None, False
             _, visuals[scene_id] = await self.stage('assets', inputs, visual_action, scene_id, force=single == 'assets')
             scene = await SceneRepository(self.db).get_by_id(scene_id)
@@ -756,11 +878,24 @@ class DurableProductionPipeline(BaseProductionPipeline):
         for scene_id in scene_ids:
             current_scene = await SceneRepository(self.db).get_by_id(scene_id)
             current_task = await TaskRepository(self.db).get_by_id(task_id)
+            raw_media_plan = (production_plan.get('scene_plans') or {}).get(scene_id) or {}
+            scene_strategy = raw_media_plan.get('strategy') or (
+                production_plan.get('planning_rules') or {}
+            ).get(getattr(current_scene, 'visual_role', 'concept')) or (
+                production_plan.get('recipe') or {}
+            ).get('default_strategy')
+            render_mode = {
+                'static_card': 'static', 'online_asset': 'online_asset',
+                'uploaded_asset': 'uploaded_asset', 'text_to_image': 'generated_image',
+                'image_to_image': 'generated_image', 'text_to_video': 'generated_video',
+                'image_to_video': 'generated_video',
+            }.get(scene_strategy, mode)
             async def clip_action(run, scene_id=scene_id):
                 current_scene = await SceneRepository(self.db).get_by_id(scene_id)
                 if not current_scene:
                     raise ValidationException('分镜不存在，无法合成场景片段。')
                 renderer.commands = []
+                renderer.production_settings = {**payload, 'content_mode': render_mode}
                 await renderer.render_scene_clip(current_scene.id)
                 await self.save()
                 current_scene = await SceneRepository(self.db).get_by_id(scene_id)
@@ -769,10 +904,10 @@ class DurableProductionPipeline(BaseProductionPipeline):
             _, outputs = await self.stage('composition', {'template_sha256': template_hash, 'template_id': template_id,
                 'title': current_task.title, 'text': current_scene.narration_text, 'duration': current_scene.duration_seconds,
                 'sequence_index': current_scene.sequence_index, 'layout': scene_snapshot(current_scene)['layout_params'],
-                'params': payload.get('template_params'), 'custom_css': payload.get('custom_css'), 'mode': mode,
+                'params': payload.get('template_params'), 'custom_css': payload.get('custom_css'), 'mode': render_mode,
                 'scene_render_format_version': (
                     RenderingService.ONLINE_SCENE_RENDER_FORMAT_VERSION
-                    if mode == 'online_asset' else None
+                    if render_mode == 'online_asset' else None
                 )},
                 clip_action, scene_id, [*visuals[scene_id], *voices[scene_id]],
                 force=render_only and single != 'composition')
