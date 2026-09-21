@@ -111,7 +111,7 @@ async def test_unapproved_drama_resources_cannot_enter_snapshot(client, test_ses
     monkeypatch.setattr("src.services.provider_manager.ProviderManager.capture_snapshot", providers)
     response = await client.post(f"/api/v1/tasks/{task['id']}/jobs")
     assert response.status_code == 422
-    assert "必须先通过审批" in response.text
+    assert "请审批" in response.text
 
 
 @pytest.mark.asyncio

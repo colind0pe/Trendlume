@@ -8,6 +8,7 @@ import {
   ProjectTemplateUpdate,
   Product,
   ProductionMode,
+  ProductionReadiness,
   ProviderConfigItem,
   ProviderCreatePayload,
   ImageGenerationTestResult,
@@ -57,7 +58,10 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+async function request<T>(
+  endpoint: string,
+  options: RequestInit = {},
+): Promise<T> {
   const url = `${BASE_URL}${endpoint}`;
   const res = await fetch(url, {
     ...options,
@@ -87,22 +91,27 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 }
 
 export const api = {
-  workflowArtifactUrl: (jobId: string, artifactId: string) => `${BASE_URL}/artifacts/${encodeURIComponent(artifactId)}/download?job_id=${encodeURIComponent(jobId)}`,
+  workflowArtifactUrl: (jobId: string, artifactId: string) =>
+    `${BASE_URL}/artifacts/${encodeURIComponent(artifactId)}/download?job_id=${encodeURIComponent(jobId)}`,
 
   // Projects
   listProjects: (limit = 50, offset = 0) =>
     request<Project[]>(`/projects?limit=${limit}&offset=${offset}`),
 
   // Trend discovery feed and real public-source collection.
-  listTrends: (filters: {
-    projectId?: string;
-    platform?: string;
-    freshness?: TrendFreshness;
-  } = {}) => {
+  listTrends: (
+    filters: {
+      projectId?: string;
+      platform?: string;
+      freshness?: TrendFreshness;
+    } = {},
+  ) => {
     const params = new URLSearchParams();
     if (filters.projectId) params.set("project_id", filters.projectId);
-    if (filters.platform && filters.platform !== "all") params.set("platform", filters.platform);
-    if (filters.freshness && filters.freshness !== "all") params.set("freshness", filters.freshness);
+    if (filters.platform && filters.platform !== "all")
+      params.set("platform", filters.platform);
+    if (filters.freshness && filters.freshness !== "all")
+      params.set("freshness", filters.freshness);
     const query = params.toString();
     return request<TrendFeedResponse>(`/trends${query ? `?${query}` : ""}`);
   },
@@ -110,28 +119,39 @@ export const api = {
   listTrendSources: () => request<TrendSourceCatalog[]>("/trends/sources"),
 
   listTrendRuns: (limit = 10) =>
-    request<TrendRun[]>(`/trends/runs?limit=${Math.max(1, Math.min(100, limit))}`),
+    request<TrendRun[]>(
+      `/trends/runs?limit=${Math.max(1, Math.min(100, limit))}`,
+    ),
 
-  refreshTrends: (data: { platforms?: string[]; source_keys?: string[] } = {}) =>
+  refreshTrends: (
+    data: { platforms?: string[]; source_keys?: string[] } = {},
+  ) =>
     request<TrendRun>("/trends/refresh", {
       method: "POST",
       body: JSON.stringify(data),
     }),
 
   getTrendPreferences: (projectId: string) =>
-    request<TrendPreferences>(`/trends/projects/${encodeURIComponent(projectId)}/preferences`),
+    request<TrendPreferences>(
+      `/trends/projects/${encodeURIComponent(projectId)}/preferences`,
+    ),
 
   updateTrendPreferences: (
     projectId: string,
     data: TrendPreferencesUpdateRequest,
   ) =>
-    request<TrendPreferences>(`/trends/projects/${encodeURIComponent(projectId)}/preferences`, {
-      method: "PATCH",
-      body: JSON.stringify(data),
-    }),
+    request<TrendPreferences>(
+      `/trends/projects/${encodeURIComponent(projectId)}/preferences`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      },
+    ),
 
   listTrendSubscriptions: (projectId?: string) =>
-    request<TrendSubscription[]>(`/trends/subscriptions${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""}`),
+    request<TrendSubscription[]>(
+      `/trends/subscriptions${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""}`,
+    ),
 
   createTrendSubscription: (data: TrendSubscriptionCreateRequest) =>
     request<TrendSubscription>("/trends/subscriptions", {
@@ -139,14 +159,23 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
-  updateTrendSubscription: (subscriptionId: string, data: TrendSubscriptionRequest) =>
-    request<TrendSubscription>(`/trends/subscriptions/${encodeURIComponent(subscriptionId)}`, {
-      method: "PATCH",
-      body: JSON.stringify(data),
-    }),
+  updateTrendSubscription: (
+    subscriptionId: string,
+    data: TrendSubscriptionRequest,
+  ) =>
+    request<TrendSubscription>(
+      `/trends/subscriptions/${encodeURIComponent(subscriptionId)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      },
+    ),
 
   runTrendSubscription: (subscriptionId: string) =>
-    request<TrendSubscription>(`/trends/subscriptions/${encodeURIComponent(subscriptionId)}/run`, { method: "POST" }),
+    request<TrendSubscription>(
+      `/trends/subscriptions/${encodeURIComponent(subscriptionId)}/run`,
+      { method: "POST" },
+    ),
 
   createTrendProposal: (data: TrendProposalCreateRequest) =>
     request<TrendProposal>("/trends/proposals", {
@@ -154,29 +183,32 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
-  updateTrendProposal: (
-    proposalId: string,
-    data: TrendProposalUpdateRequest,
-  ) =>
-    request<TrendProposal>(`/trends/proposals/${encodeURIComponent(proposalId)}`, {
-      method: "PATCH",
-      body: JSON.stringify(data),
-    }),
+  updateTrendProposal: (proposalId: string, data: TrendProposalUpdateRequest) =>
+    request<TrendProposal>(
+      `/trends/proposals/${encodeURIComponent(proposalId)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      },
+    ),
 
   rejectTrendProposal: (proposalId: string, expectedRevision: number) =>
-    request<TrendProposal>(`/trends/proposals/${encodeURIComponent(proposalId)}/reject`, {
-      method: "POST",
-      body: JSON.stringify({ expected_revision: expectedRevision }),
-    }),
+    request<TrendProposal>(
+      `/trends/proposals/${encodeURIComponent(proposalId)}/reject`,
+      {
+        method: "POST",
+        body: JSON.stringify({ expected_revision: expectedRevision }),
+      },
+    ),
 
-  approveTrendProposal: (
-    proposalId: string,
-    expectedRevision: number,
-  ) =>
-    request<TrendProposalActionResponse>(`/trends/proposals/${encodeURIComponent(proposalId)}/approve-and-create-task`, {
-      method: "POST",
-      body: JSON.stringify({ expected_revision: expectedRevision }),
-    }),
+  approveTrendProposal: (proposalId: string, expectedRevision: number) =>
+    request<TrendProposalActionResponse>(
+      `/trends/proposals/${encodeURIComponent(proposalId)}/approve-and-create-task`,
+      {
+        method: "POST",
+        body: JSON.stringify({ expected_revision: expectedRevision }),
+      },
+    ),
 
   getProject: (id: string) => request<ProjectDetail>(`/projects/${id}`),
 
@@ -202,9 +234,28 @@ export const api = {
     }),
 
   getProjectBgm: (projectId: string) =>
-    request<Array<{ asset: Asset }>>(`/projects/${projectId}/assets?purpose=bgm`).then(
-      (bindings) => bindings.map((binding) => binding.asset),
-    ),
+    request<Array<{ asset: Asset }>>(
+      `/projects/${projectId}/assets?purpose=bgm`,
+    ).then((bindings) => bindings.map((binding) => binding.asset)),
+
+  listBgmCandidates: (projectId: string) =>
+    request<Asset[]>(`/projects/${projectId}/bgm-candidates`),
+
+  bindProjectAsset: (projectId: string, assetId: string, purpose: string) =>
+    request<{ binding_id: string }>(`/projects/${projectId}/assets`, {
+      method: "POST",
+      body: JSON.stringify({ asset_id: assetId, purpose }),
+    }),
+
+  addProjectProductAsset: (
+    projectId: string,
+    assetId: string,
+    role = "gallery",
+  ) =>
+    request<Record<string, unknown>>(`/projects/${projectId}/product/assets`, {
+      method: "POST",
+      body: JSON.stringify({ asset_id: assetId, role }),
+    }),
 
   deleteProject: (id: string) =>
     request<boolean>(`/projects/${id}`, {
@@ -227,7 +278,9 @@ export const api = {
     if (aspect_ratio) params.set("aspect_ratio", aspect_ratio);
     if (content_mode) params.set("content_mode", content_mode);
     const query = params.toString();
-    return request<TemplateCatalogItem[]>(query ? `/templates?${query}` : "/templates");
+    return request<TemplateCatalogItem[]>(
+      query ? `/templates?${query}` : "/templates",
+    );
   },
 
   previewTemplate: (
@@ -239,7 +292,7 @@ export const api = {
       video_asset_id?: string | null;
       params?: Record<string, any>;
       custom_css?: string | null;
-    } = {}
+    } = {},
   ) =>
     request<{
       template_id: string;
@@ -254,7 +307,7 @@ export const api = {
   // Project Tasks (1:N)
   listProjectTasks: (projectId: string, status?: string) =>
     request<Task[]>(
-      `/projects/${projectId}/tasks${status ? `?status=${status}` : ""}`
+      `/projects/${projectId}/tasks${status ? `?status=${status}` : ""}`,
     ),
 
   createProjectTask: (
@@ -265,7 +318,7 @@ export const api = {
       detail: Record<string, any> & { type: ProductionMode };
       generation_settings?: Record<string, any>;
       publishing_settings?: Record<string, any>;
-    }
+    },
   ) =>
     request<Task>(`/projects/${projectId}/tasks`, {
       method: "POST",
@@ -275,10 +328,13 @@ export const api = {
   // Tasks Resource & Workflow Actions
   listAllTasks: (limit = 50, offset = 0, productionStatus?: string) =>
     request<Task[]>(
-      `/tasks?limit=${limit}&offset=${offset}${productionStatus ? `&production_status=${productionStatus}` : ""}`
+      `/tasks?limit=${limit}&offset=${offset}${productionStatus ? `&production_status=${productionStatus}` : ""}`,
     ),
 
   getTask: (taskId: string) => request<TaskDetail>(`/tasks/${taskId}`),
+
+  getTaskReadiness: (taskId: string) =>
+    request<ProductionReadiness>(`/tasks/${taskId}/readiness`),
 
   getTaskResearch: (taskId: string) =>
     request<ResearchResponse>(`/tasks/${taskId}/research`),
@@ -316,7 +372,10 @@ export const api = {
 
   duplicateTask: (
     taskId: string,
-    payload: { mode?: "settings_only" | "settings_and_script"; title?: string } = {}
+    payload: {
+      mode?: "settings_only" | "settings_and_script";
+      title?: string;
+    } = {},
   ) =>
     request<TaskDetail>(`/tasks/${taskId}/duplicate`, {
       method: "POST",
@@ -332,11 +391,20 @@ export const api = {
   // AI Content Generation
   researchTopic: (
     topic: string,
-    options: { max_results?: number; max_queries?: number; search_provider_id?: string | null } = {}
+    options: {
+      max_results?: number;
+      max_queries?: number;
+      search_provider_id?: string | null;
+    } = {},
   ) =>
     request<ResearchResponse>("/generation/research", {
       method: "POST",
-      body: JSON.stringify({ topic, max_results: options.max_results ?? 5, max_queries: options.max_queries ?? 3, search_provider_id: options.search_provider_id }),
+      body: JSON.stringify({
+        topic,
+        max_results: options.max_results ?? 5,
+        max_queries: options.max_queries ?? 3,
+        search_provider_id: options.search_provider_id,
+      }),
     }),
 
   researchTask: (taskId: string) =>
@@ -425,7 +493,11 @@ export const api = {
       let errorMsg = `HTTP Error ${res.status}`;
       try {
         const errorData = await res.json();
-        errorMsg = errorData?.error?.message || errorData?.detail || errorData?.message || errorMsg;
+        errorMsg =
+          errorData?.error?.message ||
+          errorData?.detail ||
+          errorData?.message ||
+          errorMsg;
       } catch {
         // Ignore non-JSON error responses.
       }
@@ -487,10 +559,17 @@ export const api = {
 
   listComfyUIWorkflows: () =>
     request<
-      { id: string; name: string; type: string; subfolder?: string; file_name: string }[]
+      {
+        id: string;
+        name: string;
+        type: string;
+        subfolder?: string;
+        file_name: string;
+      }[]
     >("/providers/comfyui/workflows"),
 
-  listVoices: (active = false) => request<VoiceInfo[]>(`/providers/voices${active ? "?active=true" : ""}`),
+  listVoices: (active = false) =>
+    request<VoiceInfo[]>(`/providers/voices${active ? "?active=true" : ""}`),
 
   testVoice: async (
     voiceId: string,
@@ -518,7 +597,7 @@ export const api = {
   // Publishing
   listAccounts: (platform?: string) =>
     request<SocialAccount[]>(
-      `/publishing/accounts${platform ? `?platform=${platform}` : ""}`
+      `/publishing/accounts${platform ? `?platform=${platform}` : ""}`,
     ),
 
   deleteAccount: (accountId: string) =>
@@ -541,7 +620,11 @@ export const api = {
   getQRAuthStatus: (sessionId: string) =>
     request<QRStatusResponse>(`/publishing/auth/qr/status/${sessionId}`),
 
-  completeQRAuth: (data: { session_id: string; account_name: string; username?: string }) =>
+  completeQRAuth: (data: {
+    session_id: string;
+    account_name: string;
+    username?: string;
+  }) =>
     request<SocialAccount>("/publishing/auth/qr/complete", {
       method: "POST",
       body: JSON.stringify(data),
@@ -552,7 +635,9 @@ export const api = {
     if (projectId) params.append("project_id", projectId);
     if (status) params.append("status", status);
     const query = params.toString();
-    return request<PublishingJob[]>(`/publishing/jobs${query ? `?${query}` : ""}`);
+    return request<PublishingJob[]>(
+      `/publishing/jobs${query ? `?${query}` : ""}`,
+    );
   },
 
   createPublishingJob: (data: {
@@ -565,10 +650,11 @@ export const api = {
     description?: string;
     tags?: string[];
     scheduled_at?: string | null;
-  }) => request<PublishingJob>("/publishing/jobs", {
-    method: "POST",
-    body: JSON.stringify(data),
-  }),
+  }) =>
+    request<PublishingJob>("/publishing/jobs", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
 
   executePublishingJob: (jobId: string) =>
     request<PublishingJob>(`/publishing/jobs/${jobId}/publish`, {
@@ -594,9 +680,15 @@ export const api = {
     request<boolean>(`/publishing/jobs/${jobId}`, { method: "DELETE" }),
 
   regenerateTaskMetadata: (taskId: string) =>
-    request<PlatformMetadata>(`/generation/tasks/${taskId}/metadata/regenerate`, { method: "POST" }),
+    request<PlatformMetadata>(
+      `/generation/tasks/${taskId}/metadata/regenerate`,
+      { method: "POST" },
+    ),
 
-  resolveUncertainPublishingJob: (jobId: string, action: "retry" | "acknowledge") =>
+  resolveUncertainPublishingJob: (
+    jobId: string,
+    action: "retry" | "acknowledge",
+  ) =>
     request<PublishingJob>(`/publishing/jobs/${jobId}/resolve-uncertain`, {
       method: "POST",
       body: JSON.stringify({ action }),

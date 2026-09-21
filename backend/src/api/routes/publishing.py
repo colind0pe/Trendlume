@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import get_db, get_publishing_service, request_session_factory
+from src.domain.enums import JobType
 from src.providers.publishing.auth_service import auth_service
 from src.schemas.common import APIResponse
 from src.schemas.publishing import (
@@ -191,8 +192,25 @@ async def check_account(
 async def create_publishing_job(
     payload: PublishingJobCreate,
     service: PublishingService = Depends(get_publishing_service),
+    db: AsyncSession = Depends(get_db),
 ):
     job = await service.create_publishing_job(payload)
+    if job.scheduled_at is not None:
+        task_id = str((job.custom_params or {}).get("task_id") or "")
+        try:
+            await task_manager.submit_task(
+                task_id=task_id,
+                job_type=JobType.PUBLISH.value,
+                params={"publishing_job_id": job.id, "task_id": task_id},
+                available_at=job.scheduled_at,
+                scheduled_at=job.scheduled_at,
+                session_factory=request_session_factory(db),
+            )
+        except Exception as exc:
+            job.status = "failed"
+            job.error_message = f"定时发布排队失败：{exc}"
+            await db.commit()
+            raise
     return APIResponse(data=PublishingJobResponse.model_validate(job))
 
 

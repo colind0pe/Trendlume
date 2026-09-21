@@ -253,30 +253,6 @@ export interface TrendProposalActionResponse {
   queue_error?: string | null;
 }
 
-export interface ScheduledPublishConfig {
-  account_id: string;
-  scheduled_at: string;
-  timezone: string;
-}
-
-export type ScheduledPublishStatus =
-  | "pending"
-  | "scheduled"
-  | "queued"
-  | "publishing"
-  | "published"
-  | "failed"
-  | "cancelled"
-  | "missed"
-  | string;
-
-export interface ScheduledPublishState extends Partial<ScheduledPublishConfig> {
-  enabled?: boolean;
-  status?: ScheduledPublishStatus | null;
-  publishing_job_id?: string | null;
-  error_message?: string | null;
-}
-
 export interface TemplateParameter {
   name: string;
   type: string;
@@ -647,13 +623,12 @@ export interface Task {
   scenes_count?: number;
   created_at: string;
   updated_at: string;
-  active_job?: WorkflowJob | null;
+  latest_job?: WorkflowJob | null;
   current_stage?: string | null;
   current_stage_label?: string | null;
   resume_count?: number;
   last_heartbeat_at?: string | null;
   can_resume?: boolean;
-  scheduled_publish?: ScheduledPublishState | null;
 }
 
 export interface TaskDetail extends Task {
@@ -743,6 +718,13 @@ export interface StructuredSceneScript {
   claim_refs?: string[];
   source_refs?: string[];
   production_metadata?: Record<string, any>;
+}
+
+export interface ProductionReadiness {
+  task_id: string;
+  mode: ProductionMode;
+  ready: boolean;
+  checks: Array<{ key: string; label: string; status: "pass" | "error"; message: string }>;
 }
 
 export type ProductFactSource = "user_input" | "manual_correction" | "json_ld" | "opengraph" | "page_structure";

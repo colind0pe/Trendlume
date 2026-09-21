@@ -27,9 +27,15 @@ class ProductionJobService:
             raise NotFoundException("Task", task_id)
         if task.editorial_status != "approved":
             raise ValidationException("Task 必须先通过审核才能生产。")
+        compiler = ProductionContextCompiler(self.session)
+        readiness = await compiler.readiness(task_id)
+        if not readiness["ready"]:
+            messages = [item["message"] for item in readiness["checks"] if item["status"] == "error"]
+            raise ValidationException("生产准备未完成：" + "；".join(messages))
         active = await self.session.scalar(
             select(WorkflowJobModel.id).where(
                 WorkflowJobModel.task_id == task_id,
+                WorkflowJobModel.job_type == "full_pipeline",
                 WorkflowJobModel.status.in_(["queued", "running", "retrying"]),
             )
         )
@@ -41,7 +47,7 @@ class ProductionJobService:
             for key, value in task.generation_settings.items()
             if key.endswith("_workflow_id") or key.endswith("_workflow_snapshot")
         }
-        snapshot = await ProductionContextCompiler(self.session).compile(
+        snapshot = await compiler.compile(
             task_id, provider_snapshot=providers, workflow_config=workflow_config
         )
         job = WorkflowJobModel(
@@ -68,6 +74,8 @@ class ProductionJobService:
         source = await self.session.get(WorkflowJobModel, job_id)
         if source is None:
             raise NotFoundException("WorkflowJob", job_id)
+        if source.job_type != "full_pipeline":
+            raise ValidationException("该 WorkflowJob 不是生产 Job。")
         if source.status not in {"failed", "cancelled"}:
             raise ValidationException("只有失败或取消的 WorkflowJob 可以重试。")
         retry = WorkflowJobModel(

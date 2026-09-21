@@ -9,6 +9,7 @@ from src.models.workflow import WorkflowJobModel
 from src.schemas.common import APIResponse
 from src.schemas.task import TaskDetailResponse, TaskResponse, TaskUpdate
 from src.schemas.workflow import WorkflowJobResponse
+from src.services.production_context import ProductionContextCompiler
 from src.services.production_job_service import ProductionJobService
 from src.services.task_service import TaskService
 
@@ -31,7 +32,19 @@ async def list_tasks(
         limit=limit,
         offset=offset,
     )
-    return APIResponse(data=[_task(task) for task in tasks])
+    latest: dict[str, WorkflowJobModel] = {}
+    if tasks:
+        jobs = (await service.session.scalars(
+            select(WorkflowJobModel)
+            .where(
+                WorkflowJobModel.task_id.in_([task.id for task in tasks]),
+                WorkflowJobModel.job_type == "full_pipeline",
+            )
+            .order_by(WorkflowJobModel.created_at.desc())
+        )).all()
+        for job in jobs:
+            latest.setdefault(job.task_id, job)
+    return APIResponse(data=[{**_task(task), "latest_job": latest.get(task.id)} for task in tasks])
 
 
 @router.get("/{task_id}", response_model=APIResponse[TaskDetailResponse])
@@ -54,6 +67,11 @@ async def approve_task(task_id: str, service: TaskService = Depends(get_task_ser
     return APIResponse(data={**_task(task), "scenes": task.scenes})
 
 
+@router.get("/{task_id}/readiness", response_model=APIResponse[dict])
+async def get_task_readiness(task_id: str, db: AsyncSession = Depends(get_db)):
+    return APIResponse(data=await ProductionContextCompiler(db).readiness(task_id))
+
+
 @router.delete("/{task_id}", response_model=APIResponse[bool])
 async def delete_task(task_id: str, service: TaskService = Depends(get_task_service)):
     return APIResponse(data=await service.delete_task(task_id))
@@ -70,7 +88,10 @@ async def list_task_jobs(task_id: str, db: AsyncSession = Depends(get_db)):
     jobs = (
         await db.scalars(
             select(WorkflowJobModel)
-            .where(WorkflowJobModel.task_id == task_id)
+            .where(
+                WorkflowJobModel.task_id == task_id,
+                WorkflowJobModel.job_type == "full_pipeline",
+            )
             .order_by(WorkflowJobModel.created_at.desc())
         )
     ).all()

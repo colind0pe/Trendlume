@@ -4,13 +4,13 @@ import hashlib
 import json
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, inspect, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.exceptions import ValidationException
 from src.models.asset import AssetModel
 from src.models.drama import DramaCharacterModel, DramaLocationModel, DramaPropModel
-from src.models.product import ProductModel
+from src.models.product import ProductAssetModel, ProductModel
 from src.models.production_context import ProductionContextSnapshotModel
 from src.models.project import ProjectAssetBindingModel, ProjectModel
 from src.models.task import TaskModel
@@ -30,6 +30,120 @@ class ProductionContextCompiler:
 
     def __init__(self, session: AsyncSession):
         self.session = session
+
+    async def readiness(self, task_id: str) -> dict[str, Any]:
+        task = await self.session.get(TaskModel, task_id)
+        if task is None:
+            raise ValidationException("任务不存在。")
+        project = await self.session.get(ProjectModel, task.project_id)
+        if project is None:
+            raise ValidationException("任务所属项目不存在。")
+        checks: list[dict[str, str]] = []
+
+        def add(key: str, label: str, passed: bool, message: str) -> None:
+            checks.append(
+                {
+                    "key": key,
+                    "label": label,
+                    "status": "pass" if passed else "error",
+                    "message": message,
+                }
+            )
+
+        approved = task.editorial_status == "approved"
+        add("approval", "内容审批", approved, "Task 已审批。" if approved else "请先审批 Task。")
+        has_template = project.template is not None
+        add(
+            "template",
+            "项目模板",
+            has_template,
+            "项目模板已配置。" if has_template else "请先配置项目模板。",
+        )
+        detail = self._detail(project, task)
+        if project.mode == "knowledge":
+            has_topic = bool(detail.topic.strip())
+            add(
+                "knowledge_topic",
+                "知识主题",
+                has_topic,
+                "知识主题已填写。" if has_topic else "请填写知识主题。",
+            )
+        elif project.mode == "commerce":
+            products = list(
+                (
+                    await self.session.scalars(
+                        select(ProductModel).where(ProductModel.project_id == project.id)
+                    )
+                ).all()
+            )
+            product = products[0] if len(products) == 1 else None
+            has_product = product is not None and bool(product.title.strip())
+            add(
+                "commerce_product",
+                "主商品",
+                has_product,
+                "主商品已配置。" if has_product else "请配置唯一主商品。",
+            )
+            asset_count = (
+                0
+                if product is None
+                else int(
+                    (
+                        await self.session.scalar(
+                            select(func.count(ProductAssetModel.id)).where(
+                                ProductAssetModel.product_id == product.id
+                            )
+                        )
+                    )
+                    or 0
+                )
+            )
+            add(
+                "commerce_assets",
+                "商品素材",
+                asset_count > 0,
+                f"已绑定 {asset_count} 个商品素材。"
+                if asset_count
+                else "请至少绑定一个商品图片或视频。",
+            )
+        else:
+            groups = []
+            for key, label, model in (
+                ("characters", "人物", DramaCharacterModel),
+                ("locations", "地点", DramaLocationModel),
+                ("props", "道具", DramaPropModel),
+            ):
+                rows = list(
+                    (
+                        await self.session.scalars(
+                            select(model).where(model.project_id == project.id)
+                        )
+                    ).all()
+                )
+                groups.extend(rows)
+                add(
+                    f"drama_{key}",
+                    label,
+                    bool(rows),
+                    f"已配置 {len(rows)} 个{label}。"
+                    if rows
+                    else f"请至少配置一个{label}。",
+                )
+            unapproved = [item.name for item in groups if item.approval_status != "approved"]
+            add(
+                "drama_approval",
+                "Drama 资源审批",
+                not unapproved,
+                "Drama 资源已审批。"
+                if not unapproved
+                else "请审批：" + "、".join(unapproved),
+            )
+        return {
+            "task_id": task.id,
+            "mode": project.mode,
+            "ready": all(item["status"] == "pass" for item in checks),
+            "checks": checks,
+        }
 
     async def compile(
         self,
@@ -204,7 +318,7 @@ class ProductionContextCompiler:
         if model is None:
             return None
         return {
-            column.name: getattr(model, column.name)
-            for column in model.__table__.columns
-            if column.name not in {"created_at", "updated_at"}
+            attribute.key: getattr(model, attribute.key)
+            for attribute in inspect(model).mapper.column_attrs
+            if attribute.key not in {"created_at", "updated_at"}
         }

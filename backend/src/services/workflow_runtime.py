@@ -17,8 +17,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.domain.production_workflows import ProductionWorkflow, get_production_workflow
 from src.models.asset import AssetModel
-from src.models.product import ProductAssetModel
+from src.models.product import ProductAssetModel, ProductModel
 from src.models.production_context import ProductionContextSnapshotModel
+from src.models.project import ProjectAssetBindingModel
+from src.models.task import TaskModel
 from src.models.workflow import (
     WorkflowArtifactModel,
     WorkflowJobModel,
@@ -286,16 +288,33 @@ class WorkflowRuntime:
         for artifact in artifacts:
             if artifact.asset_id:
                 asset = await self.db.get(AssetModel, artifact.asset_id)
+                project_binding = None
                 product_asset = None
-                if asset is not None and artifact.source == "product" and task.product_id:
-                    product_asset = await self.db.scalar(
-                        select(ProductAssetModel.id).where(
-                            ProductAssetModel.asset_id == asset.id,
-                            ProductAssetModel.product_id == task.product_id,
-                        ).limit(1)
+                if asset is not None:
+                    project_binding = await self.db.scalar(
+                        select(ProjectAssetBindingModel.id)
+                        .where(
+                            ProjectAssetBindingModel.asset_id == asset.id,
+                            ProjectAssetBindingModel.project_id == task.project_id,
+                        )
+                        .limit(1)
                     )
-                project_owned = asset is not None and asset.project_id == task.project_id
-                product_owned = asset is not None and asset.project_id is None and product_asset is not None
+                    if artifact.source == "product":
+                        product_asset = await self.db.scalar(
+                            select(ProductAssetModel.id)
+                            .join(ProductModel, ProductModel.id == ProductAssetModel.product_id)
+                            .where(
+                                ProductAssetModel.asset_id == asset.id,
+                                ProductModel.project_id == task.project_id,
+                            )
+                            .limit(1)
+                        )
+                metadata = (asset.metadata_json or {}) if asset is not None else {}
+                project_owned = asset is not None and (
+                    project_binding is not None
+                    or metadata.get("project_id") == task.project_id
+                )
+                product_owned = asset is not None and product_asset is not None
                 if not project_owned and not product_owned:
                     await self.db.rollback()
                     raise ValueError("Artifact asset does not belong to the task project")

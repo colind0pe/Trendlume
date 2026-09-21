@@ -96,10 +96,6 @@ class ProductUpdate(BaseModel):
     selling_points: list[ProductClaimInput] | None = Field(default=None, max_length=30)
 
 
-class ProductImportRequest(BaseModel):
-    url: str = Field(min_length=1, max_length=2000)
-
-
 class ProductTruthSheetUpdate(BaseModel):
     truth_sheet: ProductTruthSheet
 
@@ -121,21 +117,3 @@ class ProductResponse(BaseModel):
     assets: list[ProductAssetResponse] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
-
-
-class ProductAssetCreate(BaseModel):
-    asset_id: str | None = None
-    asset_type: Literal["image", "video"]
-    role: str = Field(default="gallery", min_length=1, max_length=30)
-    source_kind: str = Field(default="upload", min_length=1, max_length=30)
-    source_url: str | None = Field(default=None, max_length=2000)
-    alt_text: str = Field(default="", max_length=500)
-    sort_order: int = Field(default=0, ge=0, le=1000)
-    metadata_json: dict[str, Any] = Field(default_factory=dict)
-
-
-class ProductAssetUpdate(BaseModel):
-    role: str | None = Field(default=None, min_length=1, max_length=30)
-    source_url: str | None = Field(default=None, max_length=2000)
-    alt_text: str | None = Field(default=None, max_length=500)
-    sort_order: int | None = Field(default=None, ge=0, le=1000)

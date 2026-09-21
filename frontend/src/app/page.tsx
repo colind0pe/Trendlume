@@ -67,7 +67,7 @@ export default function DashboardPage() {
     refetchInterval: (query) => {
       const currentTasks =
         (query.state.data as
-          | Array<{ status?: string; active_job?: { status?: string } | null }>
+          | Array<{ production_status?: string; latest_job?: { status?: string } | null }>
           | undefined) || [];
       return currentTasks.some(isTaskActive) ? 2000 : false;
     },
@@ -77,7 +77,7 @@ export default function DashboardPage() {
   const completedTasks = tasks.filter(
     (task) =>
       task.production_status === "completed" &&
-      task.active_job?.result?.final_video_url,
+      task.latest_job?.result?.final_video_url,
   );
 
   return (
@@ -259,7 +259,7 @@ export default function DashboardPage() {
           <div className="grid gap-2.5">
             {runningTasks.map((task) => {
               const progress =
-                task.active_job?.progress ?? 0;
+                task.latest_job?.progress ?? 0;
               return (
                 <Card key={task.id} className="border-primary/30">
                   <CardContent className="space-y-2 p-3 sm:p-3.5">
@@ -287,8 +287,8 @@ export default function DashboardPage() {
                         <strong className="text-foreground">
                           {task.current_stage_label ||
                             task.current_stage ||
-                            task.active_job?.current_stage ||
-                            task.active_job?.job_type}
+                            task.latest_job?.current_stage ||
+                            task.latest_job?.job_type}
                         </strong>
                       </span>
                       <Link
@@ -444,10 +444,10 @@ export default function DashboardPage() {
                     <button
                       type="button"
                       onClick={() =>
-                        task.active_job?.result?.final_video_url &&
+                        task.latest_job?.result?.final_video_url &&
                         setPreviewVideo({
                           title: task.title,
-                          url: task.active_job?.result.final_video_url,
+                          url: task.latest_job?.result.final_video_url,
                         })
                       }
                       aria-label={`预览 ${task.title}`}

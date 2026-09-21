@@ -18,19 +18,16 @@ from src.models.asset import AssetModel
 from src.models.provider_config import ProviderConfigModel
 from src.models.publishing import CredentialModel, PublishingJobModel, SocialAccountModel
 from src.models.task import TaskModel
-from src.models.workflow import WorkflowArtifactModel
 from src.providers.publishing.auth_service import auth_service
 from src.providers.publishing.cookie_helper import normalize_storage_state
 from src.providers.publishing.douyin import DouyinPublishingProvider
 from src.providers.publishing.protocol import PublishingProvider
 from src.repositories.asset_repository import AssetRepository
-from src.repositories.project_repository import ProjectRepository
 from src.repositories.publishing_repository import (
     CredentialRepository,
     PublishingJobRepository,
     SocialAccountRepository,
 )
-from src.repositories.task_repository import TaskRepository
 from src.schemas.generation import PlatformMetadata
 from src.schemas.publishing import (
     AccountCheckResponse,
@@ -61,9 +58,7 @@ class PublishingService:
         self.cred_repo = CredentialRepository(session)
         self.acc_repo = SocialAccountRepository(session)
         self.job_repo = PublishingJobRepository(session)
-        self.task_repo = TaskRepository(session)
         self.asset_repo = AssetRepository(session)
-        self.project_repo = ProjectRepository(session)
         self.rendering_service = rendering_service or RenderingService(session, storage=storage)
         self.auth = auth_service
 
@@ -550,123 +545,6 @@ class PublishingService:
         if not job:
             raise NotFoundException("PublishingJob", job_id)
         await self._attach_task_links([job])
-        return job
-
-    # ========================================================================
-    # Task Publishing Workflow
-    # ========================================================================
-    async def prepare_task_publishing(
-        self,
-        task_id: str,
-        account_id: str | None = None,
-        title: str | None = None,
-        description: str | None = None,
-        tags: list[str] | None = None,
-        cover_asset_id: str | None = None,
-        scheduled_at: datetime | None = None,
-        custom_params: dict[str, Any] | None = None,
-    ) -> PublishingJobModel:
-        """Ensure final video exists, generate metadata if missing, and create PublishingJob"""
-        task = await self.task_repo.get_by_id(task_id)
-        if not task:
-            raise NotFoundException("Task", task_id)
-
-        # 1. Resolve Account
-        if not account_id:
-            accounts = await self.list_accounts(PlatformType.DOUYIN.value)
-            if not accounts:
-                raise ValidationException(
-                    "未检测到已绑定的抖音账号，请先在发布中心完成抖音创作者扫码登录。"
-                )
-            account_id = accounts[0].id
-
-        # 2. Ensure Final Video Asset
-        video_asset_id = await self.session.scalar(
-            select(WorkflowArtifactModel.asset_id)
-            .where(
-                WorkflowArtifactModel.task_id == task_id,
-                WorkflowArtifactModel.kind.in_(["final_video", "composition"]),
-                WorkflowArtifactModel.asset_id.is_not(None),
-            )
-            .order_by(WorkflowArtifactModel.created_at.desc())
-            .limit(1)
-        )
-        if not video_asset_id:
-            composed_asset = await self.rendering_service.compose_task_video(task_id)
-            video_asset_id = composed_asset.id
-
-        # 3. Reuse the metadata generated with the storyboard.  Explicit
-        # publish-form values still win, while old tasks fall back to the
-        # historical defaults.
-        generation_settings = task.generation_settings or {}
-        generated_metadata = generation_settings.get("metadata")
-        if not isinstance(generated_metadata, dict):
-            generated_metadata = {}
-        else:
-            try:
-                generated_metadata = PlatformMetadata.model_validate(
-                    generated_metadata
-                ).model_dump()
-            except Exception:
-                logger.warning(
-                    "Ignoring malformed generated platform metadata for task %s", task_id
-                )
-                generated_metadata = {}
-
-        pub_title = (
-            title
-            if title is not None and title.strip()
-            else generated_metadata.get("title") or task.title or "精彩短视频"
-        )
-        pub_desc = (
-            description
-            if description is not None
-            else generated_metadata.get("description")
-            or task.description
-            or getattr(task.commerce_detail, "hook", "")
-        )
-        pub_tags = (
-            tags
-            if tags is not None
-            else generated_metadata.get("tags") or ["Trendlume", "科普", "热点视频", "AI创作"]
-        )
-
-        generated_custom_params = {
-            key: generated_metadata[key]
-            for key in (
-                "platform",
-                "declaration",
-                "location",
-                "collection_name",
-                "visibility",
-                "allow_download",
-            )
-            if generated_metadata.get(key) is not None
-        }
-        platform_custom_params = generated_metadata.get("platform_custom_params")
-        if isinstance(platform_custom_params, dict):
-            generated_custom_params.update(platform_custom_params)
-        if custom_params:
-            generated_custom_params.update(custom_params)
-        generated_custom_params["task_id"] = task.id
-
-        # 4. Create PublishingJob
-        job = await self.create_publishing_job(
-            PublishingJobCreate(
-                project_id=task.project_id,
-                video_asset_id=video_asset_id,
-                account_id=account_id,
-                platform=PlatformType.DOUYIN,
-                title=pub_title,
-                description=pub_desc,
-                tags=pub_tags,
-                cover_asset_id=cover_asset_id,
-                custom_params=generated_custom_params,
-                # Keep the timezone-aware value on the ORM instance for API callers.
-                # The durable queue normalizes it to naive UTC for SQLite comparisons.
-                scheduled_at=scheduled_at,
-            )
-        )
         return job
 
     async def execute_publish_job(self, publishing_job_id: str) -> PublishingJobModel:

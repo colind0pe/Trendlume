@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Check, Download, Play, RotateCcw, Save, StopCircle } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Check, CheckCircle2, Download, Play, RotateCcw, Save, StopCircle } from "lucide-react";
 import { api } from "@/lib/api-client";
 import type { WorkflowArtifact, WorkflowJob } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
@@ -36,6 +36,7 @@ export default function TaskEditorPage() {
   const [scheduledAt, setScheduledAt] = React.useState("");
 
   const taskQuery = useQuery({ queryKey: ["task-detail", taskId], queryFn: () => api.getTask(taskId) });
+  const readinessQuery = useQuery({ queryKey: ["task-readiness", taskId], queryFn: () => api.getTaskReadiness(taskId) });
   const jobsQuery = useQuery({
     queryKey: ["task-jobs", taskId], queryFn: () => api.listTaskJobs(taskId),
     refetchInterval: (query) => (query.state.data || []).some((job) => ACTIVE.has(job.status)) ? 2000 : false,
@@ -55,6 +56,7 @@ export default function TaskEditorPage() {
 
   const refresh = async () => Promise.all([
     queryClient.invalidateQueries({ queryKey: ["task-detail", taskId] }),
+    queryClient.invalidateQueries({ queryKey: ["task-readiness", taskId] }),
     queryClient.invalidateQueries({ queryKey: ["task-jobs", taskId] }),
     queryClient.invalidateQueries({ queryKey: ["workflow-job"] }),
     queryClient.invalidateQueries({ queryKey: ["all-tasks"] }),
@@ -86,8 +88,9 @@ export default function TaskEditorPage() {
           <Input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="标题" />
           <Textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder="描述" />
           <TaskDetailFields detail={detail} onChange={setDetail} />
-          <div className="flex flex-wrap gap-2"><Button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}><Save className="mr-2 h-4 w-4" />保存</Button><Button variant="outline" onClick={() => approveMutation.mutate()} disabled={approveMutation.isPending || task.editorial_status === "approved"}><Check className="mr-2 h-4 w-4" />审批 Task</Button><Button onClick={() => produceMutation.mutate()} disabled={produceMutation.isPending || task.editorial_status !== "approved" || (jobsQuery.data || []).some((item) => ACTIVE.has(item.status))}><Play className="mr-2 h-4 w-4" />开始生产</Button></div>
+          <div className="flex flex-wrap gap-2"><Button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}><Save className="mr-2 h-4 w-4" />保存</Button><Button variant="outline" onClick={() => approveMutation.mutate()} disabled={approveMutation.isPending || task.editorial_status === "approved"}><Check className="mr-2 h-4 w-4" />审批 Task</Button><Button onClick={() => produceMutation.mutate()} disabled={produceMutation.isPending || !readinessQuery.data?.ready || (jobsQuery.data || []).some((item) => ACTIVE.has(item.status))}><Play className="mr-2 h-4 w-4" />开始生产</Button></div>
         </CardContent></Card>
+        <Card><CardHeader><CardTitle className="flex items-center gap-2">{readinessQuery.data?.ready ? <CheckCircle2 className="h-5 w-5 text-success" /> : <AlertTriangle className="h-5 w-5 text-warning" />}生产准备</CardTitle><CardDescription>{readinessQuery.data?.ready ? "检查已通过，可以创建 WorkflowJob。" : "请先处理以下阻塞项。"}</CardDescription></CardHeader><CardContent className="grid gap-2 sm:grid-cols-2">{(readinessQuery.data?.checks || []).map((item) => <div key={item.key} className="rounded-md border p-3 text-sm"><div className="flex items-center gap-2 font-medium">{item.status === "pass" ? <CheckCircle2 className="h-4 w-4 text-success" /> : <AlertTriangle className="h-4 w-4 text-warning" />}{item.label}</div><p className="mt-1 text-xs text-muted-foreground">{item.message}</p></div>)}</CardContent></Card>
         <Card><CardHeader><CardTitle>当前 WorkflowJob</CardTitle><CardDescription>执行状态只来自 Job；Task 仅保留内容审核与生产生命周期。</CardDescription></CardHeader><CardContent className="space-y-4">
           {!job ? <p className="text-sm text-muted-foreground">尚未创建生产 Job。</p> : <>
             <div className="flex flex-wrap items-center gap-2"><Badge>{jobLabel(job.status)}</Badge><span className="text-sm">当前阶段：{job.current_stage || "—"}</span></div><Progress value={job.progress} />

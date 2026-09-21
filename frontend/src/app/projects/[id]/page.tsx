@@ -41,6 +41,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Select } from "@/components/ui/field";
 import { IconButton } from "@/components/ui/icon-button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import {
   PageContainer,
   PageHeader,
@@ -59,7 +60,11 @@ import {
   formatParamLabel,
   PRODUCTION_MODE_SPECS,
 } from "@/lib/ui-constants";
-import { ProjectTemplateUpdate, TemplateCatalogItem } from "@/lib/types";
+import {
+  Product,
+  ProjectTemplateUpdate,
+  TemplateCatalogItem,
+} from "@/lib/types";
 const canonicalTemplateId = (id?: string | null) =>
   id || "image_gallery_matted";
 const assetFileUrl = (filePath: string) =>
@@ -88,6 +93,14 @@ export default function ProjectDetailPage() {
     title: string;
   } | null>(null);
   const [taskStatusFilter, setTaskStatusFilter] = React.useState<string>("all");
+  const [productForm, setProductForm] = React.useState({
+    title: "",
+    brand: "",
+    description: "",
+    price: "",
+    currency: "CNY",
+  });
+  const [productAssetId, setProductAssetId] = React.useState("");
   const { toast } = useToast();
   // Queries
   const {
@@ -104,13 +117,6 @@ export default function ProjectDetailPage() {
     queryKey: ["project", projectId],
     queryFn: () => api.getProject(projectId),
   });
-  const { data: publishingAccounts = [] } = useQuery({
-    queryKey: ["publishing-accounts"],
-    queryFn: () => api.listAccounts("douyin"),
-  });
-  const publishableAccounts = publishingAccounts.filter(
-    (account) => account.status === "active" && Boolean(account.credential_id),
-  );
   const { data: template } = useQuery({
     queryKey: ["project-template", projectId],
     queryFn: () => api.getProjectTemplate(projectId),
@@ -121,7 +127,10 @@ export default function ProjectDetailPage() {
     refetchInterval: (query) => {
       const currentTasks =
         (query.state.data as
-          | Array<{ status?: string; active_job?: { status?: string } | null }>
+          | Array<{
+              production_status?: string;
+              latest_job?: { status?: string } | null;
+            }>
           | undefined) || [];
       return currentTasks.some(isTaskActive) ? 2000 : false;
     },
@@ -136,8 +145,8 @@ export default function ProjectDetailPage() {
         return task.production_status === "failed";
       if (taskStatusFilter === "draft")
         return (
-          task.production_status === "draft" ||
-          task.production_status === "pending"
+          task.production_status === "not_started" ||
+          task.production_status === "queued"
         );
       return task.production_status === taskStatusFilter;
     });
@@ -146,7 +155,8 @@ export default function ProjectDetailPage() {
     () => ({
       all: tasks.length,
       running: tasks.filter(isTaskActive).length,
-      completed: tasks.filter((t) => t.production_status === "completed").length,
+      completed: tasks.filter((t) => t.production_status === "completed")
+        .length,
       failed: tasks.filter((t) => t.production_status === "failed").length,
     }),
     [tasks],
@@ -159,6 +169,26 @@ export default function ProjectDetailPage() {
     queryKey: ["project-bgm", projectId],
     queryFn: () => api.getProjectBgm(projectId),
   });
+  const { data: bgmCandidates = [] } = useQuery({
+    queryKey: ["bgm-candidates", projectId],
+    queryFn: () => api.listBgmCandidates(projectId),
+  });
+  const { data: product } = useQuery<Product>({
+    queryKey: ["project-product", projectId],
+    queryFn: () => api.getProjectProduct(projectId),
+    enabled: project?.mode === "commerce",
+    retry: false,
+  });
+  React.useEffect(() => {
+    if (product)
+      setProductForm({
+        title: product.title,
+        brand: product.brand,
+        description: product.description,
+        price: product.price,
+        currency: product.currency || "CNY",
+      });
+  }, [product]);
   const { data: workflows = [] } = useQuery({
     queryKey: ["comfyui-workflows"],
     queryFn: () => api.listComfyUIWorkflows(),
@@ -241,17 +271,41 @@ export default function ProjectDetailPage() {
     },
   });
   const updateProjectBgmMutation = useMutation({
-    mutationFn: (assetId: string | null) =>
-      api.updateProject(projectId, {
+    mutationFn: async (assetId: string | null) => {
+      if (assetId && !projectBgm.some((asset) => asset.id === assetId))
+        await api.bindProjectAsset(projectId, assetId, "bgm");
+      return api.updateProject(projectId, {
         default_production_settings: {
           ...(project?.default_production_settings || {}),
           bgm_asset_id: assetId,
         },
-      }),
+      });
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["project", projectId] });
       toast("项目默认背景音乐已保存。", "success");
     },
+  });
+  const saveProductMutation = useMutation({
+    mutationFn: () => api.putProjectProduct(projectId, productForm),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["project-product", projectId],
+      });
+      toast("主商品已保存。", "success");
+    },
+    onError: (error: Error) => toast(`保存商品失败：${error.message}`, "error"),
+  });
+  const addProductAssetMutation = useMutation({
+    mutationFn: () => api.addProjectProductAsset(projectId, productAssetId),
+    onSuccess: () => {
+      setProductAssetId("");
+      queryClient.invalidateQueries({
+        queryKey: ["project-product", projectId],
+      });
+      toast("商品素材已绑定。", "success");
+    },
+    onError: (error: Error) => toast(`绑定素材失败：${error.message}`, "error"),
   });
   const templatePreviewMutation = useMutation({
     mutationFn: (templateId: string) =>
@@ -384,6 +438,11 @@ export default function ProjectDetailPage() {
           <TabsTrigger value="assets" className="text-sm px-3.5 py-1.5">
             项目素材 ({assets.length})
           </TabsTrigger>
+          {project.mode === "commerce" && (
+            <TabsTrigger value="product" className="text-sm px-3.5 py-1.5">
+              主商品
+            </TabsTrigger>
+          )}
         </TabsList>
         {/* Tab 1: Video Tasks */}
         <TabsContent value="tasks" className="space-y-4">
@@ -512,18 +571,15 @@ export default function ProjectDetailPage() {
                           <span className="text-foreground font-medium">
                             {task.current_stage_label ||
                               task.current_stage ||
-                              task.active_job?.current_stage ||
+                              task.latest_job?.current_stage ||
                               "排队中"}
                           </span>
                           <span className="font-semibold text-primary">
-                            {task.active_job?.progress ?? 0}
-                            %
+                            {task.latest_job?.progress ?? 0}%
                           </span>
                         </div>
                         <Progress
-                          value={
-                            task.active_job?.progress ?? 0
-                          }
+                          value={task.latest_job?.progress ?? 0}
                           className="h-1.5"
                         />
                       </div>
@@ -967,7 +1023,9 @@ export default function ProjectDetailPage() {
                 </label>
                 <Select
                   id="project-default-bgm"
-                  value={String(project.default_production_settings?.bgm_asset_id || "")}
+                  value={String(
+                    project.default_production_settings?.bgm_asset_id || "",
+                  )}
                   className="h-9 text-sm"
                   onChange={(e) =>
                     updateProjectBgmMutation.mutate(e.target.value || null)
@@ -977,7 +1035,7 @@ export default function ProjectDetailPage() {
                   }
                 >
                   <option value="">不设置项目默认背景音乐</option>
-                  {projectBgm.map((asset) => (
+                  {bgmCandidates.map((asset) => (
                     <option key={asset.id} value={asset.id}>
                       {asset.file_name}
                       {asset.project_id ? "（项目素材）" : "（系统内置）"}
@@ -985,16 +1043,20 @@ export default function ProjectDetailPage() {
                   ))}
                 </Select>
               </div>
-              {projectBgm.find(
-                (asset) => asset.id === project.default_production_settings?.bgm_asset_id,
+              {bgmCandidates.find(
+                (asset) =>
+                  asset.id ===
+                  project.default_production_settings?.bgm_asset_id,
               ) && (
                 <audio
                   controls
                   preload="none"
                   className="h-9 max-w-full"
                   src={assetFileUrl(
-                    projectBgm.find(
-                      (asset) => asset.id === project.default_production_settings?.bgm_asset_id,
+                    bgmCandidates.find(
+                      (asset) =>
+                        asset.id ===
+                        project.default_production_settings?.bgm_asset_id,
                     )!.file_path,
                   )}
                 />
@@ -1039,6 +1101,141 @@ export default function ProjectDetailPage() {
             </div>
           )}
         </TabsContent>
+        {project.mode === "commerce" && (
+          <TabsContent value="product" className="space-y-4">
+            <SectionHeader
+              title="Commerce 主商品"
+              description="一个 Commerce Project 只维护一个主商品；事实与素材会进入生产 Snapshot。"
+            />
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">商品信息</CardTitle>
+                <CardDescription>
+                  请只填写可以确认的商品事实，动态价格和活动需在发布前再次确认。
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-3 md:grid-cols-2">
+                <label className="space-y-1.5 text-sm font-medium">
+                  商品名称
+                  <Input
+                    value={productForm.title}
+                    onChange={(e) =>
+                      setProductForm((v) => ({ ...v, title: e.target.value }))
+                    }
+                  />
+                </label>
+                <label className="space-y-1.5 text-sm font-medium">
+                  品牌
+                  <Input
+                    value={productForm.brand}
+                    onChange={(e) =>
+                      setProductForm((v) => ({ ...v, brand: e.target.value }))
+                    }
+                  />
+                </label>
+                <label className="space-y-1.5 text-sm font-medium">
+                  价格
+                  <Input
+                    value={productForm.price}
+                    onChange={(e) =>
+                      setProductForm((v) => ({ ...v, price: e.target.value }))
+                    }
+                  />
+                </label>
+                <label className="space-y-1.5 text-sm font-medium">
+                  币种
+                  <Input
+                    value={productForm.currency}
+                    onChange={(e) =>
+                      setProductForm((v) => ({
+                        ...v,
+                        currency: e.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label className="space-y-1.5 text-sm font-medium md:col-span-2">
+                  商品描述
+                  <Textarea
+                    value={productForm.description}
+                    onChange={(e) =>
+                      setProductForm((v) => ({
+                        ...v,
+                        description: e.target.value,
+                      }))
+                    }
+                  />
+                </label>
+              </CardContent>
+              <CardFooter>
+                <Button
+                  disabled={
+                    !productForm.title.trim() || saveProductMutation.isPending
+                  }
+                  onClick={() => saveProductMutation.mutate()}
+                >
+                  <Save className="mr-2 h-4 w-4" />
+                  保存主商品
+                </Button>
+              </CardFooter>
+            </Card>
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">商品素材</CardTitle>
+                <CardDescription>
+                  只能绑定已经属于当前 Project 的图片或视频。
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Select
+                    value={productAssetId}
+                    onChange={(e) => setProductAssetId(e.target.value)}
+                  >
+                    <option value="">选择项目图片或视频</option>
+                    {assets
+                      .filter((asset) =>
+                        ["image", "video"].includes(asset.asset_type),
+                      )
+                      .map((asset) => (
+                        <option key={asset.id} value={asset.id}>
+                          {asset.file_name}
+                        </option>
+                      ))}
+                  </Select>
+                  <Button
+                    variant="outline"
+                    disabled={
+                      !product?.id ||
+                      !productAssetId ||
+                      addProductAssetMutation.isPending
+                    }
+                    onClick={() => addProductAssetMutation.mutate()}
+                  >
+                    绑定素材
+                  </Button>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {(product?.assets || []).map((item) => (
+                    <div
+                      key={item.id}
+                      className="rounded-lg border p-3 text-sm"
+                    >
+                      <p className="font-medium">
+                        {item.asset?.file_name ||
+                          item.alt_text ||
+                          item.asset_type}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {item.role} · {item.asset_type}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        )}
       </Tabs>
       {/* Two-Column Studio Task Creation Modal */}
       {project && (
@@ -1051,7 +1248,6 @@ export default function ProjectDetailPage() {
           assets={assets}
           projectBgm={projectBgm}
           workflows={workflows}
-          publishableAccounts={publishableAccounts}
           taskVoices={taskVoices}
           isVoicesLoading={isVoicesLoading}
           isVoicesError={isVoicesError}

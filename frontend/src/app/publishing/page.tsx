@@ -335,18 +335,10 @@ export default function PublishingPage() {
                               </span>
                             }
                           />
-                          {job.custom_params?.auto_scheduled && (
-                            <span className="rounded-full border border-primary/20 bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary">
-                              生成完成后自动发布
-                            </span>
-                          )}
                           {job.scheduled_at && (
                             <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                               <Calendar aria-hidden="true" className="h-3.5 w-3.5" />
-                              {new Date(job.scheduled_at).toLocaleString("zh-CN", {
-                                timeZone: job.custom_params?.scheduled_timezone || undefined,
-                              })}
-                              {job.custom_params?.scheduled_timezone && ` · ${job.custom_params.scheduled_timezone}`}
+                              {new Date(job.scheduled_at).toLocaleString("zh-CN")}
                             </span>
                           )}
                         </div>

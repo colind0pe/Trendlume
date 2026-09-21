@@ -7,12 +7,14 @@ from pathlib import Path
 from typing import Any
 
 from loguru import logger
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.exceptions import NotFoundException, ValidationException
 from src.domain.content_modes import is_content_mode_supported, resolve_content_mode
 from src.domain.enums import AssetType
 from src.models.asset import AssetModel
+from src.models.project import ProjectAssetBindingModel
 from src.repositories.asset_repository import AssetRepository
 from src.repositories.project_repository import ProjectRepository
 from src.repositories.scene_repository import SceneRepository
@@ -623,7 +625,11 @@ class RenderingService:
         if explicit_bgm_override:
             bgm_enabled = bool(bgm_asset_id)
         elif bgm_enabled and not selected_bgm_id:
-            selected_bgm_id = project.bgm_asset_id if project else None
+            selected_bgm_id = (
+                (project.default_production_settings or {}).get("bgm_asset_id")
+                if project
+                else None
+            )
 
         try:
             bgm_volume = float(generation_settings.get("bgm_volume", 0.20))
@@ -637,7 +643,14 @@ class RenderingService:
         if bgm_enabled and selected_bgm_id and not bgm_asset:
             raise ValidationException("背景音乐不存在或已被删除。")
         if bgm_asset:
-            if bgm_asset.project_id != task.project_id and not is_system_asset(bgm_asset):
+            project_binding = await self.session.scalar(
+                select(ProjectAssetBindingModel.id).where(
+                    ProjectAssetBindingModel.project_id == task.project_id,
+                    ProjectAssetBindingModel.asset_id == bgm_asset.id,
+                    ProjectAssetBindingModel.purpose == "bgm",
+                )
+            )
+            if not project_binding and not is_system_asset(bgm_asset):
                 raise ValidationException("BGM 素材不属于当前项目。")
             if not is_bgm_asset(bgm_asset):
                 raise ValidationException("BGM 素材必须位于 audio/bgm/ 目录并登记为 BGM 素材。")

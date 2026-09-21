@@ -16,7 +16,7 @@ router = APIRouter(prefix="/workflow-jobs", tags=["Workflow Jobs"])
 @router.get("/{job_id}", response_model=APIResponse[WorkflowJobResponse])
 async def get_workflow_job(job_id: str, db: AsyncSession = Depends(get_db)):
     job = await db.get(WorkflowJobModel, job_id)
-    if job is None:
+    if job is None or job.job_type != "full_pipeline":
         raise NotFoundException("WorkflowJob", job_id)
     stages = list((await db.scalars(
         select(WorkflowStepRunModel).where(WorkflowStepRunModel.job_id == job_id)
@@ -50,7 +50,7 @@ async def retry_workflow_job(job_id: str, db: AsyncSession = Depends(get_db)):
 @router.post("/{job_id}/cancel", response_model=APIResponse[WorkflowJobResponse])
 async def cancel_workflow_job(job_id: str, db: AsyncSession = Depends(get_db)):
     job = await db.get(WorkflowJobModel, job_id)
-    if job is None:
+    if job is None or job.job_type != "full_pipeline":
         raise NotFoundException("WorkflowJob", job_id)
     if job.status not in {"queued", "retrying", "running"}:
         raise ValidationException("只有排队或运行中的 WorkflowJob 可以取消。")
@@ -66,7 +66,8 @@ async def cancel_workflow_job(job_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.get("/{job_id}/artifacts", response_model=APIResponse[list[dict]])
 async def list_workflow_job_artifacts(job_id: str, db: AsyncSession = Depends(get_db)):
-    if await db.get(WorkflowJobModel, job_id) is None:
+    job = await db.get(WorkflowJobModel, job_id)
+    if job is None or job.job_type != "full_pipeline":
         raise NotFoundException("WorkflowJob", job_id)
     artifacts = list((await db.scalars(
         select(WorkflowArtifactModel).where(WorkflowArtifactModel.job_id == job_id)

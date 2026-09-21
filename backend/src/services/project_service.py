@@ -13,7 +13,9 @@ from src.models.project_context import (
     DramaStyleGuideModel,
     KnowledgeProjectProfileModel,
 )
+from src.models.template import ProjectTemplateModel
 from src.schemas.project import ProjectCreate, ProjectUpdate
+from src.services.template_catalog import template_catalog
 
 
 class ProjectService:
@@ -31,6 +33,18 @@ class ProjectService:
         )
         self.session.add(project)
         await self.session.flush()
+        template_id = template_catalog.get_default_for_aspect(data.aspect_ratio)
+        catalog_item = template_catalog.get(template_id, data.aspect_ratio)
+        project.template = ProjectTemplateModel(
+            id=f"project_template_{uuid4().hex[:12]}",
+            project_id=project.id,
+            aspect_ratio=data.aspect_ratio,
+            template_id=template_id,
+            template_version=str((catalog_item or {}).get("version") or "1"),
+            frame_template=str(
+                (catalog_item or {}).get("html_path") or "1080x1920/default.html"
+            ),
+        )
         if data.mode == "knowledge":
             project.knowledge_profile = KnowledgeProjectProfileModel(
                 project_id=project.id, **data.knowledge_profile.model_dump()

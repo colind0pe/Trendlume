@@ -11,14 +11,12 @@ from src.core.config import settings
 from src.core.database import async_session_factory
 from src.core.exceptions import ValidationException
 from src.core.security import redact_sensitive_text
-from src.domain.enums import JobStatus, JobType, PublishJobStatus, TaskStatus
+from src.domain.enums import JobStatus, JobType, PublishJobStatus
 from src.models.publishing import PublishingJobModel
-from src.models.task import TaskModel
 from src.models.workflow import WorkflowJobModel
 from src.services.workflow_execution import (
     WorkflowExecutionContext,
     WorkflowLeaseLost,
-    assert_task_editable,
     interrupt_steps,
     lock_task,
 )
@@ -188,12 +186,6 @@ class TaskManager:
                     if pub:
                         pub.status = PublishJobStatus.MISSED.value
                         pub.error_message = model.error_message
-                task_id = model.task_id
-                task = await session.get(TaskModel, task_id)
-                config = dict((task.publishing_settings or {}).get("scheduled_publish") or {}) if task else None
-                if task and isinstance(config, dict) and config.get("publishing_job_id") == pub_id:
-                    config.update({"status": PublishJobStatus.MISSED.value, "error_message": model.error_message})
-                    task.publishing_settings = {**(task.publishing_settings or {}), "scheduled_publish": config}
                 changed = True
             if changed:
                 await session.commit()
@@ -225,7 +217,7 @@ class TaskManager:
                    updated_at=aware(model.updated_at),
                    checkpoint=dict(model.checkpoint or {}))
 
-    async def submit_task(self, task_id: str, job_type: str = JobType.FULL_PIPELINE.value, params: dict[str, Any] | None = None,
+    async def submit_task(self, task_id: str, job_type: str, params: dict[str, Any] | None = None,
                           available_at: datetime | None = None, scheduled_at: datetime | None = None,
                           checkpoint: dict[str, Any] | None = None,
                           retry_count: int = 0, session_factory=None) -> Job:
@@ -235,16 +227,17 @@ class TaskManager:
         checkpoint = redact(checkpoint or {})
         now = _now()
         factory = session_factory or self.session_factory
+        if job_type != JobType.PUBLISH.value:
+            raise ValidationException(
+                "生产 Job 必须通过 ProductionJobService 创建；TaskManager 仅调度发布。"
+            )
         available = available_at or now
         if available.tzinfo:
             available = available.astimezone(UTC).replace(tzinfo=None)
         if scheduled_at and scheduled_at.tzinfo:
             scheduled_at = scheduled_at.astimezone(UTC).replace(tzinfo=None)
         async with factory() as session:
-            if job_type != JobType.PUBLISH.value:
-                await assert_task_editable(session, task_id)
-            else:
-                await lock_task(session, task_id)
+            await lock_task(session, task_id)
             existing_res = await session.execute(select(WorkflowJobModel).where(
                 WorkflowJobModel.task_id == task_id,
                 ~WorkflowJobModel.status.in_(list(TERMINAL_JOB_STATUSES)),
@@ -262,16 +255,25 @@ class TaskManager:
                     await self._enqueue_model(existing, event_session_factory=factory)
                 return job
 
+            production_context_snapshot_id = await session.scalar(
+                select(WorkflowJobModel.production_context_snapshot_id)
+                .where(
+                    WorkflowJobModel.task_id == task_id,
+                    WorkflowJobModel.job_type == JobType.FULL_PIPELINE.value,
+                    WorkflowJobModel.status == JobStatus.COMPLETED.value,
+                )
+                .order_by(WorkflowJobModel.created_at.desc())
+                .limit(1)
+            )
+            if not production_context_snapshot_id:
+                raise ValidationException("只有成功生产 Job 的最终视频可以进入发布队列。")
             model = WorkflowJobModel(id=f"job_{uuid.uuid4().hex[:12]}", task_id=task_id, job_type=job_type,
+                                     production_context_snapshot_id=production_context_snapshot_id,
                                      status=JobStatus.QUEUED.value, current_stage="queued", progress=0,
                                      params=params or {}, checkpoint=checkpoint or {}, retry_count=retry_count,
                                      max_retries=settings.max_job_retries, available_at=available,
                                      scheduled_at=scheduled_at, created_at=now, updated_at=now)
             session.add(model)
-            task = await session.get(TaskModel, task_id)
-            if task and job_type != JobType.PUBLISH.value:
-                task.status = TaskStatus.PENDING.value
-                task.error_message = None
             await session.commit()
             job = self._model_to_job(model)
         self._task_to_job[task_id] = job.id
@@ -412,7 +414,6 @@ class TaskManager:
             model = await session.get(WorkflowJobModel, job_id)
             if not model or model.status == JobStatus.CANCELLED.value:
                 return
-            task = await session.get(TaskModel, model.task_id)
             pub = None
             if model.job_type == JobType.PUBLISH.value and (model.params or {}).get("publishing_job_id"):
                 pub = await session.get(PublishingJobModel, model.params["publishing_job_id"])
@@ -434,9 +435,6 @@ class TaskManager:
                 model.heartbeat_at = None
                 model.lease_token = None
                 await interrupt_steps(session, model.id, "interrupted")
-                if task and model.job_type != JobType.PUBLISH.value:
-                    task.status = TaskStatus.RETRYING.value
-                    task.error_message = error
             else:
                 model.status = JobStatus.FAILED.value
                 model.error_message = error
@@ -444,9 +442,6 @@ class TaskManager:
                 model.heartbeat_at = None
                 model.lease_token = None
                 await interrupt_steps(session, model.id, "interrupted")
-                if task and model.job_type != JobType.PUBLISH.value:
-                    task.status = TaskStatus.FAILED.value
-                    task.error_message = error
             await session.commit()
 
     async def _requeue_interrupted(self, job_id: str, force_resume: bool = False, *, lease_token: str | None = None) -> None:
@@ -454,21 +449,12 @@ class TaskManager:
             await WorkflowExecutionContext(job_id, lease_token or "").fence(session)
             model = await session.get(WorkflowJobModel, job_id)
             if model and model.status == JobStatus.RUNNING.value:
-                task = await session.get(TaskModel, model.task_id)
-                if task and task.status == TaskStatus.CANCELLED.value and not force_resume:
-                    model.status = JobStatus.CANCELLED.value
-                    model.completed_at = _now()
-                    model.error_message = "用户已取消任务"
-                else:
-                    model.status = JobStatus.QUEUED.value
-                    model.available_at = _now()
-                    model.heartbeat_at = None
-                    model.lease_token = None
-                    await interrupt_steps(session, model.id, "interrupted")
-                    model.error_message = "Worker 停止，任务将在下次启动时从检查点恢复"
-                    if task and force_resume and model.job_type != JobType.PUBLISH.value:
-                        task.status = TaskStatus.RUNNING.value
-                        task.error_message = model.error_message
+                model.status = JobStatus.QUEUED.value
+                model.available_at = _now()
+                model.heartbeat_at = None
+                model.lease_token = None
+                await interrupt_steps(session, model.id, "interrupted")
+                model.error_message = "Worker 停止，任务将在下次启动时从检查点恢复"
                 await session.commit()
 
     async def _mark_job_uncertain(self, job_id: str, error: str, *, lease_token: str | None = None) -> None:
@@ -483,79 +469,6 @@ class TaskManager:
                 model.lease_token = None
                 await interrupt_steps(session, model.id, "interrupted")
                 await session.commit()
-
-    async def cancel_task(self, task_id: str, session_factory=None) -> bool:
-        cancelled_jobs: list[dict[str, Any]] = []
-        async with (session_factory or self.session_factory)() as session:
-            result = await session.execute(select(WorkflowJobModel).where(
-                WorkflowJobModel.task_id == task_id,
-                ~WorkflowJobModel.status.in_(list(TERMINAL_JOB_STATUSES)),
-            ))
-            for model in result.scalars().all():
-                model.status = JobStatus.CANCELLED.value
-                model.completed_at = _now()
-                model.heartbeat_at = None
-                model.lease_token = None
-                await interrupt_steps(session, model.id, "cancelled")
-                cancelled_jobs.append(
-                    {
-                        "job_id": model.id,
-                        "stage": model.current_stage,
-                        "progress": model.progress,
-                    }
-                )
-            task = await session.get(TaskModel, task_id)
-            if task:
-                task.status = TaskStatus.CANCELLED.value
-                task.completed_at = _now()
-            await session.commit()
-        running = self._active_tasks.get(task_id)
-        if running and not running.done():
-            running.cancel()
-        for cancelled_job in cancelled_jobs:
-            await event_broadcaster.broadcast(
-                "job.cancelled",
-                {
-                    "task_id": task_id,
-                    "job_id": cancelled_job["job_id"],
-                    "stage": cancelled_job["stage"] or "cancelled",
-                    "status": JobStatus.CANCELLED.value,
-                    "progress": cancelled_job["progress"],
-                    "message": "Job 已被取消。",
-                },
-                task_id=task_id,
-                job_id=cancelled_job["job_id"],
-            )
-        await event_broadcaster.broadcast(
-            "task.cancelled",
-            {
-                "task_id": task_id,
-                "job_id": cancelled_jobs[-1]["job_id"] if len(cancelled_jobs) == 1 else None,
-                "stage": "cancelled",
-                "status": TaskStatus.CANCELLED.value,
-                "message": "任务已被取消",
-            },
-            task_id=task_id,
-        )
-        return True
-
-    async def retry_task(self, task_id: str, session_factory=None) -> Job:
-        latest = await self.get_latest_job(task_id, job_type=JobType.FULL_PIPELINE.value, session_factory=session_factory)
-        if latest and latest.status not in TERMINAL_JOB_STATUSES:
-            await self.cancel_task(task_id, session_factory=session_factory)
-        return await self.submit_task(task_id, job_type=latest.job_type if latest else JobType.FULL_PIPELINE.value,
-                                       params=dict(latest.params or {}) if latest else {},
-                                       checkpoint=dict(latest.checkpoint or {}) if latest else {},
-                                       retry_count=(latest.retry_count + 1) if latest else 1,
-                                       session_factory=session_factory)
-
-    async def resume_task(self, task_id: str, job_id: str | None = None, session_factory=None) -> Job:
-        latest = await self.get_job(job_id, session_factory=session_factory) if job_id else await self.get_latest_job(task_id, job_type=JobType.FULL_PIPELINE.value, session_factory=session_factory)
-        if not latest:
-            return await self.submit_task(task_id, session_factory=session_factory)
-        if latest.status in {JobStatus.QUEUED.value, JobStatus.RETRYING.value, JobStatus.RUNNING.value}:
-            return self._model_to_job(latest)
-        return await self.submit_task(task_id, job_type=latest.job_type, params=dict(latest.params or {}), checkpoint=dict(latest.checkpoint or {}), session_factory=session_factory)
 
     async def get_job(self, job_id: str, session_factory=None) -> WorkflowJobModel | None:
         async with (session_factory or self.session_factory)() as session:
@@ -575,167 +488,6 @@ class TaskManager:
         async with (session_factory or self.session_factory)() as session:
             result = await session.execute(select(WorkflowJobModel).where(WorkflowJobModel.task_id == task_id).order_by(WorkflowJobModel.created_at.desc()))
             return list(result.scalars().all())
-
-    async def _enqueue_scheduled_publish(self, task_id: str) -> None:
-        """Create and queue the publish workflow once generation is complete.
-
-        The schedule is stored in the task payload because task creation and
-        publishing use different persistence models.  ``source_task_id`` on
-        the publishing job makes this idempotent without changing the schema.
-        """
-        publishing_job_id: str | None = None
-        try:
-            from src.services.publishing_service import PublishingService
-
-            async with self.session_factory() as session:
-                task = await session.get(TaskModel, task_id)
-                if not task:
-                    return
-
-                payload = dict(task.publishing_settings or {})
-                stored_config = payload.get("scheduled_publish")
-                config = dict(stored_config) if isinstance(stored_config, dict) else stored_config
-                if not isinstance(config, dict):
-                    return
-                if config.get("publishing_job_id") or config.get("status") in {
-                    "cancelled",
-                    "published",
-                    "failed",
-                }:
-                    return
-
-                raw_scheduled_at = config.get("scheduled_at")
-                if not raw_scheduled_at:
-                    return
-                if isinstance(raw_scheduled_at, str):
-                    raw_scheduled_at = raw_scheduled_at.replace("Z", "+00:00")
-                scheduled_at = datetime.fromisoformat(str(raw_scheduled_at))
-                if scheduled_at.tzinfo is None:
-                    scheduled_at = scheduled_at.replace(tzinfo=UTC)
-                scheduled_at = scheduled_at.astimezone(UTC)
-                now = datetime.now(UTC)
-                effective_scheduled_at = scheduled_at if scheduled_at > now else None
-
-                existing_result = await session.execute(
-                    select(PublishingJobModel).where(
-                        PublishingJobModel.project_id == task.project_id
-                    )
-                )
-                existing = next(
-                    (
-                        item
-                        for item in existing_result.scalars().all()
-                        if (item.custom_params or {}).get("source_task_id") == task_id
-                    ),
-                    None,
-                )
-                if existing:
-                    config.update(
-                        {
-                            "publishing_job_id": existing.id,
-                            "status": existing.status,
-                            "error_message": existing.error_message,
-                        }
-                    )
-                    payload["scheduled_publish"] = config
-                    task.publishing_settings = payload
-                    await session.commit()
-                    return
-
-                publisher = PublishingService(session)
-                publish_job = await publisher.prepare_task_publishing(
-                    task_id=task_id,
-                    account_id=config.get("account_id"),
-                    scheduled_at=effective_scheduled_at,
-                    custom_params={
-                        "source_task_id": task_id,
-                        "auto_scheduled": True,
-                        "scheduled_timezone": config.get("timezone"),
-                        "requested_scheduled_at": scheduled_at.isoformat(),
-                    },
-                )
-                publishing_job_id = publish_job.id
-                config.update(
-                    {
-                        "status": "scheduled" if effective_scheduled_at else "queued",
-                        "publishing_job_id": publish_job.id,
-                        "error_message": None,
-                    }
-                )
-                payload["scheduled_publish"] = config
-                task.publishing_settings = payload
-                await session.commit()
-
-            await self.submit_task(
-                task_id=task_id,
-                job_type=JobType.PUBLISH.value,
-                params={"publishing_job_id": publishing_job_id, "task_id": task_id},
-                available_at=effective_scheduled_at or _now(),
-                scheduled_at=effective_scheduled_at,
-                session_factory=self.session_factory,
-            )
-        except Exception as exc:
-            safe_error = redact_sensitive_text(str(exc)) or type(exc).__name__
-            logger.error(f"Could not enqueue scheduled publishing for task {task_id}: {safe_error}")
-            async with self.session_factory() as session:
-                task = await session.get(TaskModel, task_id)
-                if task:
-                    payload = dict(task.publishing_settings or {})
-                    stored_config = payload.get("scheduled_publish")
-                    config = dict(stored_config) if isinstance(stored_config, dict) else stored_config
-                    if isinstance(config, dict) and config.get("status") != "cancelled":
-                        config.update({"status": "failed", "error_message": safe_error[:1000]})
-                        payload["scheduled_publish"] = config
-                        task.publishing_settings = payload
-                    if publishing_job_id:
-                        publish_job = await session.get(PublishingJobModel, publishing_job_id)
-                        if publish_job and publish_job.status in {
-                            PublishJobStatus.SCHEDULED.value,
-                            PublishJobStatus.QUEUED.value,
-                        }:
-                            publish_job.status = PublishJobStatus.FAILED.value
-                            publish_job.error_message = safe_error[:1000]
-                    await session.commit()
-            await event_broadcaster.broadcast(
-                "publish.schedule_failed",
-                {
-                    "task_id": task_id,
-                    "status": "failed",
-                    "error": safe_error,
-                    "message": f"自动发布排队失败：{safe_error}",
-                },
-                task_id=task_id,
-            )
-
-    async def _sync_auto_publish_state(
-        self,
-        task_id: str,
-        publishing_job_id: str | None,
-        status: str | None = None,
-        error_message: str | None = None,
-    ) -> None:
-        """Reflect publish-job progress in the task-level schedule state."""
-        if not publishing_job_id:
-            return
-        async with self.session_factory() as session:
-            task = await session.get(TaskModel, task_id)
-            if not task:
-                return
-            payload = dict(task.publishing_settings or {})
-            stored_config = payload.get("scheduled_publish")
-            config = dict(stored_config) if isinstance(stored_config, dict) else stored_config
-            if not isinstance(config, dict) or config.get("publishing_job_id") != publishing_job_id:
-                return
-            if status is None:
-                publish_job = await session.get(PublishingJobModel, publishing_job_id)
-                status = publish_job.status if publish_job else None
-                error_message = publish_job.error_message if publish_job else error_message
-            if not status:
-                return
-            config.update({"status": status, "error_message": error_message})
-            payload["scheduled_publish"] = config
-            task.publishing_settings = payload
-            await session.commit()
 
     async def _find_publishing_workflows(self, session, publishing_job_id: str) -> list[WorkflowJobModel]:
         result = await session.execute(
@@ -789,11 +541,6 @@ class TaskManager:
             if pub:
                 pub.status = PublishJobStatus.CANCELLED.value
                 pub.error_message = "用户取消发布"
-            task = await session.get(TaskModel, model.task_id)
-            config = dict((task.publishing_settings or {}).get("scheduled_publish") or {}) if task else None
-            if task and isinstance(config, dict) and config.get("publishing_job_id") == publishing_job_id:
-                config.update({"status": PublishJobStatus.CANCELLED.value, "error_message": "用户取消发布"})
-                task.publishing_settings = {**(task.publishing_settings or {}), "scheduled_publish": config}
             await session.commit()
             running = self._active_tasks.get(model.task_id) if self._task_to_job.get(model.task_id) in {item.id for item in linked_jobs} else None
         if running and not running.done():
@@ -903,16 +650,9 @@ class TaskManager:
                         job.id,
                         result=job_result, lease_token=claimed.lease_token,
                     )
-                    await self._sync_auto_publish_state(
-                        job.task_id,
-                        job.params.get("publishing_job_id"),
-                        status=job_result.get("status"),
-                    )
                 else:
                     job_result = await self.executor.execute(job)
                     await self._finish_job(job.id, job_result, lease_token=claimed.lease_token)
-                    if job.job_type == JobType.FULL_PIPELINE.value:
-                        await self._enqueue_scheduled_publish(job.task_id)
                 await event_broadcaster.broadcast(
                     "job.completed",
                     {
@@ -948,11 +688,6 @@ class TaskManager:
                 except WorkflowLeaseLost:
                     continue
                 failed_state = await self.get_job(job.id)
-                if job.job_type == JobType.PUBLISH.value:
-                    await self._sync_auto_publish_state(
-                        job.task_id,
-                        job.params.get("publishing_job_id"),
-                    )
                 failed_status = failed_state.status if failed_state else JobStatus.FAILED.value
                 await event_broadcaster.broadcast(
                     "job.retrying" if failed_status == JobStatus.RETRYING.value else "job.failed",

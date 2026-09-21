@@ -3,7 +3,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import inspect, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import get_project_service, get_task_service, get_template_service
@@ -11,9 +11,9 @@ from src.core.database import get_db
 from src.core.exceptions import NotFoundException, ValidationException
 from src.domain.enums import AssetType
 from src.models.asset import AssetModel
-from src.models.drama import DramaCharacterModel, DramaLocationModel, DramaPropModel
-from src.models.product import ProductModel
+from src.models.product import ProductAssetModel, ProductModel
 from src.models.project import ProjectAssetBindingModel, ProjectModel
+from src.models.workflow import WorkflowJobModel
 from src.schemas.common import APIResponse
 from src.schemas.product import ProductCreate, ProductResponse, ProductUpdate
 from src.schemas.project import ProjectCreate, ProjectDetailResponse, ProjectResponse, ProjectUpdate
@@ -26,22 +26,23 @@ from src.services.template_service import ProjectTemplateService
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
 
-class DramaResourceInput(BaseModel):
-    name: str = Field(min_length=1, max_length=160)
-    description: str = ""
-    visual_description: str = ""
-    continuity_data: dict[str, Any] = Field(default_factory=dict)
-    approval_status: str = "draft"
-
-
 class ProjectAssetBindingInput(BaseModel):
     asset_id: str
     purpose: str = Field(min_length=1, max_length=40)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class ProductAssetInput(BaseModel):
+    asset_id: str
+    role: str = Field(default="gallery", min_length=1, max_length=30)
+    alt_text: str = Field(default="", max_length=500)
+
+
 def _columns(model):
-    return {column.name: getattr(model, column.name) for column in model.__table__.columns}
+    return {
+        attribute.key: getattr(model, attribute.key)
+        for attribute in inspect(model).mapper.column_attrs
+    }
 
 
 def _task(task):
@@ -104,7 +105,20 @@ async def create_project_task(
 
 @router.get("/{project_id}/tasks", response_model=APIResponse[list[TaskResponse]])
 async def list_project_tasks(project_id: str, service: TaskService = Depends(get_task_service)):
-    return APIResponse(data=[_task(item) for item in await service.list_tasks(project_id)])
+    tasks = await service.list_tasks(project_id)
+    latest: dict[str, WorkflowJobModel] = {}
+    if tasks:
+        jobs = (await service.session.scalars(
+            select(WorkflowJobModel)
+            .where(
+                WorkflowJobModel.task_id.in_([task.id for task in tasks]),
+                WorkflowJobModel.job_type == "full_pipeline",
+            )
+            .order_by(WorkflowJobModel.created_at.desc())
+        )).all()
+        for job in jobs:
+            latest.setdefault(job.task_id, job)
+    return APIResponse(data=[{**_task(task), "latest_job": latest.get(task.id)} for task in tasks])
 
 
 @router.get("/{project_id}/template", response_model=APIResponse[ProjectTemplateResponse])
@@ -148,6 +162,21 @@ async def list_project_assets(
     } for binding, asset in rows])
 
 
+@router.get("/{project_id}/bgm-candidates", response_model=APIResponse[list[dict[str, Any]]])
+async def list_project_bgm_candidates(project_id: str, db: AsyncSession = Depends(get_db)):
+    if await db.get(ProjectModel, project_id) is None:
+        raise NotFoundException("Project", project_id)
+    project_asset_ids = select(ProjectAssetBindingModel.asset_id).where(
+        ProjectAssetBindingModel.project_id == project_id
+    )
+    rows = (await db.scalars(select(AssetModel).where(
+        AssetModel.asset_type.in_([AssetType.BGM.value, AssetType.AUDIO.value]),
+        (AssetModel.id.in_(project_asset_ids))
+        | (AssetModel.metadata_json["scope"].as_string() == "system"),
+    ).order_by(AssetModel.created_at.desc()))).all()
+    return APIResponse(data=[_columns(asset) for asset in rows])
+
+
 @router.post("/{project_id}/assets", response_model=APIResponse[dict[str, Any]], status_code=201)
 async def bind_project_asset(
     project_id: str,
@@ -160,6 +189,12 @@ async def bind_project_asset(
         raise NotFoundException("Project", project_id)
     if asset is None:
         raise NotFoundException("Asset", payload.asset_id)
+    foreign_binding = await db.scalar(select(ProjectAssetBindingModel.id).where(
+        ProjectAssetBindingModel.asset_id == asset.id,
+        ProjectAssetBindingModel.project_id != project_id,
+    ))
+    if foreign_binding and (asset.metadata_json or {}).get("scope") != "system":
+        raise ValidationException("不能绑定其他 Project 的素材。")
     if payload.purpose == "bgm" and asset.asset_type not in {
         AssetType.BGM.value,
         AssetType.AUDIO.value,
@@ -243,81 +278,29 @@ async def patch_project_product(
     return APIResponse(data=product)
 
 
-async def _drama_project(db: AsyncSession, project_id: str) -> ProjectModel:
-    project = await db.get(ProjectModel, project_id)
-    if project is None:
-        raise NotFoundException("Project", project_id)
-    if project.mode != "drama":
-        raise ValidationException("Drama 资源只能归属 Drama Project。")
-    return project
-
-
-@router.get("/{project_id}/characters", response_model=APIResponse[list[dict[str, Any]]])
-async def list_project_characters(project_id: str, db: AsyncSession = Depends(get_db)):
-    await _drama_project(db, project_id)
-    rows = (await db.scalars(select(DramaCharacterModel).where(
-        DramaCharacterModel.project_id == project_id
-    ))).all()
-    return APIResponse(data=[_columns(row) for row in rows])
-
-
-@router.post("/{project_id}/characters", response_model=APIResponse[dict[str, Any]], status_code=201)
-async def create_project_character(
-    project_id: str, payload: DramaResourceInput, db: AsyncSession = Depends(get_db)
+@router.post("/{project_id}/product/assets", response_model=APIResponse[dict[str, Any]], status_code=201)
+async def add_project_product_asset(
+    project_id: str,
+    payload: ProductAssetInput,
+    db: AsyncSession = Depends(get_db),
 ):
-    await _drama_project(db, project_id)
-    row = DramaCharacterModel(
-        id=f"character_{uuid4().hex[:12]}", project_id=project_id,
-        name=payload.name, description=payload.description,
-        approval_status=payload.approval_status,
-    )
-    db.add(row)
-    await db.commit()
-    return APIResponse(data=_columns(row))
-
-
-@router.get("/{project_id}/locations", response_model=APIResponse[list[dict[str, Any]]])
-async def list_project_locations(project_id: str, db: AsyncSession = Depends(get_db)):
-    await _drama_project(db, project_id)
-    rows = (await db.scalars(select(DramaLocationModel).where(
-        DramaLocationModel.project_id == project_id
-    ))).all()
-    return APIResponse(data=[_columns(row) for row in rows])
-
-
-@router.post("/{project_id}/locations", response_model=APIResponse[dict[str, Any]], status_code=201)
-async def create_project_location(
-    project_id: str, payload: DramaResourceInput, db: AsyncSession = Depends(get_db)
-):
-    await _drama_project(db, project_id)
-    row = DramaLocationModel(
-        id=f"location_{uuid4().hex[:12]}", project_id=project_id,
-        name=payload.name, visual_description=payload.visual_description or payload.description,
-        continuity_data=payload.continuity_data, approval_status=payload.approval_status,
-    )
-    db.add(row)
-    await db.commit()
-    return APIResponse(data=_columns(row))
-
-
-@router.get("/{project_id}/props", response_model=APIResponse[list[dict[str, Any]]])
-async def list_project_props(project_id: str, db: AsyncSession = Depends(get_db)):
-    await _drama_project(db, project_id)
-    rows = (await db.scalars(select(DramaPropModel).where(
-        DramaPropModel.project_id == project_id
-    ))).all()
-    return APIResponse(data=[_columns(row) for row in rows])
-
-
-@router.post("/{project_id}/props", response_model=APIResponse[dict[str, Any]], status_code=201)
-async def create_project_prop(
-    project_id: str, payload: DramaResourceInput, db: AsyncSession = Depends(get_db)
-):
-    await _drama_project(db, project_id)
-    row = DramaPropModel(
-        id=f"prop_{uuid4().hex[:12]}", project_id=project_id,
-        name=payload.name, description=payload.description,
-        continuity_data=payload.continuity_data, approval_status=payload.approval_status,
+    product = await db.scalar(select(ProductModel).where(ProductModel.project_id == project_id))
+    asset = await db.get(AssetModel, payload.asset_id)
+    bound = await db.scalar(select(ProjectAssetBindingModel.id).where(
+        ProjectAssetBindingModel.project_id == project_id,
+        ProjectAssetBindingModel.asset_id == payload.asset_id,
+    ))
+    if product is None:
+        raise NotFoundException("Product", project_id)
+    if asset is None or not bound:
+        raise ValidationException("商品素材必须先属于当前 Project。")
+    if asset.asset_type not in {AssetType.IMAGE.value, AssetType.VIDEO.value}:
+        raise ValidationException("商品素材只能使用图片或视频。")
+    row = ProductAssetModel(
+        id=f"product_asset_{uuid4().hex[:12]}", product_id=product.id,
+        asset_id=asset.id, asset_type=asset.asset_type, role=payload.role,
+        source_kind="upload", alt_text=payload.alt_text,
+        sort_order=len(product.assets), metadata_json={},
     )
     db.add(row)
     await db.commit()

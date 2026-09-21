@@ -107,23 +107,6 @@ class ManualCookieImportRequest(BaseModel):
 # ============================================================================
 
 
-class TaskPublishRequest(BaseModel):
-    account_id: str | None = None
-    title: str | None = None
-    description: str | None = None
-    tags: list[str] | None = None
-    cover_asset_id: str | None = None
-
-
-class TaskScheduleRequest(BaseModel):
-    scheduled_at: datetime
-    account_id: str | None = None
-    title: str | None = None
-    description: str | None = None
-    tags: list[str] | None = None
-    cover_asset_id: str | None = None
-
-
 class UncertainPublishResolveRequest(BaseModel):
     action: str = Field(description="retry or acknowledge")
 

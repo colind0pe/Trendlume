@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -40,7 +39,6 @@ import {
   ContentMode,
   CreativeAngle,
   Project,
-  SocialAccount,
   TemplateCatalogItem,
   VoiceInfo,
 } from "@/lib/types";
@@ -62,7 +60,6 @@ export interface ProductionTaskDialogProps {
   assets: Asset[];
   projectBgm: Asset[];
   workflows: ComfyUIWorkflowItem[];
-  publishableAccounts: SocialAccount[];
   taskVoices: VoiceInfo[];
   isVoicesLoading: boolean;
   isVoicesError: boolean;
@@ -82,7 +79,6 @@ export function ProductionTaskDialog({
   assets,
   projectBgm,
   workflows,
-  publishableAccounts,
   taskVoices,
   isVoicesLoading,
   isVoicesError,
@@ -143,13 +139,10 @@ export function ProductionTaskDialog({
   const [bgmEnabled, setBgmEnabled] = React.useState(true);
   const [bgmVolume, setBgmVolume] = React.useState(0.2);
 
-  // Advanced: Workflows & Automated publishing
+  // Advanced: provider workflows
   const [showAdvanced, setShowAdvanced] = React.useState(false);
   const [imageWorkflowId, setImageWorkflowId] = React.useState("");
   const [videoWorkflowId, setVideoWorkflowId] = React.useState("");
-  const [autoSchedulePublish, setAutoSchedulePublish] = React.useState(false);
-  const [scheduleAccountId, setScheduleAccountId] = React.useState("");
-  const [scheduleAt, setScheduleAt] = React.useState("");
 
   // Sync default BGM from project when available
   React.useEffect(() => {
@@ -205,18 +198,6 @@ export function ProductionTaskDialog({
           : isDrama
           ? `第 ${episodeNumber} 集`
           : creationMode === "fixed" ? rawScript.slice(0, 20) : "未命名短视频任务");
-
-      if (autoSchedulePublish && (!scheduleAccountId || !scheduleAt)) {
-        throw new Error("请先选择发布账号和计划发布时间。");
-      }
-
-      const scheduledPublish = autoSchedulePublish
-        ? {
-            account_id: scheduleAccountId,
-            scheduled_at: new Date(scheduleAt).toISOString(),
-            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-          }
-        : null;
 
       const generationOptions = buildGenerationOptions({
         targetSceneCount,
@@ -286,11 +267,9 @@ export function ProductionTaskDialog({
           } : {}),
           ...generationOptions,
           template_params: templateParams,
-          scheduled_publish: scheduledPublish,
           image_workflow_id: imageWorkflowId || null,
           video_workflow_id: videoWorkflowId || null,
         },
-        publishing_settings: scheduledPublish ? { scheduled_publish: scheduledPublish } : {},
       });
     },
     onSuccess: (newTask) => {
@@ -302,9 +281,6 @@ export function ProductionTaskDialog({
       setRawScript("");
       setSourceAssetId("");
       setTargetSceneCount(SCENE_COUNT_MIN);
-      setAutoSchedulePublish(false);
-      setScheduleAccountId("");
-      setScheduleAt("");
       setKnowledgeAudience("");
       setKnowledgeThesis("");
       setKnowledgeViewerTakeaway("");
@@ -341,7 +317,6 @@ export function ProductionTaskDialog({
       ? episodeNumber > 0 && Boolean(taskTitle.trim())
       : (creationMode === "generate" ? Boolean(taskTitle.trim()) : Boolean(rawScript.trim()))) &&
     (!contentModeSpec.requiresSourceAsset || Boolean(sourceAssetId)) &&
-    (!autoSchedulePublish || (Boolean(scheduleAccountId) && Boolean(scheduleAt))) &&
     Boolean(selectedTemplateId);
 
   return (
@@ -775,8 +750,8 @@ export function ProductionTaskDialog({
                   >
                     <div className="flex items-center gap-2">
                       <Settings2 className="h-4 w-4 text-primary" />
-                      <span>高级配置与自动化</span>
-                      {(Boolean(imageWorkflowId) || Boolean(videoWorkflowId) || autoSchedulePublish) && (
+                      <span>高级生成配置</span>
+                      {(Boolean(imageWorkflowId) || Boolean(videoWorkflowId)) && (
                         <span className="h-2 w-2 rounded-full bg-primary" />
                       )}
                     </div>
@@ -876,57 +851,6 @@ export function ProductionTaskDialog({
                               </option>
                             ))}
                         </Select>
-                      </div>
-
-                      {/* Auto-schedule publishing */}
-                      <div className="space-y-2.5 pt-2.5 border-t border-border/60">
-                        <label htmlFor="studio-auto-publish" className="flex items-center gap-2 text-sm font-medium text-foreground cursor-pointer">
-                          <input
-                            id="studio-auto-publish"
-                            type="checkbox"
-                            checked={autoSchedulePublish}
-                            onChange={(e) => setAutoSchedulePublish(e.target.checked)}
-                            className="rounded border-border text-primary focus:ring-primary h-4 w-4 cursor-pointer"
-                          />
-                          <span>视频渲染完成后自动发布</span>
-                        </label>
-
-                        {autoSchedulePublish && (
-                          <div className="space-y-2.5 pl-6">
-                            <Select
-                              id="studio-schedule-account"
-                              value={scheduleAccountId}
-                              onChange={(e) => setScheduleAccountId(e.target.value)}
-                              required={autoSchedulePublish}
-                              className="h-9 text-sm"
-                            >
-                              <option value="">请选择授权的抖音账号</option>
-                              {publishableAccounts.map((account) => (
-                                <option key={account.id} value={account.id}>
-                                  {account.account_name}
-                                  {account.username ? ` (${account.username})` : ""}
-                                </option>
-                              ))}
-                            </Select>
-                            {publishableAccounts.length === 0 && (
-                              <Link href="/publishing" className="text-xs text-primary hover:underline block">
-                                暂无可用账号，前往发布中心扫码授权
-                              </Link>
-                            )}
-
-                            <Input
-                              id="studio-schedule-at"
-                              type="datetime-local"
-                              value={scheduleAt}
-                              onChange={(e) => setScheduleAt(e.target.value)}
-                              min={new Date(Date.now() + 60_000 - new Date().getTimezoneOffset() * 60_000)
-                                .toISOString()
-                                .slice(0, 16)}
-                              required={autoSchedulePublish}
-                              className="h-9 text-sm"
-                            />
-                          </div>
-                        )}
                       </div>
                     </div>
                   )}

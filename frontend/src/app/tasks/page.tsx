@@ -38,7 +38,7 @@ export default function TasksGlobalPage() {
     refetchInterval: (query) => {
       const currentTasks =
         (query.state.data as
-          | Array<{ status?: string; active_job?: { status?: string } | null }>
+          | Array<{ production_status?: string; latest_job?: { status?: string } | null }>
           | undefined) || [];
       return currentTasks.some(isTaskActive) ? 2000 : false;
     },
@@ -50,8 +50,8 @@ export default function TasksGlobalPage() {
         statusFilter === "all"
           ? true
           : statusFilter === "draft"
-            ? task.production_status === "draft" ||
-              task.production_status === "pending"
+            ? task.production_status === "not_started" ||
+              task.production_status === "queued"
             : task.production_status === statusFilter;
 
       const matchesSearch =
@@ -59,8 +59,8 @@ export default function TasksGlobalPage() {
         task.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
         (task.description &&
           task.description.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        (task.active_job?.error_message &&
-          task.active_job?.error_message
+        (task.latest_job?.error_message &&
+          task.latest_job?.error_message
             .toLowerCase()
             .includes(searchQuery.toLowerCase()));
 
@@ -91,8 +91,8 @@ export default function TasksGlobalPage() {
       value: "draft",
       count: tasks.filter(
         (task) =>
-          task.production_status === "draft" ||
-          task.production_status === "pending",
+          task.production_status === "not_started" ||
+          task.production_status === "queued",
       ).length,
     },
   ];
@@ -222,7 +222,7 @@ export default function TasksGlobalPage() {
           {filteredTasks.map((task) => {
             const active = isTaskActive(task);
             const progress =
-              task.active_job?.progress ?? 0;
+              task.latest_job?.progress ?? 0;
             return (
               <Card
                 key={task.id}
@@ -261,7 +261,7 @@ export default function TasksGlobalPage() {
                         <span className="text-foreground font-medium">
                           {task.current_stage_label ||
                             task.current_stage ||
-                            task.active_job?.current_stage ||
+                            task.latest_job?.current_stage ||
                             "生成中"}
                         </span>
                         <span className="font-semibold text-primary tabular-nums">
@@ -273,14 +273,14 @@ export default function TasksGlobalPage() {
                   )}
 
                   {task.production_status === "failed" &&
-                    task.active_job?.error_message && (
+                    task.latest_job?.error_message && (
                       <div className="flex gap-2 rounded-lg border border-destructive/20 bg-destructive/5 p-2.5 text-xs text-destructive">
                         <AlertCircle
                           aria-hidden="true"
                           className="mt-0.5 h-4 w-4 shrink-0"
                         />
                         <span className="line-clamp-2 font-mono">
-                          {task.active_job?.error_message}
+                          {task.latest_job?.error_message}
                         </span>
                       </div>
                     )}
@@ -336,7 +336,7 @@ export default function TasksGlobalPage() {
                 {filteredTasks.map((task) => {
                   const active = isTaskActive(task);
                   const progress =
-                    task.active_job?.progress ?? 0;
+                    task.latest_job?.progress ?? 0;
                   return (
                     <tr
                       key={task.id}
@@ -358,10 +358,10 @@ export default function TasksGlobalPage() {
                         >
                           {task.title}
                         </Link>
-                        {task.active_job?.error_message &&
+                        {task.latest_job?.error_message &&
                         task.production_status === "failed" ? (
                           <p className="text-xs text-destructive truncate font-mono mt-1">
-                            {task.active_job?.error_message}
+                            {task.latest_job?.error_message}
                           </p>
                         ) : task.description ? (
                           <p className="text-xs text-muted-foreground truncate mt-1">
@@ -376,7 +376,7 @@ export default function TasksGlobalPage() {
                               <span className="text-foreground">
                                 {task.current_stage_label ||
                                   task.current_stage ||
-                                  task.active_job?.current_stage ||
+                                  task.latest_job?.current_stage ||
                                   "生成中"}
                               </span>
                               <span className="font-semibold text-primary">

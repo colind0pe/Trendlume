@@ -5,6 +5,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from src.schemas.workflow import WorkflowJobResponse
+
 
 class KnowledgeTaskDetailInput(BaseModel):
     type: Literal["knowledge"]
@@ -82,6 +84,7 @@ class TaskResponse(BaseModel):
     detail: dict[str, Any]
     created_at: datetime
     updated_at: datetime
+    latest_job: WorkflowJobResponse | None = None
 
 
 class TaskDetailResponse(TaskResponse):

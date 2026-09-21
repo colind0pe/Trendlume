@@ -9,11 +9,11 @@ import type { ContentMode } from "@/lib/types";
 export function generationStatus(
   task: {
     production_status?: string;
-    active_job?: { status?: string; job_type?: string } | null;
+    latest_job?: { status?: string; job_type?: string } | null;
   },
   liveStatus: string | null = null,
 ): string {
-  const job = task.active_job;
+  const job = task.latest_job;
   if (job && job.job_type !== "publish" && job.status) {
     if (job.status === "queued" || job.status === "pending") return "pending";
     if (job.status === "retrying") return "running";
@@ -23,7 +23,7 @@ export function generationStatus(
     ["completed", "failed", "cancelled"].includes(task.production_status || "")
   )
     return task.production_status!;
-  return liveStatus || task.production_status || "draft";
+  return liveStatus || task.production_status || "not_started";
 }
 
 export function isGenerationLifecycleEvent(event: string): boolean {
@@ -33,7 +33,6 @@ export function isGenerationLifecycleEvent(event: string): boolean {
 }
 
 export type SceneAssetRefreshAction = "workflow_unit" | "none";
-
 export interface GenerationOptionsInput {
   targetSceneCount: number;
   enableResearch: boolean;
@@ -57,7 +56,6 @@ export function buildGenerationOptions(
 ): Record<string, unknown> {
   const speed = Math.max(0.5, Math.min(2, input.speed));
   const bgmVolume = Math.max(0, Math.min(0.5, input.bgmVolume));
-
   return {
     ...base,
     target_scene_count: Math.max(
@@ -100,8 +98,7 @@ export function resolveSceneAssetRefreshAction(
     CONTENT_MODE_SPECS[contentMode].supportsSceneRetry &&
     hasRetryUnit &&
     hasSceneId
-  ) {
+  )
     return "workflow_unit";
-  }
   return "none";
 }

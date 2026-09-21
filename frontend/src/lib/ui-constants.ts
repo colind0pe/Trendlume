@@ -544,9 +544,9 @@ export const ACTIVE_TASK_STATUSES = new Set([
 
 export function isTaskActive(task: {
   production_status?: string;
-  active_job?: { status?: string } | null;
+  latest_job?: { status?: string } | null;
 }) {
   return ACTIVE_TASK_STATUSES.has(
-    task.active_job?.status || task.production_status || "",
+    task.latest_job?.status || task.production_status || "",
   );
 }
