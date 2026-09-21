@@ -66,6 +66,68 @@ async def test_drama_episode_number_unique_per_project(client):
 
 
 @pytest.mark.asyncio
+async def test_drama_resources_crud_approval_and_project_ownership(client):
+    async def create_project(name):
+        return (await client.post("/api/v1/projects", json={
+            "name": name, "mode": "drama",
+            "drama_profile": {"series_title": name}, "drama_style_guide": {},
+        })).json()["data"]
+
+    project_a = await create_project("Series A")
+    project_b = await create_project("Series B")
+    character = (await client.post(
+        f"/api/v1/projects/{project_a['id']}/characters",
+        json={"name": "Lin", "description": "lead", "appearance_rules": {"notes": "red coat"}},
+    )).json()["data"]
+    location = (await client.post(
+        f"/api/v1/projects/{project_a['id']}/locations",
+        json={"name": "Cafe", "visual_description": "warm light"},
+    )).json()["data"]
+    prop = (await client.post(
+        f"/api/v1/projects/{project_a['id']}/props",
+        json={"name": "Watch", "description": "silver"},
+    )).json()["data"]
+
+    assert (await client.get(f"/api/v1/projects/{project_a['id']}/characters")).status_code == 200
+    assert (await client.post(
+        f"/api/v1/projects/{project_b['id']}/characters/{character['id']}/approve"
+    )).status_code == 404
+    approved = (await client.post(
+        f"/api/v1/projects/{project_a['id']}/characters/{character['id']}/approve"
+    )).json()["data"]
+    assert approved["approval_status"] == "approved"
+    edited = (await client.patch(
+        f"/api/v1/projects/{project_a['id']}/characters/{character['id']}",
+        json={"description": "changed"},
+    )).json()["data"]
+    assert edited["approval_status"] == "draft"
+
+    invalid_task = await client.post(f"/api/v1/projects/{project_b['id']}/tasks", json={
+        "title": "Foreign refs",
+        "detail": {"type": "drama", "episode_number": 1, "continuity_data": {
+            "character_ids": [character["id"]],
+        }},
+    })
+    assert invalid_task.status_code == 422
+    assert "其他 Project" in invalid_task.text
+
+    task = (await client.post(f"/api/v1/projects/{project_a['id']}/tasks", json={
+        "title": "Episode with bible",
+        "detail": {"type": "drama", "episode_number": 1, "synopsis": "A choice", "continuity_data": {
+            "character_ids": [character["id"]],
+            "location_ids": [location["id"]],
+            "prop_ids": [prop["id"]],
+            "core_conflict": "truth or loyalty",
+            "ending_hook": "the watch opens",
+        }},
+    })).json()["data"]
+    assert task["detail"]["continuity_data"]["ending_hook"] == "the watch opens"
+    assert (await client.delete(
+        f"/api/v1/projects/{project_a['id']}/props/{prop['id']}"
+    )).status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_commerce_project_has_one_product_and_many_angles(client, test_session):
     project = (await client.post("/api/v1/projects", json={
         "name": "Commerce", "mode": "commerce",

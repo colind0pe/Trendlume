@@ -3,7 +3,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel, Field
-from sqlalchemy import inspect, select
+from sqlalchemy import inspect, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import get_project_service, get_task_service, get_template_service
@@ -11,10 +11,28 @@ from src.core.database import get_db
 from src.core.exceptions import NotFoundException, ValidationException
 from src.domain.enums import AssetType
 from src.models.asset import AssetModel
+from src.models.drama import DramaCharacterModel, DramaLocationModel, DramaPropModel
 from src.models.product import ProductAssetModel, ProductModel
 from src.models.project import ProjectAssetBindingModel, ProjectModel
+from src.models.task_detail import (
+    DramaTaskDialogueLineModel,
+    DramaTaskEpisodeModel,
+    DramaTaskSceneModel,
+    DramaTaskShotModel,
+)
 from src.models.workflow import WorkflowJobModel
 from src.schemas.common import APIResponse
+from src.schemas.drama import (
+    DramaCharacterCreate,
+    DramaCharacterResponse,
+    DramaCharacterUpdate,
+    DramaLocationCreate,
+    DramaLocationResponse,
+    DramaLocationUpdate,
+    DramaPropCreate,
+    DramaPropResponse,
+    DramaPropUpdate,
+)
 from src.schemas.product import ProductCreate, ProductResponse, ProductUpdate
 from src.schemas.project import ProjectCreate, ProjectDetailResponse, ProjectResponse, ProjectUpdate
 from src.schemas.task import TaskCreate, TaskResponse
@@ -61,6 +79,40 @@ def _project(project, include_tasks=False):
     if include_tasks:
         data["tasks"] = [_task(task) for task in project.tasks]
     return data
+
+
+async def _drama_project(db: AsyncSession, project_id: str) -> ProjectModel:
+    project = await db.get(ProjectModel, project_id)
+    if project is None:
+        raise NotFoundException("Project", project_id)
+    if project.mode != "drama":
+        raise ValidationException("只有 Drama Project 可以管理人物、地点和道具。")
+    return project
+
+
+async def _owned_drama_resource(db, model, project_id: str, resource_id: str):
+    resource = await db.scalar(
+        select(model).where(model.id == resource_id, model.project_id == project_id)
+    )
+    if resource is None:
+        raise NotFoundException(model.__name__.removesuffix("Model"), resource_id)
+    return resource
+
+
+async def _update_drama_resource(db, resource, payload):
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        setattr(resource, key, value)
+    resource.approval_status = "draft"
+    await db.commit()
+    await db.refresh(resource)
+    return resource
+
+
+async def _approve_drama_resource(db, resource):
+    resource.approval_status = "approved"
+    await db.commit()
+    await db.refresh(resource)
+    return resource
 
 
 @router.post("", response_model=APIResponse[ProjectResponse], status_code=status.HTTP_201_CREATED)
@@ -119,6 +171,244 @@ async def list_project_tasks(project_id: str, service: TaskService = Depends(get
         for job in jobs:
             latest.setdefault(job.task_id, job)
     return APIResponse(data=[{**_task(task), "latest_job": latest.get(task.id)} for task in tasks])
+
+
+@router.get(
+    "/{project_id}/characters", response_model=APIResponse[list[DramaCharacterResponse]]
+)
+async def list_drama_characters(project_id: str, db: AsyncSession = Depends(get_db)):
+    await _drama_project(db, project_id)
+    rows = await db.scalars(
+        select(DramaCharacterModel)
+        .where(DramaCharacterModel.project_id == project_id)
+        .order_by(DramaCharacterModel.created_at, DramaCharacterModel.name)
+    )
+    return APIResponse(data=list(rows))
+
+
+@router.post(
+    "/{project_id}/characters",
+    response_model=APIResponse[DramaCharacterResponse],
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_drama_character(
+    project_id: str, payload: DramaCharacterCreate, db: AsyncSession = Depends(get_db)
+):
+    await _drama_project(db, project_id)
+    row = DramaCharacterModel(
+        id=f"character_{uuid4().hex[:12]}", project_id=project_id, **payload.model_dump()
+    )
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    return APIResponse(data=row)
+
+
+@router.patch(
+    "/{project_id}/characters/{resource_id}",
+    response_model=APIResponse[DramaCharacterResponse],
+)
+async def update_drama_character(
+    project_id: str,
+    resource_id: str,
+    payload: DramaCharacterUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    row = await _owned_drama_resource(db, DramaCharacterModel, project_id, resource_id)
+    return APIResponse(data=await _update_drama_resource(db, row, payload))
+
+
+@router.post(
+    "/{project_id}/characters/{resource_id}/approve",
+    response_model=APIResponse[DramaCharacterResponse],
+)
+async def approve_drama_character(
+    project_id: str, resource_id: str, db: AsyncSession = Depends(get_db)
+):
+    row = await _owned_drama_resource(db, DramaCharacterModel, project_id, resource_id)
+    return APIResponse(data=await _approve_drama_resource(db, row))
+
+
+@router.delete("/{project_id}/characters/{resource_id}", response_model=APIResponse[bool])
+async def delete_drama_character(
+    project_id: str, resource_id: str, db: AsyncSession = Depends(get_db)
+):
+    row = await _owned_drama_resource(db, DramaCharacterModel, project_id, resource_id)
+    if await db.scalar(
+        select(DramaTaskDialogueLineModel.id).where(
+            DramaTaskDialogueLineModel.character_id == resource_id
+        ).limit(1)
+    ):
+        raise ValidationException("人物已被剧集对白引用，不能删除。")
+    shots = await db.scalars(select(DramaTaskShotModel.character_ids))
+    episodes = await db.scalars(
+        select(DramaTaskEpisodeModel.continuity_data).where(
+            DramaTaskEpisodeModel.project_id == project_id
+        )
+    )
+    if any(resource_id in (ids or []) for ids in shots) or any(
+        resource_id in (data or {}).get("character_ids", []) for data in episodes
+    ):
+        raise ValidationException("人物已被剧集镜头引用，不能删除。")
+    await db.delete(row)
+    await db.commit()
+    return APIResponse(data=True)
+
+
+@router.get(
+    "/{project_id}/locations", response_model=APIResponse[list[DramaLocationResponse]]
+)
+async def list_drama_locations(project_id: str, db: AsyncSession = Depends(get_db)):
+    await _drama_project(db, project_id)
+    rows = await db.scalars(
+        select(DramaLocationModel)
+        .where(DramaLocationModel.project_id == project_id)
+        .order_by(DramaLocationModel.name)
+    )
+    return APIResponse(data=list(rows))
+
+
+@router.post(
+    "/{project_id}/locations",
+    response_model=APIResponse[DramaLocationResponse],
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_drama_location(
+    project_id: str, payload: DramaLocationCreate, db: AsyncSession = Depends(get_db)
+):
+    await _drama_project(db, project_id)
+    row = DramaLocationModel(
+        id=f"location_{uuid4().hex[:12]}", project_id=project_id, **payload.model_dump()
+    )
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    return APIResponse(data=row)
+
+
+@router.patch(
+    "/{project_id}/locations/{resource_id}",
+    response_model=APIResponse[DramaLocationResponse],
+)
+async def update_drama_location(
+    project_id: str,
+    resource_id: str,
+    payload: DramaLocationUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    row = await _owned_drama_resource(db, DramaLocationModel, project_id, resource_id)
+    return APIResponse(data=await _update_drama_resource(db, row, payload))
+
+
+@router.post(
+    "/{project_id}/locations/{resource_id}/approve",
+    response_model=APIResponse[DramaLocationResponse],
+)
+async def approve_drama_location(
+    project_id: str, resource_id: str, db: AsyncSession = Depends(get_db)
+):
+    row = await _owned_drama_resource(db, DramaLocationModel, project_id, resource_id)
+    return APIResponse(data=await _approve_drama_resource(db, row))
+
+
+@router.delete("/{project_id}/locations/{resource_id}", response_model=APIResponse[bool])
+async def delete_drama_location(
+    project_id: str, resource_id: str, db: AsyncSession = Depends(get_db)
+):
+    row = await _owned_drama_resource(db, DramaLocationModel, project_id, resource_id)
+    in_use = await db.scalar(
+        select(DramaTaskSceneModel.id)
+        .outerjoin(DramaTaskShotModel, DramaTaskShotModel.scene_id == DramaTaskSceneModel.id)
+        .where(
+            or_(
+                DramaTaskSceneModel.location_id == resource_id,
+                DramaTaskShotModel.location_id == resource_id,
+            )
+        )
+        .limit(1)
+    )
+    episodes = await db.scalars(
+        select(DramaTaskEpisodeModel.continuity_data).where(
+            DramaTaskEpisodeModel.project_id == project_id
+        )
+    )
+    if in_use or any(
+        resource_id in (data or {}).get("location_ids", []) for data in episodes
+    ):
+        raise ValidationException("地点已被剧集场景或镜头引用，不能删除。")
+    await db.delete(row)
+    await db.commit()
+    return APIResponse(data=True)
+
+
+@router.get("/{project_id}/props", response_model=APIResponse[list[DramaPropResponse]])
+async def list_drama_props(project_id: str, db: AsyncSession = Depends(get_db)):
+    await _drama_project(db, project_id)
+    rows = await db.scalars(
+        select(DramaPropModel)
+        .where(DramaPropModel.project_id == project_id)
+        .order_by(DramaPropModel.name)
+    )
+    return APIResponse(data=list(rows))
+
+
+@router.post(
+    "/{project_id}/props",
+    response_model=APIResponse[DramaPropResponse],
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_drama_prop(
+    project_id: str, payload: DramaPropCreate, db: AsyncSession = Depends(get_db)
+):
+    await _drama_project(db, project_id)
+    row = DramaPropModel(
+        id=f"prop_{uuid4().hex[:12]}", project_id=project_id, **payload.model_dump()
+    )
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    return APIResponse(data=row)
+
+
+@router.patch(
+    "/{project_id}/props/{resource_id}", response_model=APIResponse[DramaPropResponse]
+)
+async def update_drama_prop(
+    project_id: str,
+    resource_id: str,
+    payload: DramaPropUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    row = await _owned_drama_resource(db, DramaPropModel, project_id, resource_id)
+    return APIResponse(data=await _update_drama_resource(db, row, payload))
+
+
+@router.post(
+    "/{project_id}/props/{resource_id}/approve",
+    response_model=APIResponse[DramaPropResponse],
+)
+async def approve_drama_prop(
+    project_id: str, resource_id: str, db: AsyncSession = Depends(get_db)
+):
+    row = await _owned_drama_resource(db, DramaPropModel, project_id, resource_id)
+    return APIResponse(data=await _approve_drama_resource(db, row))
+
+
+@router.delete("/{project_id}/props/{resource_id}", response_model=APIResponse[bool])
+async def delete_drama_prop(
+    project_id: str, resource_id: str, db: AsyncSession = Depends(get_db)
+):
+    row = await _owned_drama_resource(db, DramaPropModel, project_id, resource_id)
+    episodes = await db.scalars(
+        select(DramaTaskEpisodeModel.continuity_data).where(
+            DramaTaskEpisodeModel.project_id == project_id
+        )
+    )
+    if any(resource_id in (data or {}).get("prop_ids", []) for data in episodes):
+        raise ValidationException("道具已被剧集连续性简报引用，不能删除。")
+    await db.delete(row)
+    await db.commit()
+    return APIResponse(data=True)
 
 
 @router.get("/{project_id}/template", response_model=APIResponse[ProjectTemplateResponse])

@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Wand2,
   Volume2,
@@ -12,11 +12,16 @@ import {
   ChevronUp,
   Settings2,
   Film,
+  Users,
+  MapPin,
+  Package,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Select } from "@/components/ui/field";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/components/ui/toast";
@@ -70,6 +75,50 @@ export interface ProductionTaskDialogProps {
 const assetFileUrl = (filePath: string) =>
   `/api/v1/assets/files/${filePath.split("/").map(encodeURIComponent).join("/")}`;
 
+function DramaResourcePicker({
+  icon: Icon,
+  label,
+  items,
+  selected,
+  onChange,
+}: {
+  icon: LucideIcon;
+  label: string;
+  items: Array<{ id: string; name: string; approval_status: string }>;
+  selected: string[];
+  onChange: (ids: string[]) => void;
+}) {
+  const approvedItems = items.filter((item) => item.approval_status === "approved");
+  return (
+    <fieldset className="space-y-2">
+      <legend className="flex items-center gap-2 text-sm font-medium">
+        <Icon aria-hidden="true" className="h-4 w-4 text-primary" />
+        {label}
+      </legend>
+      {approvedItems.length === 0 ? (
+        <p className="text-xs text-muted-foreground">暂无可用的已审批资源。</p>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          {approvedItems.map((item) => {
+            const checked = selected.includes(item.id);
+            return (
+              <button
+                key={item.id}
+                type="button"
+                aria-pressed={checked}
+                onClick={() => onChange(checked ? selected.filter((id) => id !== item.id) : [...selected, item.id])}
+                className={`min-h-9 rounded-full border px-3 text-sm transition-colors ${checked ? "border-primary bg-primary/10 text-primary" : "border-border bg-card text-muted-foreground hover:text-foreground"}`}
+              >
+                {item.name}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </fieldset>
+  );
+}
+
 export function ProductionTaskDialog({
   open,
   onOpenChange,
@@ -105,6 +154,12 @@ export function ProductionTaskDialog({
   const [knowledgeViewerTakeaway, setKnowledgeViewerTakeaway] = React.useState("");
   const [creativeAngle, setCreativeAngle] = React.useState<CreativeAngle>("direct");
   const [episodeNumber, setEpisodeNumber] = React.useState(1);
+  const [episodeSynopsis, setEpisodeSynopsis] = React.useState("");
+  const [episodeConflict, setEpisodeConflict] = React.useState("");
+  const [episodeHook, setEpisodeHook] = React.useState("");
+  const [selectedCharacterIds, setSelectedCharacterIds] = React.useState<string[]>([]);
+  const [selectedLocationIds, setSelectedLocationIds] = React.useState<string[]>([]);
+  const [selectedPropIds, setSelectedPropIds] = React.useState<string[]>([]);
 
   // Visual style
   const [taskStylePreset, setTaskStylePreset] = React.useState("stick_figure");
@@ -120,6 +175,24 @@ export function ProductionTaskDialog({
   const productionMode = project.mode;
   const isCommerce = productionMode === "commerce";
   const isDrama = productionMode === "drama";
+  const { data: dramaCharacters = [] } = useQuery({
+    queryKey: ["drama-characters", projectId],
+    queryFn: () => api.listDramaCharacters(projectId),
+    enabled: open && isDrama,
+  });
+  const { data: dramaLocations = [] } = useQuery({
+    queryKey: ["drama-locations", projectId],
+    queryFn: () => api.listDramaLocations(projectId),
+    enabled: open && isDrama,
+  });
+  const { data: dramaProps = [] } = useQuery({
+    queryKey: ["drama-props", projectId],
+    queryFn: () => api.listDramaProps(projectId),
+    enabled: open && isDrama,
+  });
+  const dramaResourcesReady =
+    dramaCharacters.length > 0 && dramaLocations.length > 0 && dramaProps.length > 0 &&
+    [...dramaCharacters, ...dramaLocations, ...dramaProps].every((item) => item.approval_status === "approved");
 
   // Filter templates strictly matching project's aspect ratio and current content mode
   const availableTemplates = React.useMemo(() => {
@@ -229,7 +302,15 @@ export function ProductionTaskDialog({
         ? {
             type: "drama" as const,
             episode_number: episodeNumber,
-            synopsis: taskTitle.trim(),
+            synopsis: episodeSynopsis.trim(),
+            script_text: creationMode === "fixed" ? rawScript.trim() : "",
+            continuity_data: {
+              character_ids: selectedCharacterIds,
+              location_ids: selectedLocationIds,
+              prop_ids: selectedPropIds,
+              core_conflict: episodeConflict.trim(),
+              ending_hook: episodeHook.trim(),
+            },
           }
         : {
             type: "knowledge" as const,
@@ -274,7 +355,7 @@ export function ProductionTaskDialog({
     },
     onSuccess: (newTask) => {
       queryClient.invalidateQueries({ queryKey: ["project-tasks", projectId] });
-      toast(`${isCommerce ? "商品视频" : "知识视频"}任务创建成功！正在进入工作台…`, "success");
+      toast(`${isCommerce ? "商品视频" : isDrama ? "短剧" : "知识视频"}任务创建成功！正在进入工作台…`, "success");
       onOpenChange(false);
       // Reset main inputs
       setTaskTitle("");
@@ -286,6 +367,12 @@ export function ProductionTaskDialog({
       setKnowledgeViewerTakeaway("");
       setCreativeAngle("direct");
       setEpisodeNumber(1);
+      setEpisodeSynopsis("");
+      setEpisodeConflict("");
+      setEpisodeHook("");
+      setSelectedCharacterIds([]);
+      setSelectedLocationIds([]);
+      setSelectedPropIds([]);
       router.push(`/projects/${projectId}/tasks/${newTask.id}`);
     },
     onError: (error: any) => {
@@ -314,7 +401,7 @@ export function ProductionTaskDialog({
     (isCommerce
       ? Boolean(taskTitle.trim())
       : isDrama
-      ? episodeNumber > 0 && Boolean(taskTitle.trim())
+      ? episodeNumber > 0 && Boolean(taskTitle.trim()) && Boolean(episodeSynopsis.trim()) && dramaResourcesReady
       : (creationMode === "generate" ? Boolean(taskTitle.trim()) : Boolean(rawScript.trim()))) &&
     (!contentModeSpec.requiresSourceAsset || Boolean(sourceAssetId)) &&
     Boolean(selectedTemplateId);
@@ -368,18 +455,26 @@ export function ProductionTaskDialog({
                   onTaskTitleChange={setTaskTitle}
                 />
               ) : isDrama ? (
-                <div className="space-y-4">
-                  <div>
-                    <label className="text-sm font-medium" htmlFor="episode-number">集数</label>
-                    <Input id="episode-number" type="number" min={1} value={episodeNumber}
-                      onChange={(event) => setEpisodeNumber(Math.max(1, Number(event.target.value)))} />
+                <div className="space-y-5">
+                  <div className="rounded-xl border border-border bg-muted/30 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div><h3 className="text-sm font-semibold">剧集简报</h3><p className="mt-1 text-xs leading-5 text-muted-foreground">把系列资料库中的连续性设定，收敛成本集可执行的内容边界。</p></div>
+                      <Badge variant="outline">{dramaResourcesReady ? "资料库已就绪" : "资料库待补齐/审批"}</Badge>
+                    </div>
                   </div>
-                  <div>
-                    <label className="text-sm font-medium" htmlFor="episode-title">本集标题</label>
-                    <Input id="episode-title" value={taskTitle}
-                      onChange={(event) => setTaskTitle(event.target.value)} placeholder="本集标题" />
+                  <div className="grid gap-4 sm:grid-cols-[120px_1fr]">
+                    <label className="space-y-1.5 text-sm font-medium" htmlFor="episode-number"><span>集数</span><Input id="episode-number" type="number" min={1} value={episodeNumber} onChange={(event) => setEpisodeNumber(Math.max(1, Number(event.target.value)))} /></label>
+                    <label className="space-y-1.5 text-sm font-medium" htmlFor="episode-title"><span>本集标题</span><Input id="episode-title" value={taskTitle} onChange={(event) => setTaskTitle(event.target.value)} placeholder="一句话说清本集事件" /></label>
                   </div>
-                  <p className="text-xs text-muted-foreground">人物、地点、道具与风格继承自 Drama Project；本页只创建剧集内容。</p>
+                  <label className="block space-y-1.5 text-sm font-medium" htmlFor="episode-synopsis"><span>本集梗概</span><Textarea id="episode-synopsis" value={episodeSynopsis} onChange={(event) => setEpisodeSynopsis(event.target.value)} rows={4} placeholder="主角想做什么、受到什么阻碍、局面如何变化？" /></label>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <label className="space-y-1.5 text-sm font-medium" htmlFor="episode-conflict"><span>核心冲突</span><Textarea id="episode-conflict" value={episodeConflict} onChange={(event) => setEpisodeConflict(event.target.value)} rows={3} placeholder="人物目标与阻力" /></label>
+                    <label className="space-y-1.5 text-sm font-medium" htmlFor="episode-hook"><span>结尾钩子</span><Textarea id="episode-hook" value={episodeHook} onChange={(event) => setEpisodeHook(event.target.value)} rows={3} placeholder="促使观众进入下一集的悬念" /></label>
+                  </div>
+                  <DramaResourcePicker icon={Users} label="本集人物" items={dramaCharacters} selected={selectedCharacterIds} onChange={setSelectedCharacterIds} />
+                  <DramaResourcePicker icon={MapPin} label="主要地点" items={dramaLocations} selected={selectedLocationIds} onChange={setSelectedLocationIds} />
+                  <DramaResourcePicker icon={Package} label="关键道具" items={dramaProps} selected={selectedPropIds} onChange={setSelectedPropIds} />
+                  {!dramaResourcesReady && <p role="alert" className="rounded-lg border border-warning/30 bg-warning/10 p-3 text-xs leading-5 text-warning">请先在 Project 的“连续性资料库”中为人物、地点和道具各添加至少一项，并完成审批。</p>}
                 </div>
               ) : (
                 <KnowledgeTaskForm

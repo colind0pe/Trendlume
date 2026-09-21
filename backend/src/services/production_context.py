@@ -228,6 +228,17 @@ class ProductionContextCompiler:
             )).all()) if scene_ids else []
             project_location_ids = {item.id for item in locations}
             project_character_ids = {item.id for item in characters}
+            project_prop_ids = {item.id for item in props}
+            episode_continuity = getattr(detail, "continuity_data", {}) or {}
+            selected_character_ids = set(episode_continuity.get("character_ids", []))
+            selected_location_ids = set(episode_continuity.get("location_ids", []))
+            selected_prop_ids = set(episode_continuity.get("prop_ids", []))
+            if (
+                not selected_character_ids.issubset(project_character_ids)
+                or not selected_location_ids.issubset(project_location_ids)
+                or not selected_prop_ids.issubset(project_prop_ids)
+            ):
+                raise ValidationException("Drama Task 不能引用其他 Project 的连续性资源。")
             if any(
                 scene.location_id and scene.location_id not in project_location_ids
                 for scene in drama_scenes

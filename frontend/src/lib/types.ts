@@ -336,35 +336,33 @@ export interface DramaStageState {
 
 export interface DramaCharacter {
   id: string;
-  bible_id: string;
+  project_id: string;
   name: string;
   description: string;
-  appearance_lock: string;
-  wardrobe: string;
+  appearance_rules: Record<string, any>;
+  wardrobe_rules: Record<string, any>;
   voice_id?: string | null;
-  reference_asset_id?: string | null;
-  prompt_anchor: string;
-  continuity_metadata: Record<string, any>;
   approval_status: DramaApprovalStatus;
-  approval_note?: string | null;
-  approved_at?: string | null;
   created_at: string;
   updated_at: string;
 }
 
 export interface DramaLocation {
   id: string;
-  bible_id: string;
+  project_id: string;
   name: string;
   visual_description: string;
-  reference_asset_ids: string[];
-  prompt_anchor: string;
-  continuity_metadata: Record<string, any>;
+  continuity_data: Record<string, any>;
   approval_status: DramaApprovalStatus;
-  approval_note?: string | null;
-  approved_at?: string | null;
-  created_at: string;
-  updated_at: string;
+}
+
+export interface DramaProp {
+  id: string;
+  project_id: string;
+  name: string;
+  description: string;
+  continuity_data: Record<string, any>;
+  approval_status: DramaApprovalStatus;
 }
 
 export interface DramaDialogueLine {

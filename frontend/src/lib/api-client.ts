@@ -3,6 +3,9 @@ import {
   AssetBatchResult,
   AccountCheckResponse,
   Project,
+  DramaCharacter,
+  DramaLocation,
+  DramaProp,
   ProjectDetail,
   ProjectTemplate,
   ProjectTemplateUpdate,
@@ -231,6 +234,83 @@ export const api = {
     request<Project>(`/projects/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),
+    }),
+
+  listDramaCharacters: (projectId: string) =>
+    request<DramaCharacter[]>(`/projects/${projectId}/characters`),
+  createDramaCharacter: (projectId: string, data: Record<string, unknown>) =>
+    request<DramaCharacter>(`/projects/${projectId}/characters`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateDramaCharacter: (
+    projectId: string,
+    resourceId: string,
+    data: Record<string, unknown>,
+  ) =>
+    request<DramaCharacter>(`/projects/${projectId}/characters/${resourceId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  approveDramaCharacter: (projectId: string, resourceId: string) =>
+    request<DramaCharacter>(
+      `/projects/${projectId}/characters/${resourceId}/approve`,
+      { method: "POST" },
+    ),
+  deleteDramaCharacter: (projectId: string, resourceId: string) =>
+    request<boolean>(`/projects/${projectId}/characters/${resourceId}`, {
+      method: "DELETE",
+    }),
+
+  listDramaLocations: (projectId: string) =>
+    request<DramaLocation[]>(`/projects/${projectId}/locations`),
+  createDramaLocation: (projectId: string, data: Record<string, unknown>) =>
+    request<DramaLocation>(`/projects/${projectId}/locations`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateDramaLocation: (
+    projectId: string,
+    resourceId: string,
+    data: Record<string, unknown>,
+  ) =>
+    request<DramaLocation>(`/projects/${projectId}/locations/${resourceId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  approveDramaLocation: (projectId: string, resourceId: string) =>
+    request<DramaLocation>(
+      `/projects/${projectId}/locations/${resourceId}/approve`,
+      { method: "POST" },
+    ),
+  deleteDramaLocation: (projectId: string, resourceId: string) =>
+    request<boolean>(`/projects/${projectId}/locations/${resourceId}`, {
+      method: "DELETE",
+    }),
+
+  listDramaProps: (projectId: string) =>
+    request<DramaProp[]>(`/projects/${projectId}/props`),
+  createDramaProp: (projectId: string, data: Record<string, unknown>) =>
+    request<DramaProp>(`/projects/${projectId}/props`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateDramaProp: (
+    projectId: string,
+    resourceId: string,
+    data: Record<string, unknown>,
+  ) =>
+    request<DramaProp>(`/projects/${projectId}/props/${resourceId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  approveDramaProp: (projectId: string, resourceId: string) =>
+    request<DramaProp>(`/projects/${projectId}/props/${resourceId}/approve`, {
+      method: "POST",
+    }),
+  deleteDramaProp: (projectId: string, resourceId: string) =>
+    request<boolean>(`/projects/${projectId}/props/${resourceId}`, {
+      method: "DELETE",
     }),
 
   getProjectBgm: (projectId: string) =>

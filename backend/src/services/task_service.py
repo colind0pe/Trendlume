@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.core.exceptions import NotFoundException, ValidationException
+from src.models.drama import DramaCharacterModel, DramaLocationModel, DramaPropModel
 from src.models.project import ProjectModel
 from src.models.task import TaskModel
 from src.models.task_detail import (
@@ -29,6 +30,8 @@ class TaskService:
             raise ValidationException(
                 f"{project.mode} Project 不能创建 {data.detail.type} Task Detail。"
             )
+        if project.mode == "drama":
+            await self._validate_drama_continuity(project_id, data.detail.continuity_data)
         task = TaskModel(
             id=f"task_{uuid4().hex[:12]}",
             project_id=project_id,
@@ -135,6 +138,10 @@ class TaskService:
         if data.detail is not None:
             if data.detail.type != project.mode:
                 raise ValidationException("Task Detail 与 Project 模式不匹配。")
+            if project.mode == "drama":
+                await self._validate_drama_continuity(
+                    project.id, data.detail.continuity_data
+                )
             current = {
                 "knowledge": task.knowledge_detail,
                 "commerce": task.commerce_detail,
@@ -164,3 +171,26 @@ class TaskService:
         if project.mode == "commerce":
             return CommerceTaskDetailModel(task_id=task_id, **values)
         return DramaTaskEpisodeModel(task_id=task_id, project_id=project.id, **values)
+
+    async def _validate_drama_continuity(
+        self, project_id: str, continuity_data: dict
+    ) -> None:
+        resource_groups = (
+            ("character_ids", "人物", DramaCharacterModel),
+            ("location_ids", "地点", DramaLocationModel),
+            ("prop_ids", "道具", DramaPropModel),
+        )
+        for key, label, model in resource_groups:
+            raw_ids = continuity_data.get(key, [])
+            if not isinstance(raw_ids, list) or any(not isinstance(item, str) for item in raw_ids):
+                raise ValidationException(f"Drama 连续性数据中的{label}引用格式无效。")
+            ids = set(raw_ids)
+            if not ids:
+                continue
+            owned_ids = set(
+                await self.session.scalars(
+                    select(model.id).where(model.project_id == project_id, model.id.in_(ids))
+                )
+            )
+            if owned_ids != ids:
+                raise ValidationException(f"Drama Task 不能引用其他 Project 的{label}资源。")

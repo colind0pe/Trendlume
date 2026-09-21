@@ -40,6 +40,21 @@ def test_frontend_core_paths_are_registered_and_legacy_paths_are_absent():
         ("POST", "/api/v1/workflow-jobs/{job_id}/cancel"),
         ("GET", "/api/v1/artifacts/{artifact_id}/download"),
         ("POST", "/api/v1/publishing/jobs"),
+        ("GET", "/api/v1/projects/{project_id}/characters"),
+        ("POST", "/api/v1/projects/{project_id}/characters"),
+        ("PATCH", "/api/v1/projects/{project_id}/characters/{resource_id}"),
+        ("POST", "/api/v1/projects/{project_id}/characters/{resource_id}/approve"),
+        ("DELETE", "/api/v1/projects/{project_id}/characters/{resource_id}"),
+        ("GET", "/api/v1/projects/{project_id}/locations"),
+        ("POST", "/api/v1/projects/{project_id}/locations"),
+        ("PATCH", "/api/v1/projects/{project_id}/locations/{resource_id}"),
+        ("POST", "/api/v1/projects/{project_id}/locations/{resource_id}/approve"),
+        ("DELETE", "/api/v1/projects/{project_id}/locations/{resource_id}"),
+        ("GET", "/api/v1/projects/{project_id}/props"),
+        ("POST", "/api/v1/projects/{project_id}/props"),
+        ("PATCH", "/api/v1/projects/{project_id}/props/{resource_id}"),
+        ("POST", "/api/v1/projects/{project_id}/props/{resource_id}/approve"),
+        ("DELETE", "/api/v1/projects/{project_id}/props/{resource_id}"),
     }
     assert required <= routes
 

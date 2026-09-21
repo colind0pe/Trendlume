@@ -37,6 +37,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ProductionTaskDialog } from "@/components/projects/production-task-dialog";
+import { DramaResourceWorkspace } from "@/components/projects/drama-resource-workspace";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Select } from "@/components/ui/field";
 import { IconButton } from "@/components/ui/icon-button";
@@ -438,6 +439,11 @@ export default function ProjectDetailPage() {
           <TabsTrigger value="assets" className="text-sm px-3.5 py-1.5">
             项目素材 ({assets.length})
           </TabsTrigger>
+          {project.mode === "drama" && (
+            <TabsTrigger value="drama-bible" className="text-sm px-3.5 py-1.5">
+              连续性资料库
+            </TabsTrigger>
+          )}
           {project.mode === "commerce" && (
             <TabsTrigger value="product" className="text-sm px-3.5 py-1.5">
               主商品
@@ -622,6 +628,11 @@ export default function ProjectDetailPage() {
             </div>
           )}
         </TabsContent>
+        {project.mode === "drama" && (
+          <TabsContent value="drama-bible" className="space-y-4">
+            <DramaResourceWorkspace projectId={projectId} />
+          </TabsContent>
+        )}
         {/* Tab 2: Template Configuration */}
         <TabsContent value="template" className="space-y-6">
           <SectionHeader
