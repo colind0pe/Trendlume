@@ -2,6 +2,7 @@
 
 import type { LucideIcon } from "lucide-react";
 import { BookOpen, Clapperboard, ShoppingBag } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { PRODUCTION_MODE_SPECS, PRODUCTION_MODE_VALUES } from "@/lib/ui-constants";
 import type { ProductionMode } from "@/lib/types";
 
@@ -46,6 +47,14 @@ export function ProductionModeSelector({
                   <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
                   {spec.label}
                 </span>
+                {spec.badge && (
+                  <Badge
+                    variant="warning"
+                    className="text-[10px] font-semibold tracking-wide uppercase px-1.5 py-0"
+                  >
+                    {spec.badge}
+                  </Badge>
+                )}
               </span>
               <span className="mt-1.5 block text-xs leading-5 text-muted-foreground">
                 {spec.description}

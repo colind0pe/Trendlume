@@ -206,6 +206,27 @@ class PlatformMetadata(BaseModel):
     allow_download: bool = True
     platform_custom_params: dict[str, Any] = Field(default_factory=dict)
 
+    @field_validator("visibility", mode="before")
+    @classmethod
+    def normalize_visibility(cls, value: Any) -> str:
+        normalized = re.sub(r"[\s_-]+", "", str(value or "public").strip().casefold())
+        aliases = {
+            "public": "public",
+            "公开": "public",
+            "公开可见": "public",
+            "所有人": "public",
+            "everyone": "public",
+            "friend": "friend",
+            "friends": "friend",
+            "好友": "friend",
+            "好友可见": "friend",
+            "private": "private",
+            "私密": "private",
+            "仅自己": "private",
+            "仅自己可见": "private",
+        }
+        return aliases.get(normalized, value)
+
     @field_validator("title", mode="before")
     @classmethod
     def normalize_title(cls, value: Any) -> str:

@@ -101,6 +101,31 @@ def test_default_fallback_hook_and_schema_title_are_neutral():
     assert_no_unqualified_hype(StructuredScript.model_fields["title"].description or "")
 
 
+def test_text_fallback_parses_json_scene_array_instead_of_one_narration():
+    raw = json.dumps(
+        {
+            "title": "结构化回退",
+            "hook": "先看已有资料",
+            "narration": "完整旁白",
+            "knowledge_brief": "模型错误地返回了文本",
+            "scenes": [
+                {
+                    "sequence_index": index,
+                    "narration_text": f"第 {index + 1} 段",
+                    "visual_prompt": f"第 {index + 1} 个画面",
+                }
+                for index in range(8)
+            ],
+        },
+        ensure_ascii=False,
+    )
+
+    script = parse_script_from_text(raw, default_topic="主题")
+
+    assert len(script.scenes) == 8
+    assert [scene.sequence_index for scene in script.scenes] == list(range(8))
+
+
 def test_visual_presets_and_contracts_use_chinese_prompt_language():
     english_style_terms = re.compile(
         r"\b(?:Minimalist|Universal|Traditional|Cinematic|Vibrant|photograph|illustration)\b",

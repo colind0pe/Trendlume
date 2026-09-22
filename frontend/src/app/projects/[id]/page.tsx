@@ -392,6 +392,14 @@ export default function ProjectDetailPage() {
             <span className="rounded-md border border-primary/20 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
               {PRODUCTION_MODE_SPECS[project.mode].label}
             </span>
+            {PRODUCTION_MODE_SPECS[project.mode].badge && (
+              <Badge
+                variant="warning"
+                className="text-[10px] font-medium tracking-wide uppercase px-1.5 py-0"
+              >
+                {PRODUCTION_MODE_SPECS[project.mode].badge}
+              </Badge>
+            )}
             <span className="rounded-md border border-border/80 bg-secondary/80 px-2 py-0.5 font-mono text-xs font-medium text-foreground shadow-xs">
               {project.aspect_ratio}
             </span>

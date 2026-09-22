@@ -6,6 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from src.core.exceptions import ValidationException
+from src.domain.content_modes import ContentMode
 from src.domain.enums import ProductionMode
 
 
@@ -17,6 +18,24 @@ class MediaStrategy(StrEnum):
     IMAGE_TO_IMAGE = "image_to_image"
     TEXT_TO_VIDEO = "text_to_video"
     IMAGE_TO_VIDEO = "image_to_video"
+
+
+def media_strategy_for_content_mode(
+    mode: str | ContentMode | None,
+) -> MediaStrategy | None:
+    """Map an explicit user-facing content source to its execution strategy."""
+    if mode is None:
+        return None
+    try:
+        return {
+            ContentMode.GENERATED_IMAGE: MediaStrategy.TEXT_TO_IMAGE,
+            ContentMode.GENERATED_VIDEO: MediaStrategy.TEXT_TO_VIDEO,
+            ContentMode.ONLINE_ASSET: MediaStrategy.ONLINE_ASSET,
+            ContentMode.UPLOADED_ASSET: MediaStrategy.UPLOADED_ASSET,
+            ContentMode.STATIC: MediaStrategy.STATIC_CARD,
+        }[ContentMode(mode)]
+    except (KeyError, ValueError):
+        return None
 
 
 class MediaPlan(BaseModel):
@@ -244,6 +263,13 @@ def compile_production_plan(
     normalized = ProductionMode(mode)
     recipe = resolve_recipe(normalized, settings.get("recipe_id"))
     rules = _knowledge_rules(recipe.recipe_id)
+    requested_strategy = media_strategy_for_content_mode(settings.get("content_mode"))
+    if requested_strategy is not None:
+        if requested_strategy not in recipe.allowed_strategies:
+            raise ValidationException(
+                f"画面来源 {settings.get('content_mode')} 与 Recipe {recipe.name} 不兼容。"
+            )
+        rules = {role: requested_strategy for role in rules}
     overrides = settings.get("media_plan_overrides") or {}
     if not isinstance(overrides, dict):
         raise ValidationException("media_plan_overrides 必须是按 Scene/Shot ID 索引的对象。")
@@ -265,7 +291,7 @@ def compile_production_plan(
         if raw:
             plan = MediaPlan.model_validate(raw)
         else:
-            strategy = rules.get(role, recipe.default_strategy)
+            strategy = requested_strategy or rules.get(role, recipe.default_strategy)
             source_asset_id = settings.get("source_asset_id")
             plan = MediaPlan(
                 strategy=strategy,
@@ -295,6 +321,13 @@ def compile_production_plan(
 
 def missing_capabilities(plan: ProductionPlan, providers: dict[str, Any]) -> list[str]:
     required = set(plan.recipe.required_capabilities)
+    strategies = {
+        media_plan.strategy for media_plan in plan.scene_plans.values()
+    } | set(plan.planning_rules.values())
+    if strategies and MediaStrategy.ONLINE_ASSET not in strategies:
+        # A mixed Recipe may advertise material support, but a plan with no
+        # online-material strategy must not require or initialize Pexels.
+        required.discard("material")
     for media_plan in plan.scene_plans.values():
         if media_plan.strategy == MediaStrategy.ONLINE_ASSET:
             required.add("material")

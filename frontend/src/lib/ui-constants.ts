@@ -13,6 +13,7 @@ export { CONTENT_MODE_VALUES, PRODUCTION_MODE_VALUES } from "@/lib/types";
 export interface ProductionModeSpec {
   label: string;
   description: string;
+  badge?: string;
 }
 
 export const PRODUCTION_MODE_SPECS: Record<ProductionMode, ProductionModeSpec> =
@@ -24,10 +25,12 @@ export const PRODUCTION_MODE_SPECS: Record<ProductionMode, ProductionModeSpec> =
     commerce: {
       label: "商品视频",
       description: "使用商品资料和素材生成视频。",
+      badge: "Beta",
     },
     drama: {
       label: "短剧",
       description: "使用已审批的人物、地点和道具制作剧集。",
+      badge: "Beta",
     },
   };
 

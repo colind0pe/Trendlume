@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.exceptions import ValidationException
 from src.domain.production_recipes import (
     compile_production_plan,
+    media_strategy_for_content_mode,
     missing_capabilities,
     resolve_recipe,
 )
@@ -209,7 +210,15 @@ class ProductionContextCompiler:
             search_provider_id=(task.generation_settings or {}).get("search_provider_id"),
             material_provider_id=(task.generation_settings or {}).get("material_provider_id"),
         )
-        for capability in sorted(recipe.required_capabilities):
+        required_capabilities = set(recipe.required_capabilities)
+        requested_strategy = media_strategy_for_content_mode(
+            (task.generation_settings or {}).get("content_mode")
+        )
+        if requested_strategy is not None and requested_strategy.value != "online_asset":
+            # Recipe-level mixed-media requirements must not override the
+            # user's explicit generated-image/content-source selection.
+            required_capabilities.discard("material")
+        for capability in sorted(required_capabilities):
             configured = bool(providers.get(capability))
             add(
                 f"provider_{capability}",

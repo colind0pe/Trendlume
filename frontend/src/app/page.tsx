@@ -39,6 +39,7 @@ import {
   PageHeader,
   SectionHeader,
 } from "@/components/ui/page-shell";
+import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { StatusBadge } from "@/components/ui/status-badge";
 import {
@@ -134,11 +135,21 @@ export default function DashboardPage() {
               className="group border-border/80 bg-card/70 transition-colors hover:border-primary/40"
             >
               <CardContent className="flex h-full flex-col p-4 sm:p-5">
-                <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                  <span className="rounded-lg border border-primary/20 bg-primary/10 p-2 text-primary">
-                    <Icon className="h-4 w-4" aria-hidden="true" />
-                  </span>
-                  {PRODUCTION_MODE_SPECS[mode].label}
+                <div className="flex items-center justify-between gap-2 text-sm font-semibold text-foreground">
+                  <div className="flex items-center gap-2">
+                    <span className="rounded-lg border border-primary/20 bg-primary/10 p-2 text-primary">
+                      <Icon className="h-4 w-4" aria-hidden="true" />
+                    </span>
+                    <span>{PRODUCTION_MODE_SPECS[mode].label}</span>
+                  </div>
+                  {PRODUCTION_MODE_SPECS[mode].badge && (
+                    <Badge
+                      variant="warning"
+                      className="text-[10px] font-semibold tracking-wide uppercase px-1.5 py-0.5"
+                    >
+                      {PRODUCTION_MODE_SPECS[mode].badge}
+                    </Badge>
+                  )}
                 </div>
                 <p className="mt-3 flex-1 text-sm leading-6 text-muted-foreground">
                   {PRODUCTION_MODE_SPECS[mode].description}
@@ -356,6 +367,14 @@ export default function DashboardPage() {
                         <span className="rounded-md border border-primary/20 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
                           {PRODUCTION_MODE_SPECS[project.mode].label}
                         </span>
+                        {PRODUCTION_MODE_SPECS[project.mode].badge && (
+                          <Badge
+                            variant="warning"
+                            className="text-[10px] font-medium tracking-wide uppercase px-1.5 py-0"
+                          >
+                            {PRODUCTION_MODE_SPECS[project.mode].badge}
+                          </Badge>
+                        )}
                         <span className="rounded-md border border-border/80 bg-secondary/80 px-2 py-0.5 font-mono text-xs font-medium text-foreground shadow-xs">
                           {project.aspect_ratio}
                         </span>

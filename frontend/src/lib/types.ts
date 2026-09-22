@@ -709,8 +709,8 @@ export interface ResearchResponse {
 export interface PlatformMetadata {
   platform?: string;
   title?: string;
-  description: string;
-  tags: string[];
+  description?: string;
+  tags?: string[];
   declaration?: string;
   location?: string | null;
   collection_name?: string | null;

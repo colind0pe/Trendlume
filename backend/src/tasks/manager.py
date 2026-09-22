@@ -17,6 +17,7 @@ from src.models.workflow import WorkflowJobModel
 from src.services.workflow_execution import (
     WorkflowExecutionContext,
     WorkflowLeaseLost,
+    assert_task_editable,
     interrupt_steps,
     lock_task,
 )
@@ -402,6 +403,7 @@ class TaskManager:
                 model.current_stage = "completed"
                 model.progress = 100
                 model.result = result
+                model.error_message = None
                 model.completed_at = _now()
                 model.heartbeat_at = None
                 model.lease_token = None

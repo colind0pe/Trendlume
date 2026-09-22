@@ -531,6 +531,12 @@ export const api = {
       body: JSON.stringify({ prompt_override: promptOverride }),
     }),
 
+  generateSceneOnlineMaterial: (sceneId: string, promptOverride?: string) =>
+    request<Scene>(`/generation/scenes/${sceneId}/online-material`, {
+      method: "POST",
+      body: JSON.stringify({ prompt_override: promptOverride }),
+    }),
+
   // Assets
   listAssets: (projectId?: string, assetType?: string) => {
     const params = new URLSearchParams();
@@ -738,6 +744,7 @@ export const api = {
     title: string;
     description?: string;
     tags?: string[];
+    cover_asset_id?: string | null;
     scheduled_at?: string | null;
   }) =>
     request<PublishingJob>("/publishing/jobs", {

@@ -12,7 +12,11 @@ from sqlalchemy import select
 from src.core.exceptions import ValidationException
 from src.domain.content_modes import resolve_content_mode
 from src.domain.enums import ProductionMode
-from src.domain.production_recipes import MediaPlan, MediaStrategy
+from src.domain.production_recipes import (
+    MediaPlan,
+    MediaStrategy,
+    media_strategy_for_content_mode,
+)
 from src.domain.production_workflows import KNOWLEDGE_PRODUCTION_WORKFLOW
 from src.models.asset import AssetModel
 from src.models.production_context import ProductionContextSnapshotModel
@@ -596,9 +600,14 @@ class DurableProductionPipeline(BaseProductionPipeline):
             scene_id = scene.id
             raw_media_plan = (production_plan.get('scene_plans') or {}).get(scene_id)
             if raw_media_plan is None:
-                strategy = (production_plan.get('planning_rules') or {}).get(
-                    getattr(scene, 'visual_role', 'concept')
-                ) or (production_plan.get('recipe') or {}).get('default_strategy')
+                requested_strategy = media_strategy_for_content_mode(
+                    payload.get('content_mode')
+                )
+                strategy = requested_strategy or (
+                    production_plan.get('planning_rules') or {}
+                ).get(getattr(scene, 'visual_role', 'concept')) or (
+                    production_plan.get('recipe') or {}
+                ).get('default_strategy')
                 if not strategy:
                     raise ValidationException(f'分镜 {scene_id} 缺少快照化 MediaPlan。')
                 raw_media_plan = {

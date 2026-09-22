@@ -28,6 +28,7 @@ import { useToast } from "@/components/ui/toast";
 import { KnowledgeTaskForm } from "@/components/projects/knowledge-task-form";
 import { CommerceTaskForm } from "@/components/projects/commerce-task-form";
 import {
+  PRODUCTION_MODE_SPECS,
   SCENE_COUNT_MIN,
   SCENE_COUNT_PRESETS,
   STYLE_PRESET_OPTIONS,
@@ -478,6 +479,14 @@ export function ProductionTaskDialog({
           <div>
             <div className="flex items-center gap-2.5">
               <h2 className="text-base font-bold text-foreground">新建{modeLabel}</h2>
+              {PRODUCTION_MODE_SPECS[productionMode]?.badge && (
+                <Badge
+                  variant="warning"
+                  className="text-[10px] font-medium tracking-wide uppercase px-1.5 py-0 rounded"
+                >
+                  {PRODUCTION_MODE_SPECS[productionMode].badge}
+                </Badge>
+              )}
             </div>
             <p className="text-xs text-muted-foreground mt-0.5">
               项目：《{project.name}》· {project.aspect_ratio} 画幅

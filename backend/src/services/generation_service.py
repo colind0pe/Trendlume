@@ -347,6 +347,61 @@ def parse_script_from_text(
     raw_text: str, default_topic: str = "短视频创作", style_desc: str = ""
 ) -> StructuredScript:
     """从 Markdown 或自由格式的模型文本中解析结构化脚本。"""
+    # The text fallback keeps the structured-generation system prompt, so a
+    # provider may still return a JSON entity. Parse that shape before the
+    # line-oriented compatibility parser; otherwise the whole JSON document is
+    # mistaken for one narration and the requested scene count is lost.
+    json_candidates: list[str] = []
+    stripped = raw_text.strip().lstrip("\ufeff")
+    json_candidates.append(stripped)
+    json_candidates.extend(
+        match.group(1).strip()
+        for match in re.finditer(
+            r"```(?:json)?\s*([\s\S]*?)\s*```", stripped, re.IGNORECASE
+        )
+    )
+    decoder = json.JSONDecoder()
+    for candidate in dict.fromkeys(item for item in json_candidates if item):
+        parsed_values: list[Any] = []
+        try:
+            parsed_values.append(json.loads(candidate))
+        except (TypeError, json.JSONDecodeError):
+            pass
+        for match in re.finditer(r"\{", candidate):
+            try:
+                parsed, _ = decoder.raw_decode(candidate[match.start() :])
+            except json.JSONDecodeError:
+                continue
+            parsed_values.append(parsed)
+        for parsed in parsed_values:
+            if not isinstance(parsed, dict) or not isinstance(parsed.get("scenes"), list):
+                continue
+            values = dict(parsed)
+            values.setdefault("title", default_topic)
+            values.setdefault("hook", "先从已有信息梳理这个问题")
+            values.setdefault(
+                "narration",
+                "\n".join(
+                    str(scene.get("narration_text", "")).strip()
+                    for scene in values["scenes"]
+                    if isinstance(scene, dict) and scene.get("narration_text")
+                ),
+            )
+            try:
+                script = StructuredScript.model_validate(values)
+            except Exception:
+                # A malformed optional Knowledge Brief must not discard valid
+                # scenes produced by the compatibility fallback.
+                values.pop("knowledge_brief", None)
+                try:
+                    script = StructuredScript.model_validate(values)
+                except Exception:
+                    continue
+            for scene in script.scenes:
+                if style_desc and style_desc not in scene.visual_prompt:
+                    scene.visual_prompt = f"{style_desc}, {scene.visual_prompt}"
+            return script
+
     lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
     title = default_topic
     hook = "先从已有信息梳理这个问题"
@@ -779,16 +834,15 @@ class GenerationService:
             "1:1": (1024, 1024),
         }.get(aspect_ratio, (1024, 1024))
 
-    @classmethod
     def _resolve_template_media(
-        cls, task: TaskModel | None, project_aspect_ratio: str
+        self, task: TaskModel | None, project_aspect_ratio: str
     ) -> tuple[str, int, int]:
         """Use the selected template's media contract, as the Demo does."""
         payload = self._task_settings(task)
         template_id = payload.get("template_id", "image_gallery_matted")
         template = template_catalog.get(template_id)
         if not template:
-            width, height = cls._default_media_dimensions(project_aspect_ratio)
+            width, height = self._default_media_dimensions(project_aspect_ratio)
             return project_aspect_ratio, width, height
 
         width, height = template_catalog.get_media_size(template_id)
@@ -1631,7 +1685,10 @@ class GenerationService:
             "6. metadata: 抖音发布元数据；title 必须与视频 title 一致，description 用与主题相同的语言写 1-3 句发布文案，"
             "只能重组脚本已有事实；概括核心价值，评论邀请可选。"
             f"{PLATFORM_TAG_RULES}\n"
-            "declaration 从‘内容由AI生成’、‘内容取材网络’、‘个人观点，仅供参考’中选择合适的一项。"
+            "declaration 从‘内容由AI生成’、‘内容取材网络’、‘个人观点，仅供参考’中选择合适的一项；"
+            "visibility 只能填写枚举值 public、friend 或 private，不得填写中文或其他同义词；"
+            "allow_download 必须是 true 或 false。knowledge_brief 必须是对象或 null，"
+            "其中 audience、thesis、viewer_takeaway 必须是字符串，key_claims 必须是数组。"
         )
 
         user_prompt = (
@@ -1701,6 +1758,8 @@ class GenerationService:
                 text_prompt = (
                     f"{user_prompt}\n\n"
                     "请按以下格式输出短视频分镜脚本：\n"
+                    f"必须输出恰好 {payload.target_scene_count} 个分镜，编号从 1 到 {payload.target_scene_count}；"
+                    "下面仅展示格式示例，不是数量限制。\n"
                     "标题：<视频标题>\n"
                     "钩子：<黄金3秒文案>\n"
                     f"分镜 1：\n旁白：<台词>\n{fallback_visual}\n"
@@ -1900,10 +1959,6 @@ class GenerationService:
         target_voice = voice_id
         if not target_voice and task:
             target_voice = self._task_settings(task).get("voice_id")
-            if not target_voice:
-                project = await self.project_repo.get_by_id(task.project_id)
-                if project and project.default_voice_id:
-                    target_voice = project.default_voice_id
         target_voice = target_voice or await self.provider_manager.get_default_tts_voice()
 
         target_speed = speed or self._task_settings(task).get("speed") or 1.0

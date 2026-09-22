@@ -4,6 +4,7 @@ from src.domain.enums import ProductionMode
 from src.domain.production_recipes import (
     MediaStrategy,
     compile_production_plan,
+    missing_capabilities,
     resolve_recipe,
 )
 from src.models.production_context import ProductionContextSnapshotModel
@@ -26,6 +27,30 @@ def test_recipe_planners_keep_mode_and_per_scene_strategy_explicit():
     assert plan.scene_plans["example"].strategy == MediaStrategy.ONLINE_ASSET
     assert plan.scene_plans["concept"].strategy == MediaStrategy.TEXT_TO_IMAGE
     assert resolve_recipe("drama", "drama_reference_i2v").default_strategy == MediaStrategy.IMAGE_TO_VIDEO
+
+
+def test_explicit_generated_image_mode_overrides_smart_mix_material_rules():
+    scenes = [
+        {"id": "example", "visual_role": "example", "production_metadata": {}},
+        {"id": "b-roll", "visual_role": "b_roll", "production_metadata": {}},
+    ]
+    plan = compile_production_plan(
+        "knowledge",
+        {"recipe_id": "knowledge_smart_mix", "content_mode": "generated_image"},
+        scenes,
+    )
+
+    assert {item.strategy for item in plan.scene_plans.values()} == {
+        MediaStrategy.TEXT_TO_IMAGE
+    }
+    assert missing_capabilities(plan, {"image": {"id": "image"}}) == []
+
+    empty_plan = compile_production_plan(
+        "knowledge",
+        {"recipe_id": "knowledge_smart_mix", "content_mode": "generated_image"},
+        [],
+    )
+    assert missing_capabilities(empty_plan, {"image": {"id": "image"}}) == []
 
 
 def test_registry_uses_mode_specific_workflow_with_shared_executor():
