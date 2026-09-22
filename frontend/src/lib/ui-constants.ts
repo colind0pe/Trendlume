@@ -18,17 +18,16 @@ export interface ProductionModeSpec {
 export const PRODUCTION_MODE_SPECS: Record<ProductionMode, ProductionModeSpec> =
   {
     knowledge: {
-      label: "知识内容",
-      description: "研究、脚本、分镜与媒体生成的完整知识内容流程。",
+      label: "知识视频",
+      description: "围绕主题或已有文案生成视频。",
     },
     commerce: {
-      label: "带货内容",
-      description: "商品事实、创意策略、商业分镜与转化视频的专用流程。",
+      label: "商品视频",
+      description: "使用商品资料和素材生成视频。",
     },
     drama: {
-      label: "Drama 制片",
-      description:
-        "从已批准 Storyboard 到逐 Shot 媒体、对白音频与 Episode 视频。",
+      label: "短剧",
+      description: "使用已审批的人物、地点和道具制作剧集。",
     },
   };
 
@@ -284,7 +283,7 @@ export interface ContentModeSpec {
 export const CONTENT_MODE_SPECS: Record<ContentMode, ContentModeSpec> = {
   generated_image: {
     group: "ai",
-    label: "AI 生成图片",
+    label: "智能生成图片",
     selectionHint: "根据分镜生成图片",
     description: "根据分镜提示词生成静态画面，稳定、快速，适合大多数普通任务。",
     sourceKind: "ai",
@@ -295,9 +294,9 @@ export const CONTENT_MODE_SPECS: Record<ContentMode, ContentModeSpec> = {
   },
   generated_video: {
     group: "ai",
-    label: "AI 生成视频",
+    label: "智能生成视频",
     selectionHint: "根据分镜生成视频片段",
-    description: "为每个分镜生成动态视频片段，耗时和 Provider 成本通常更高。",
+    description: "为每个分镜生成动态视频片段，通常耗时更长、成本更高。",
     sourceKind: "ai",
     visualKind: "video",
     requiresSourceAsset: false,
@@ -309,7 +308,7 @@ export const CONTENT_MODE_SPECS: Record<ContentMode, ContentModeSpec> = {
     label: "素材库视频",
     selectionHint: "从已配置素材库获取实拍视频",
     description:
-      "从已配置的素材库获取实拍视频并下载到任务资产，不自动替换为 AI 画面。",
+      "从已配置的素材库获取实拍视频，不自动替换为生成画面。",
     sourceKind: "online",
     visualKind: "video",
     requiresSourceAsset: false,
@@ -345,7 +344,7 @@ const CONTENT_MODE_GROUP_ORDER: ReadonlyArray<{
   value: ContentModeGroup;
   label: string;
 }> = [
-  { value: "ai", label: "AI 创作" },
+  { value: "ai", label: "智能生成" },
   { value: "real", label: "真实素材" },
   { value: "text", label: "文字排版" },
 ];

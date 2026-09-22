@@ -9,7 +9,6 @@ import {
   Palette,
   Music,
   ChevronDown,
-  ChevronUp,
   Settings2,
   Film,
   Users,
@@ -37,6 +36,7 @@ import {
   CONTENT_MODE_LABELS,
   CONTENT_MODE_SPECS,
   formatTemplateName,
+  isContentMode,
   SPEED_PRESETS,
 } from "@/lib/ui-constants";
 import {
@@ -108,7 +108,7 @@ function DramaResourcePicker({
                 type="button"
                 aria-pressed={checked}
                 onClick={() => onChange(checked ? selected.filter((id) => id !== item.id) : [...selected, item.id])}
-                className={`min-h-9 rounded-full border px-3 text-sm transition-colors ${checked ? "border-primary bg-primary/10 text-primary" : "border-border bg-card text-muted-foreground hover:text-foreground"}`}
+                className={`min-h-11 rounded-full border px-3 text-sm transition-colors ${checked ? "border-primary bg-primary/10 text-primary" : "border-border bg-card text-muted-foreground hover:text-foreground"}`}
               >
                 {item.name}
               </button>
@@ -161,6 +161,7 @@ export function ProductionTaskDialog({
   const [selectedCharacterIds, setSelectedCharacterIds] = React.useState<string[]>([]);
   const [selectedLocationIds, setSelectedLocationIds] = React.useState<string[]>([]);
   const [selectedPropIds, setSelectedPropIds] = React.useState<string[]>([]);
+  const [showDramaAdditional, setShowDramaAdditional] = React.useState(false);
 
   // Visual style
   const [taskStylePreset, setTaskStylePreset] = React.useState("stick_figure");
@@ -177,6 +178,7 @@ export function ProductionTaskDialog({
   const [recipeId, setRecipeId] = React.useState("");
   const isCommerce = productionMode === "commerce";
   const isDrama = productionMode === "drama";
+  const modeLabel = isCommerce ? "商品视频" : isDrama ? "短剧" : "知识视频";
   const { data: recipes = [] } = useQuery({
     queryKey: ["production-recipes", productionMode],
     queryFn: () => api.listProductionRecipes(productionMode),
@@ -235,12 +237,46 @@ export function ProductionTaskDialog({
   const [imageWorkflowId, setImageWorkflowId] = React.useState("");
   const [videoWorkflowId, setVideoWorkflowId] = React.useState("");
 
-  // Sync default BGM from project when available
   React.useEffect(() => {
-    if (project?.default_production_settings?.bgm_asset_id) {
-      setBgmAssetId(String(project.default_production_settings.bgm_asset_id));
-    }
-  }, [project]);
+    if (open) return;
+    setShowAdvanced(false);
+    setShowDramaAdditional(false);
+    setRecipeId("");
+    setSelectedTemplateId("");
+    setTemplateParams({});
+    setImageWorkflowId("");
+    setVideoWorkflowId("");
+  }, [open]);
+
+  // Reset production options to project or system defaults each time the dialog opens.
+  React.useEffect(() => {
+    if (!open) return;
+    const defaults = project?.default_production_settings || {};
+    setContentMode(
+      isContentMode(defaults.content_mode)
+        ? defaults.content_mode
+        : "generated_image",
+    );
+    setTaskVoiceId(
+      typeof defaults.voice_id === "string" ? defaults.voice_id : "",
+    );
+    setTaskSpeed(typeof defaults.speed === "number" ? defaults.speed : 1.0);
+    setTaskStylePreset(
+      typeof defaults.style_preset === "string" &&
+        STYLE_PRESET_OPTIONS.some(
+          (item) => item.value === defaults.style_preset,
+        )
+        ? defaults.style_preset
+        : "stick_figure",
+    );
+    setBgmAssetId(defaults.bgm_asset_id ? String(defaults.bgm_asset_id) : "");
+    setBgmEnabled(
+      typeof defaults.bgm_enabled === "boolean" ? defaults.bgm_enabled : true,
+    );
+    setBgmVolume(
+      typeof defaults.bgm_volume === "number" ? defaults.bgm_volume : 0.2,
+    );
+  }, [open, project]);
 
   // Keep selected template synchronized with project settings and available templates
   React.useEffect(() => {
@@ -347,7 +383,7 @@ export function ProductionTaskDialog({
             ? `短剧第 ${episodeNumber} 集`
             : creationMode === "fixed"
             ? rawScript.slice(0, 200)
-            : `知识主题: ${finalTitle}, 面向: ${knowledgeAudience.trim() || "普通观众"}`,
+            : `知识主题：${finalTitle}，面向：${knowledgeAudience.trim() || "普通观众"}`,
         detail,
         generation_settings: {
           recipe_id: recipeId,
@@ -374,7 +410,7 @@ export function ProductionTaskDialog({
     },
     onSuccess: (newTask) => {
       queryClient.invalidateQueries({ queryKey: ["project-tasks", projectId] });
-      toast(`${isCommerce ? "商品视频" : isDrama ? "短剧" : "知识视频"}任务创建成功！正在进入工作台…`, "success");
+      toast(`${modeLabel}创建成功，正在进入工作台…`, "success");
       onOpenChange(false);
       // Reset main inputs
       setTaskTitle("");
@@ -392,10 +428,12 @@ export function ProductionTaskDialog({
       setSelectedCharacterIds([]);
       setSelectedLocationIds([]);
       setSelectedPropIds([]);
+      setShowAdvanced(false);
+      setShowDramaAdditional(false);
       router.push(`/projects/${projectId}/tasks/${newTask.id}`);
     },
     onError: (error: any) => {
-      toast(`创建任务失败：${error?.message || "请稍后重试"}`, "error");
+      toast(`创建${modeLabel}失败：${error?.message || "请稍后重试"}`, "error");
     },
   });
 
@@ -418,9 +456,9 @@ export function ProductionTaskDialog({
 
   const isFormValid =
     (isCommerce
-      ? Boolean(taskTitle.trim())
+      ? true
       : isDrama
-      ? episodeNumber > 0 && Boolean(taskTitle.trim()) && Boolean(episodeSynopsis.trim()) && dramaResourcesReady
+      ? episodeNumber > 0 && Boolean(episodeSynopsis.trim()) && dramaResourcesReady
       : (creationMode === "generate" ? Boolean(taskTitle.trim()) : Boolean(rawScript.trim()))) &&
     (!contentModeSpec.requiresSourceAsset || Boolean(sourceAssetId)) &&
     Boolean(selectedTemplateId);
@@ -439,37 +477,38 @@ export function ProductionTaskDialog({
           </div>
           <div>
             <div className="flex items-center gap-2.5">
-              <h2 className="text-base font-bold text-foreground">新建 Production Task</h2>
+              <h2 className="text-base font-bold text-foreground">新建{modeLabel}</h2>
             </div>
             <p className="text-xs text-muted-foreground mt-0.5">
-              所属空间：《{project.name}》· {project.aspect_ratio} 画幅
+              项目：《{project.name}》· {project.aspect_ratio} 画幅
             </p>
           </div>
-        </div>
-      </div>
-
-      <div className="border-b border-border bg-card/60 px-5 py-4 sm:px-6">
-        <div className="flex flex-wrap items-center gap-2" role="status" aria-live="polite">
-          <span className="text-sm font-semibold text-foreground">Project 模式</span>
-          <span className="rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
-            {productionMode}
-          </span>
-          <span className="text-xs text-muted-foreground">
-            Task 会继承此模式，创建后不能在 Task 级别切换。
-          </span>
         </div>
       </div>
 
       {/* Studio Two-Column Body */}
       <form onSubmit={handleSubmit} className="flex-1 flex flex-col min-h-0 overflow-hidden">
         <div className="flex-1 overflow-y-auto min-h-0">
+          <div className="border-b border-border px-5 py-3 sm:px-6">
+            <button
+              type="button"
+              onClick={() => setShowAdvanced((value) => !value)}
+              aria-expanded={showAdvanced}
+              aria-controls={`production-setting-recipes production-setting-voice production-setting-visual production-setting-bgm production-setting-generation${usesAiVisualStyle ? " production-setting-style" : ""}`}
+              className="flex min-h-11 w-full items-center justify-between rounded-lg text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <span className="flex items-center gap-2"><Settings2 aria-hidden="true" className="h-4 w-4 text-primary" />制作设置</span>
+              <ChevronDown aria-hidden="true" className={`h-4 w-4 transition-transform ${showAdvanced ? "rotate-180" : ""}`} />
+            </button>
+          </div>
+          <div>
             <div className="grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-border">
             {/* Left Column: Creative Core (58%) */}
             <div className="lg:col-span-7 p-5 sm:p-6 space-y-5">
-              <section className="space-y-2.5" aria-labelledby="recipe-heading">
+              {showAdvanced && <section id="production-setting-recipes" className="space-y-2.5 rounded-xl border border-border bg-card/40 p-4" aria-labelledby="recipe-heading">
                 <div>
                   <h3 id="recipe-heading" className="text-sm font-semibold">选择成片方案</h3>
-                  <p className="mt-1 text-xs text-muted-foreground">先选想要的结果；Provider、模型与 workflow 可在高级设置中调整。</p>
+                  <p className="mt-1 text-xs text-muted-foreground">默认使用推荐方案，也可在这里更改。</p>
                 </div>
                 <div className="grid gap-2 sm:grid-cols-2">
                   {recipes.map((recipe: ProductionRecipe) => (
@@ -487,12 +526,12 @@ export function ProductionTaskDialog({
                       <p className="mt-1 text-xs leading-5 text-muted-foreground">{recipe.description}</p>
                       <p className="mt-2 text-[11px] text-muted-foreground">
                         {recipe.requires_reference_assets ? "需要参考/真实素材" : "可不提供参考素材"}
-                        {recipe.required_capabilities.length ? ` · 需要 ${recipe.required_capabilities.join(" / ")} Provider` : " · 无昂贵 Provider 前置"}
+                        {recipe.required_capabilities.length ? ` · 需要 ${recipe.required_capabilities.join(" / ")} 生成能力` : " · 无额外生成能力要求"}
                       </p>
                     </button>
                   ))}
                 </div>
-              </section>
+              </section>}
               {isCommerce ? (
                 <CommerceTaskForm
                   creativeAngle={creativeAngle}
@@ -501,29 +540,29 @@ export function ProductionTaskDialog({
                   onTaskTitleChange={setTaskTitle}
                 />
               ) : isDrama ? (
-                <div className="space-y-5">
-                  <div className="rounded-xl border border-border bg-muted/30 p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div><h3 className="text-sm font-semibold">剧集简报</h3><p className="mt-1 text-xs leading-5 text-muted-foreground">把系列资料库中的连续性设定，收敛成本集可执行的内容边界。</p></div>
-                      <Badge variant="outline">{dramaResourcesReady ? "资料库已就绪" : "资料库待补齐/审批"}</Badge>
-                    </div>
-                  </div>
+                <div className="space-y-4">
                   <div className="grid gap-4 sm:grid-cols-[120px_1fr]">
                     <label className="space-y-1.5 text-sm font-medium" htmlFor="episode-number"><span>集数</span><Input id="episode-number" type="number" min={1} value={episodeNumber} onChange={(event) => setEpisodeNumber(Math.max(1, Number(event.target.value)))} /></label>
-                    <label className="space-y-1.5 text-sm font-medium" htmlFor="episode-title"><span>本集标题</span><Input id="episode-title" value={taskTitle} onChange={(event) => setTaskTitle(event.target.value)} placeholder="一句话说清本集事件" /></label>
+                    <label className="space-y-1.5 text-sm font-medium" htmlFor="episode-synopsis"><span>本集梗概 <span className="text-destructive">*</span></span><Textarea id="episode-synopsis" value={episodeSynopsis} onChange={(event) => setEpisodeSynopsis(event.target.value)} rows={4} required placeholder="主角想做什么、遇到什么阻碍、结果如何变化？" /></label>
                   </div>
-                  <label className="block space-y-1.5 text-sm font-medium" htmlFor="episode-synopsis"><span>本集梗概</span><Textarea id="episode-synopsis" value={episodeSynopsis} onChange={(event) => setEpisodeSynopsis(event.target.value)} rows={4} placeholder="主角想做什么、受到什么阻碍、局面如何变化？" /></label>
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <label className="space-y-1.5 text-sm font-medium" htmlFor="episode-conflict"><span>核心冲突</span><Textarea id="episode-conflict" value={episodeConflict} onChange={(event) => setEpisodeConflict(event.target.value)} rows={3} placeholder="人物目标与阻力" /></label>
-                    <label className="space-y-1.5 text-sm font-medium" htmlFor="episode-hook"><span>结尾钩子</span><Textarea id="episode-hook" value={episodeHook} onChange={(event) => setEpisodeHook(event.target.value)} rows={3} placeholder="促使观众进入下一集的悬念" /></label>
+                  {!dramaResourcesReady && <p role="alert" className="rounded-lg border border-warning/30 bg-warning/10 p-3 text-xs leading-5 text-warning">请先在连续性资料库中补齐并审批人物、地点和道具。</p>}
+                  <div className="border-t border-border pt-3">
+                    <button type="button" onClick={() => setShowDramaAdditional((value) => !value)} aria-expanded={showDramaAdditional} aria-controls="drama-additional-fields" className="flex min-h-11 w-full items-center justify-between text-sm font-medium text-muted-foreground hover:text-foreground"><span>补充要求</span><ChevronDown aria-hidden="true" className={`h-4 w-4 transition-transform ${showDramaAdditional ? "rotate-180" : ""}`} /></button>
+                    {showDramaAdditional && <div id="drama-additional-fields" className="mt-3 space-y-4 rounded-xl border border-border bg-card/40 p-4">
+                      <label className="block space-y-1.5 text-sm font-medium" htmlFor="episode-title"><span>本集标题（可选）</span><Input id="episode-title" value={taskTitle} onChange={(event) => setTaskTitle(event.target.value)} placeholder={`默认：第 ${episodeNumber} 集`} /></label>
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <label className="space-y-1.5 text-sm font-medium" htmlFor="episode-conflict"><span>核心冲突</span><Textarea id="episode-conflict" value={episodeConflict} onChange={(event) => setEpisodeConflict(event.target.value)} rows={3} placeholder="人物目标与阻力" /></label>
+                        <label className="space-y-1.5 text-sm font-medium" htmlFor="episode-hook"><span>结尾钩子</span><Textarea id="episode-hook" value={episodeHook} onChange={(event) => setEpisodeHook(event.target.value)} rows={3} placeholder="下一集的悬念" /></label>
+                      </div>
+                      <DramaResourcePicker icon={Users} label="本集人物" items={dramaCharacters} selected={selectedCharacterIds} onChange={setSelectedCharacterIds} />
+                      <DramaResourcePicker icon={MapPin} label="主要地点" items={dramaLocations} selected={selectedLocationIds} onChange={setSelectedLocationIds} />
+                      <DramaResourcePicker icon={Package} label="关键道具" items={dramaProps} selected={selectedPropIds} onChange={setSelectedPropIds} />
+                    </div>}
                   </div>
-                  <DramaResourcePicker icon={Users} label="本集人物" items={dramaCharacters} selected={selectedCharacterIds} onChange={setSelectedCharacterIds} />
-                  <DramaResourcePicker icon={MapPin} label="主要地点" items={dramaLocations} selected={selectedLocationIds} onChange={setSelectedLocationIds} />
-                  <DramaResourcePicker icon={Package} label="关键道具" items={dramaProps} selected={selectedPropIds} onChange={setSelectedPropIds} />
-                  {!dramaResourcesReady && <p role="alert" className="rounded-lg border border-warning/30 bg-warning/10 p-3 text-xs leading-5 text-warning">请先在 Project 的“连续性资料库”中为人物、地点和道具各添加至少一项，并完成审批。</p>}
                 </div>
               ) : (
                 <KnowledgeTaskForm
+                  key={open ? `open-${projectId}` : "closed"}
                   creationMode={creationMode}
                   onCreationModeChange={setCreationMode}
                   taskTitle={taskTitle}
@@ -547,7 +586,7 @@ export function ProductionTaskDialog({
 
               {/* Visual Style Preset Selection */}
               {showAdvanced && usesAiVisualStyle && (
-                <div className="space-y-2.5 pt-3 border-t border-border">
+                <div id="production-setting-style" className="space-y-2.5 pt-3 border-t border-border">
                   <div className="flex items-center justify-between">
                     <label className="text-sm font-medium text-foreground flex items-center gap-2">
                       <Palette className="h-4 w-4 text-primary" />
@@ -598,7 +637,7 @@ export function ProductionTaskDialog({
                   <div className="flex items-center justify-between border-b border-border/60 pb-2">
                     <span className="font-semibold text-sm text-foreground flex items-center gap-2">
                       <Film className="h-4 w-4 text-primary" />
-                      任务规格预览
+                      结果摘要
                     </span>
                     <Badge variant="outline" className="font-mono text-xs px-2 py-0.5">
                       {project.aspect_ratio} 画幅
@@ -617,11 +656,11 @@ export function ProductionTaskDialog({
                       <span className="text-xs text-muted-foreground">画面来源</span>
                       <p className="font-medium text-foreground">{CONTENT_MODE_LABELS[contentMode]}</p>
                     </div>
-                    <div className="space-y-0.5">
-                      <span className="text-xs text-muted-foreground">配音发音人</span>
+                    {showAdvanced && <div className="space-y-0.5">
+                      <span className="text-xs text-muted-foreground">配音</span>
                       <p className="font-medium text-foreground truncate">{voiceDisplayName}</p>
-                    </div>
-                    {usesAiVisualStyle && (
+                    </div>}
+                    {showAdvanced && usesAiVisualStyle && (
                       <div className="space-y-0.5">
                         <span className="text-xs text-muted-foreground">视觉风格</span>
                         <p className="font-medium text-foreground truncate">{selectedStyle?.label || "火柴人"}</p>
@@ -631,7 +670,7 @@ export function ProductionTaskDialog({
                 </div>
 
                 {/* TTS Voice & Speed */}
-                <div className="space-y-2.5">
+                {showAdvanced && <div id="production-setting-voice" className="space-y-2.5 border-t border-border pt-3">
                   <div className="flex items-center justify-between">
                     <label htmlFor="studio-voice" className="text-sm font-medium text-foreground flex items-center gap-2">
                       <Volume2 className="h-4 w-4 text-primary" />
@@ -671,7 +710,7 @@ export function ProductionTaskDialog({
                         type="button"
                         onClick={() => setTaskSpeed(spd)}
                         aria-pressed={Math.abs(taskSpeed - spd) < 0.05}
-                        className={`flex-1 py-1.5 rounded-md text-xs font-mono transition-colors cursor-pointer ${
+                        className={`min-h-11 flex-1 rounded-md text-xs font-mono transition-colors cursor-pointer ${
                           Math.abs(taskSpeed - spd) < 0.05
                             ? "bg-primary text-primary-foreground font-semibold shadow-xs"
                             : "bg-card text-muted-foreground hover:bg-secondary hover:text-foreground border border-border"
@@ -681,10 +720,10 @@ export function ProductionTaskDialog({
                       </button>
                     ))}
                   </div>
-                </div>
+                </div>}
 
                 {/* Visual Mode & Template */}
-                {showAdvanced && <div className="space-y-2.5 pt-3 border-t border-border">
+                {showAdvanced && <div id="production-setting-visual" className="space-y-2.5 pt-3 border-t border-border">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div className="space-y-1.5">
                       <label htmlFor="studio-content-mode" className="text-sm font-medium text-foreground">
@@ -820,7 +859,7 @@ export function ProductionTaskDialog({
                 </div>}
 
                 {/* Background Music Section */}
-                {showAdvanced && <div className="space-y-2.5 pt-3 border-t border-border">
+                {showAdvanced && <div id="production-setting-bgm" className="space-y-2.5 pt-3 border-t border-border">
                   <div className="flex items-center justify-between">
                     <label className="text-sm font-medium text-foreground flex items-center gap-2">
                       <Music className="h-4 w-4 text-primary" />
@@ -882,25 +921,9 @@ export function ProductionTaskDialog({
                   )}
                 </div>}
 
-                {/* Progressive Disclosure: Advanced Settings */}
-                <div className="pt-3 border-t border-border">
-                  <button
-                    type="button"
-                    onClick={() => setShowAdvanced(!showAdvanced)}
-                    className="w-full flex items-center justify-between py-1 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-                  >
-                    <div className="flex items-center gap-2">
-                      <Settings2 className="h-4 w-4 text-primary" />
-                      <span>高级生成配置</span>
-                      {(Boolean(imageWorkflowId) || Boolean(videoWorkflowId)) && (
-                        <span className="h-2 w-2 rounded-full bg-primary" />
-                      )}
-                    </div>
-                    {showAdvanced ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                  </button>
-
-                  {showAdvanced && (
-                    <div className="mt-3 space-y-3 rounded-lg border border-border bg-card/80 p-3.5">
+                {/* Additional generation settings */}
+                {showAdvanced && (
+                    <div id="production-setting-generation" className="mt-3 space-y-3 rounded-lg border border-border bg-card/80 p-3.5">
                       {/* Knowledge planning controls */}
                       {productionMode === "knowledge" && creationMode === "generate" && (
                         <div className="space-y-2.5 pb-2.5 border-b border-border/60">
@@ -917,7 +940,7 @@ export function ProductionTaskDialog({
                                 type="button"
                                 onClick={() => setTargetSceneCount(preset.count)}
                                 aria-pressed={targetSceneCount === preset.count}
-                                className={`py-2 px-1.5 rounded-lg text-center border transition-all cursor-pointer select-none ${
+                                className={`min-h-11 px-1.5 rounded-lg text-center border transition-all cursor-pointer select-none ${
                                   targetSceneCount === preset.count
                                     ? "bg-primary text-primary-foreground border-primary shadow-xs font-semibold"
                                     : "bg-card text-muted-foreground border-border hover:bg-secondary hover:text-foreground"
@@ -952,7 +975,7 @@ export function ProductionTaskDialog({
                       {/* Workflows */}
                       <div className="space-y-1.5">
                         <label htmlFor="studio-img-workflow" className="text-xs text-muted-foreground">
-                          ComfyUI 图像工作流
+                          图像生成工作流
                         </label>
                         <Select
                           id="studio-img-workflow"
@@ -961,7 +984,7 @@ export function ProductionTaskDialog({
                           disabled={contentMode !== "generated_image"}
                           className="h-9 text-sm"
                         >
-                          <option value="">使用图像 Provider 默认工作流</option>
+                          <option value="">使用默认图像工作流</option>
                           {workflows
                             .filter((w) => w.type === "image")
                             .map((w) => (
@@ -974,7 +997,7 @@ export function ProductionTaskDialog({
 
                       <div className="space-y-1.5">
                         <label htmlFor="studio-video-workflow" className="text-xs text-muted-foreground">
-                          ComfyUI 视频工作流
+                          视频生成工作流
                         </label>
                         <Select
                           id="studio-video-workflow"
@@ -983,7 +1006,7 @@ export function ProductionTaskDialog({
                           disabled={contentMode !== "generated_video"}
                           className="h-9 text-sm"
                         >
-                          <option value="">使用视频 Provider 默认工作流</option>
+                          <option value="">使用默认视频工作流</option>
                           {workflows
                             .filter((w) => w.type === "video")
                             .map((w) => (
@@ -995,9 +1018,9 @@ export function ProductionTaskDialog({
                       </div>
                     </div>
                   )}
-                </div>
               </div>
             </div>
+          </div>
             </div>
           </div>
         {/* Studio Dialog Footer */}
@@ -1007,17 +1030,17 @@ export function ProductionTaskDialog({
             variant="outline"
             onClick={() => onOpenChange(false)}
             disabled={createTaskMutation.isPending}
-            className="h-9 text-sm px-4"
+            className="h-11 text-sm px-4"
           >
             取消
           </Button>
           <Button
             type="submit"
             disabled={createTaskMutation.isPending || !isFormValid}
-            className="h-9 text-sm px-5 gap-2 font-medium"
+            className="h-11 text-sm px-5 gap-2 font-medium"
           >
             <Wand2 className="h-4 w-4" />
-            <span>{createTaskMutation.isPending ? "正在创建任务…" : "创建并进入工作台"}</span>
+            <span>{createTaskMutation.isPending ? `正在创建${modeLabel}…` : `创建${modeLabel}`}</span>
           </Button>
         </div>
       </form>

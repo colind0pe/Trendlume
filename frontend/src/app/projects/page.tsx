@@ -94,7 +94,7 @@ export default function ProjectsPage() {
     <PageContainer width="wide" className="space-y-6">
       <PageHeader
         title="项目库"
-        description="管理短视频项目、画布规格与默认排版模板。"
+        description="管理视频项目和默认设置。"
         actions={(
           <>
             <div className="inline-flex items-center rounded-xl glass-pill p-1 shadow-xs" role="group" aria-label="项目显示方式">
@@ -295,7 +295,7 @@ export default function ProjectsPage() {
       <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen} className="max-w-xl">
         <DialogHeader>
           <DialogTitle className="text-base sm:text-lg font-semibold">新建项目</DialogTitle>
-          <DialogDescription>定义项目名称与画布比例，作为视频创作与排版预设的容器。</DialogDescription>
+          <DialogDescription>选择内容类型、项目名称和画幅。</DialogDescription>
         </DialogHeader>
         <form onSubmit={handleCreate} className="space-y-4 pt-1">
           <ProductionModeSelector value={primaryProductionMode} onChange={setPrimaryProductionMode} />

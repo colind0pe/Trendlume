@@ -2,10 +2,24 @@
 
 import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, MapPin, Package, Pencil, Plus, Trash2, Users } from "lucide-react";
+import {
+  Check,
+  MapPin,
+  Package,
+  Pencil,
+  Plus,
+  Trash2,
+  Upload,
+  Users,
+} from "lucide-react";
 
 import { api } from "@/lib/api-client";
-import type { DramaCharacter, DramaLocation, DramaProp } from "@/lib/types";
+import type {
+  Asset,
+  DramaCharacter,
+  DramaLocation,
+  DramaProp,
+} from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -63,6 +77,9 @@ export function DramaResourceWorkspace({ projectId }: { projectId: string }) {
   const [continuityNotes, setContinuityNotes] = React.useState("");
   const [wardrobeNotes, setWardrobeNotes] = React.useState("");
   const [referenceAssetId, setReferenceAssetId] = React.useState("");
+  const [uploadError, setUploadError] = React.useState("");
+  const referenceFileInputRef = React.useRef<HTMLInputElement>(null);
+  const editorSessionRef = React.useRef(0);
 
   const characters = useQuery({
     queryKey: ["drama-characters", projectId],
@@ -80,6 +97,61 @@ export function DramaResourceWorkspace({ projectId }: { projectId: string }) {
     queryKey: ["assets", projectId, "drama-reference"],
     queryFn: () => api.listAssets(projectId, "image"),
   });
+  const assetQueryKey = ["assets", projectId, "drama-reference"] as const;
+
+  const clearUploadState = () => {
+    setUploadError("");
+    if (referenceFileInputRef.current) {
+      referenceFileInputRef.current.value = "";
+    }
+  };
+
+  const uploadMutation = useMutation({
+    mutationFn: ({ file }: { file: File; editorSession: number }) =>
+      api.uploadAsset(file, "image", projectId),
+    onSuccess: (asset, variables) => {
+      queryClient.setQueryData<Asset[]>(assetQueryKey, (current = []) => [
+        asset,
+        ...current.filter((item) => item.id !== asset.id),
+      ]);
+      if (variables.editorSession === editorSessionRef.current) {
+        setReferenceAssetId(asset.id);
+        setUploadError("");
+        toast("参考图上传成功，已自动选中。", "success");
+      } else {
+        toast("参考图上传成功，已加入项目图片。", "success");
+      }
+    },
+    onError: (_error, variables) => {
+      const message = "上传参考图失败，请稍后重试。";
+      if (variables.editorSession === editorSessionRef.current) {
+        setUploadError(message);
+      }
+      toast(message, "error");
+    },
+    onSettled: () => {
+      if (referenceFileInputRef.current) {
+        referenceFileInputRef.current.value = "";
+      }
+    },
+  });
+
+  const handleReferenceFileChange = (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setUploadError("请选择图片文件。支持常见图片格式。");
+      event.target.value = "";
+      return;
+    }
+    setUploadError("");
+    uploadMutation.mutate({
+      file,
+      editorSession: editorSessionRef.current,
+    });
+  };
 
   const groups: Array<{ kind: ResourceKind; items: DramaResource[] }> = [
     { kind: "character", items: characters.data || [] },
@@ -129,6 +201,7 @@ export function DramaResourceWorkspace({ projectId }: { projectId: string }) {
     onSuccess: () => {
       if (editor) invalidate(editor.kind);
       toast(`${editor?.item ? "修改" : "创建"}成功，请确认连续性设定后审批。`, "success");
+      clearUploadState();
       setEditor(null);
     },
     onError: (error: Error) => toast(error.message, "error"),
@@ -161,6 +234,8 @@ export function DramaResourceWorkspace({ projectId }: { projectId: string }) {
   });
 
   const openEditor = (kind: ResourceKind, item?: DramaResource) => {
+    editorSessionRef.current += 1;
+    clearUploadState();
     setName(item?.name || "");
     setDescription(item ? descriptionOf(item) : "");
     setContinuityNotes(item ? notesOf(item) : "");
@@ -169,15 +244,26 @@ export function DramaResourceWorkspace({ projectId }: { projectId: string }) {
     setEditor({ kind, item });
   };
 
+  const closeEditor = () => {
+    editorSessionRef.current += 1;
+    clearUploadState();
+    setEditor(null);
+  };
+
+  const selectedReferenceAsset = (assets.data || []).find(
+    (asset) => asset.id === referenceAssetId,
+  );
+  const referenceDescriptionIds = `${uploadError ? "reference-upload-error " : ""}reference-image-help`;
+
   return (
     <div className="space-y-5">
       <div className="overflow-hidden rounded-2xl border border-border bg-card">
         <div className="grid gap-5 p-5 sm:p-6 lg:grid-cols-[1fr_auto] lg:items-end">
           <div className="max-w-2xl space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Drama continuity bible</p>
+            <p className="text-xs font-semibold tracking-[0.18em] text-primary">短剧连续性设定</p>
             <h2 className="text-xl font-semibold tracking-tight sm:text-2xl">连续性资料库</h2>
             <p className="text-sm leading-6 text-muted-foreground">
-              先锁定角色外观、常驻场景和关键道具，再创建剧集。已审批设定会随任务写入生产 Snapshot，避免跨镜头漂移。
+              先锁定角色外观、常驻场景和关键道具，再创建剧集。已审批设定会随任务写入配置快照，避免跨镜头漂移。
             </p>
           </div>
           <div className="grid grid-cols-2 gap-2 rounded-xl border border-border bg-muted/35 p-3 text-center">
@@ -229,16 +315,105 @@ export function DramaResourceWorkspace({ projectId }: { projectId: string }) {
         })}
       </div>
 
-      <Dialog open={Boolean(editor)} onOpenChange={(open) => !open && setEditor(null)}>
-        <DialogHeader><DialogTitle>{editor?.item ? "编辑" : "新增"}{editor ? specs[editor.kind].label : "资源"}</DialogTitle><DialogDescription>保存修改后状态会回到待审批，审批后的版本才会进入新的生产 Snapshot。</DialogDescription></DialogHeader>
+      <Dialog open={Boolean(editor)} onOpenChange={(open) => !open && closeEditor()}>
+        <DialogHeader>
+          <DialogTitle>
+            {editor?.item ? "编辑" : "新增"}
+            {editor ? specs[editor.kind].label : "资源"}
+          </DialogTitle>
+          <DialogDescription>
+            保存后状态会回到待审批，审批后的版本才会进入新的配置快照。
+          </DialogDescription>
+        </DialogHeader>
         <div className="space-y-4">
           <label className="block space-y-1.5 text-sm font-medium"><span>名称</span><Input value={name} onChange={(event) => setName(event.target.value)} placeholder={editor?.kind === "character" ? "例如：林夏" : editor?.kind === "location" ? "例如：旧城区咖啡馆" : "例如：银色怀表"} autoFocus /></label>
           <label className="block space-y-1.5 text-sm font-medium"><span>{editor?.kind === "location" ? "视觉描述" : "设定描述"}</span><Textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={4} placeholder="写清不可漂移的识别特征、质感与叙事用途。" /></label>
           <label className="block space-y-1.5 text-sm font-medium"><span>连续性备注</span><Textarea value={continuityNotes} onChange={(event) => setContinuityNotes(event.target.value)} rows={3} placeholder="例如：左右位置、损耗状态、昼夜变化等。" /></label>
-          <label className="block space-y-1.5 text-sm font-medium"><span>已审批参考图</span><Select value={referenceAssetId} onChange={(event) => setReferenceAssetId(event.target.value)}><option value="">请选择项目图片素材</option>{(assets.data || []).map((asset) => <option key={asset.id} value={asset.id}>{asset.file_name}</option>)}</Select><span className="block text-xs font-normal text-muted-foreground">正式动态短剧会用这张图约束关键帧与逐镜 I2V；未绑定时不会退回纯文生视频。</span></label>
+          <div className="space-y-2">
+            <label
+              htmlFor="drama-reference-asset"
+              className="block text-sm font-medium"
+            >
+              选择已有图片
+            </label>
+            <Select
+              id="drama-reference-asset"
+              value={referenceAssetId}
+              aria-describedby={referenceDescriptionIds}
+              onChange={(event) => {
+                setReferenceAssetId(event.target.value);
+                setUploadError("");
+              }}
+            >
+              <option value="">不使用参考图</option>
+              {(assets.data || []).map((asset) => (
+                <option key={asset.id} value={asset.id}>
+                  {asset.file_name}
+                </option>
+              ))}
+            </Select>
+            <input
+              ref={referenceFileInputRef}
+              type="file"
+              accept="image/*"
+              hidden
+              aria-label="上传参考图"
+              aria-describedby={referenceDescriptionIds}
+              onChange={handleReferenceFileChange}
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11 gap-2"
+                disabled={uploadMutation.isPending}
+                aria-describedby={referenceDescriptionIds}
+                onClick={() => referenceFileInputRef.current?.click()}
+              >
+                <Upload aria-hidden="true" className="h-4 w-4" />
+                {uploadMutation.isPending ? "正在上传…" : "上传参考图"}
+              </Button>
+              {selectedReferenceAsset && (
+                <span className="min-w-0 truncate text-sm text-foreground">
+                  已选择：{selectedReferenceAsset.file_name}
+                </span>
+              )}
+            </div>
+            {uploadError && (
+              <p
+                id="reference-upload-error"
+                role="alert"
+                aria-live="polite"
+                className="text-sm text-destructive"
+              >
+                {uploadError}
+              </p>
+            )}
+            <p
+              id="reference-image-help"
+              className="text-xs font-normal text-muted-foreground"
+            >
+              用于约束关键帧与逐镜图生视频；未选择时不会退回纯文本生成视频。
+            </p>
+          </div>
           {editor?.kind === "character" && <label className="block space-y-1.5 text-sm font-medium"><span>服装规则</span><Textarea value={wardrobeNotes} onChange={(event) => setWardrobeNotes(event.target.value)} rows={3} placeholder="常服、场景换装和不可变化的配饰。" /></label>}
         </div>
-        <DialogFooter><Button type="button" variant="outline" onClick={() => setEditor(null)}>取消</Button><Button type="button" disabled={!name.trim() || saveMutation.isPending} onClick={() => saveMutation.mutate()}>{saveMutation.isPending ? "保存中…" : "保存为待审批"}</Button></DialogFooter>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={closeEditor}>
+            取消
+          </Button>
+          <Button
+            type="button"
+            disabled={
+              !name.trim() ||
+              saveMutation.isPending ||
+              uploadMutation.isPending
+            }
+            onClick={() => saveMutation.mutate()}
+          >
+            {saveMutation.isPending ? "保存中…" : "保存为待审批"}
+          </Button>
+        </DialogFooter>
       </Dialog>
 
       <ConfirmDialog open={Boolean(deleteTarget)} onOpenChange={(open) => !open && setDeleteTarget(null)} title={`删除${deleteTarget ? specs[deleteTarget.kind].label : "资源"}？`} description="已被剧集或分镜引用的资源不会被删除。此操作不可撤销。" confirmLabel="删除" variant="destructive" onConfirm={async () => { if (!deleteTarget) return; await deleteMutation.mutateAsync({ kind: deleteTarget.kind, id: deleteTarget.item.id }); setDeleteTarget(null); }} />

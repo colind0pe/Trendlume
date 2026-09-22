@@ -20,8 +20,8 @@ export function ProductionModeSelector({
 }) {
   return (
     <fieldset className="space-y-2.5">
-      <legend className="text-sm font-medium text-foreground">生产模式</legend>
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3" role="radiogroup" aria-label="生产模式">
+      <legend className="text-sm font-medium text-foreground">内容类型</legend>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3" role="radiogroup" aria-label="内容类型">
         {PRODUCTION_MODE_VALUES.map((mode) => {
           const spec = PRODUCTION_MODE_SPECS[mode];
           const Icon = MODE_ICONS[mode];
