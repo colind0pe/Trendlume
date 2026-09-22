@@ -14,6 +14,7 @@ import {
   Users,
   MapPin,
   Package,
+  Check,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { api } from "@/lib/api-client";
@@ -27,7 +28,6 @@ import { useToast } from "@/components/ui/toast";
 import { KnowledgeTaskForm } from "@/components/projects/knowledge-task-form";
 import { CommerceTaskForm } from "@/components/projects/commerce-task-form";
 import {
-  HOOK_OPTIONS,
   SCENE_COUNT_MIN,
   SCENE_COUNT_PRESETS,
   STYLE_PRESET_OPTIONS,
@@ -489,23 +489,25 @@ export function ProductionTaskDialog({
       {/* Studio Two-Column Body */}
       <form onSubmit={handleSubmit} className="flex-1 flex flex-col min-h-0 overflow-hidden">
         <div className="flex-1 overflow-y-auto min-h-0">
-          <div className="border-b border-border px-5 py-3 sm:px-6">
-            <button
-              type="button"
-              onClick={() => setShowAdvanced((value) => !value)}
-              aria-expanded={showAdvanced}
-              aria-controls={`production-setting-recipes production-setting-voice production-setting-visual production-setting-bgm production-setting-generation${usesAiVisualStyle ? " production-setting-style" : ""}`}
-              className="flex min-h-11 w-full items-center justify-between rounded-lg text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
-            >
-              <span className="flex items-center gap-2"><Settings2 aria-hidden="true" className="h-4 w-4 text-primary" />制作设置</span>
-              <ChevronDown aria-hidden="true" className={`h-4 w-4 transition-transform ${showAdvanced ? "rotate-180" : ""}`} />
-            </button>
-          </div>
+          {productionMode !== "knowledge" && (
+            <div className="border-b border-border px-5 py-3 sm:px-6">
+              <button
+                type="button"
+                onClick={() => setShowAdvanced((value) => !value)}
+                aria-expanded={showAdvanced}
+                aria-controls={`production-setting-recipes production-setting-voice production-setting-visual production-setting-bgm production-setting-generation${usesAiVisualStyle ? " production-setting-style" : ""}`}
+                className="flex min-h-11 w-full items-center justify-between rounded-lg text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+              >
+                <span className="flex items-center gap-2"><Settings2 aria-hidden="true" className="h-4 w-4 text-primary" />制作设置</span>
+                <ChevronDown aria-hidden="true" className={`h-4 w-4 transition-transform ${showAdvanced ? "rotate-180" : ""}`} />
+              </button>
+            </div>
+          )}
           <div>
             <div className="grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-border">
             {/* Left Column: Creative Core (58%) */}
             <div className="lg:col-span-7 p-5 sm:p-6 space-y-5">
-              {showAdvanced && <section id="production-setting-recipes" className="space-y-2.5 rounded-xl border border-border bg-card/40 p-4" aria-labelledby="recipe-heading">
+              {showAdvanced && productionMode !== "knowledge" && <section id="production-setting-recipes" className="space-y-2.5 rounded-xl border border-border bg-card/40 p-4" aria-labelledby="recipe-heading">
                 <div>
                   <h3 id="recipe-heading" className="text-sm font-semibold">选择成片方案</h3>
                   <p className="mt-1 text-xs text-muted-foreground">默认使用推荐方案，也可在这里更改。</p>
@@ -573,24 +575,26 @@ export function ProductionTaskDialog({
                   onSplitModeChange={setSplitMode}
                   taskGenre={taskGenre}
                   onTaskGenreChange={setTaskGenre}
+                  hookType={taskHookType}
+                  onHookTypeChange={setTaskHookType}
+                  enableResearch={enableResearch}
+                  onEnableResearchChange={setEnableResearch}
                   audience={knowledgeAudience}
                   onAudienceChange={setKnowledgeAudience}
                   thesis={knowledgeThesis}
                   onThesisChange={setKnowledgeThesis}
                   viewerTakeaway={knowledgeViewerTakeaway}
                   onViewerTakeawayChange={setKnowledgeViewerTakeaway}
-                  enableResearch={enableResearch}
-                  onEnableResearchChange={setEnableResearch}
                 />
               )}
 
               {/* Visual Style Preset Selection */}
-              {showAdvanced && usesAiVisualStyle && (
+              {(productionMode === "knowledge" ? usesAiVisualStyle : (showAdvanced && usesAiVisualStyle)) && (
                 <div id="production-setting-style" className="space-y-2.5 pt-3 border-t border-border">
                   <div className="flex items-center justify-between">
                     <label className="text-sm font-medium text-foreground flex items-center gap-2">
                       <Palette className="h-4 w-4 text-primary" />
-                      <span>视觉美学风格预设</span>
+                      <span>画面视觉风格</span>
                     </label>
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
@@ -600,14 +604,21 @@ export function ProductionTaskDialog({
                         type="button"
                         onClick={() => setTaskStylePreset(style.value)}
                         aria-pressed={taskStylePreset === style.value}
-                        className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer ${
+                        className={`relative p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
                           taskStylePreset === style.value
                             ? "border-primary bg-primary/10 text-foreground ring-1 ring-primary/80 shadow-xs"
                             : "border-border bg-card text-muted-foreground hover:bg-secondary/40 hover:text-foreground"
                         }`}
                       >
-                        <div className="text-sm font-medium text-foreground leading-snug">{style.label}</div>
-                        <div className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="text-sm font-semibold text-foreground leading-snug">{style.label}</span>
+                          {taskStylePreset === style.value && (
+                            <span className="h-4 w-4 rounded-full bg-primary flex items-center justify-center text-primary-foreground shrink-0">
+                              <Check className="h-2.5 w-2.5 stroke-[3]" />
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-1 line-clamp-2 text-xs text-muted-foreground leading-relaxed">
                           {style.desc}
                         </div>
                       </button>
@@ -637,7 +648,7 @@ export function ProductionTaskDialog({
                   <div className="flex items-center justify-between border-b border-border/60 pb-2">
                     <span className="font-semibold text-sm text-foreground flex items-center gap-2">
                       <Film className="h-4 w-4 text-primary" />
-                      结果摘要
+                      成片规格画像
                     </span>
                     <Badge variant="outline" className="font-mono text-xs px-2 py-0.5">
                       {project.aspect_ratio} 画幅
@@ -645,379 +656,644 @@ export function ProductionTaskDialog({
                   </div>
                   <div className="grid grid-cols-2 gap-3 text-sm">
                     <div className="space-y-0.5">
-                      <span className="text-xs text-muted-foreground">镜头规划</span>
-                      <p className="font-mono font-medium text-foreground">
+                      <span className="text-xs text-muted-foreground">分镜篇幅</span>
+                      <p className="font-medium text-foreground truncate">
                         {productionMode === "knowledge"
-                          ? creationMode === "generate" ? `${targetSceneCount} 镜` : "文本拆分计算"
+                          ? creationMode === "generate" ? `${targetSceneCount} 镜 · 约 ${targetSceneCount * 4}s` : "文案拆解计算"
                           : productionMode === "drama" ? `第 ${episodeNumber} 集` : "创意角度驱动"}
                       </p>
                     </div>
                     <div className="space-y-0.5">
-                      <span className="text-xs text-muted-foreground">画面来源</span>
-                      <p className="font-medium text-foreground">{CONTENT_MODE_LABELS[contentMode]}</p>
+                      <span className="text-xs text-muted-foreground">画面风格</span>
+                      <p className="font-medium text-foreground truncate">{selectedStyle?.label || "简约火柴人"}</p>
                     </div>
-                    {showAdvanced && <div className="space-y-0.5">
-                      <span className="text-xs text-muted-foreground">配音</span>
+                    <div className="space-y-0.5">
+                      <span className="text-xs text-muted-foreground">旁白音色</span>
                       <p className="font-medium text-foreground truncate">{voiceDisplayName}</p>
-                    </div>}
-                    {showAdvanced && usesAiVisualStyle && (
-                      <div className="space-y-0.5">
-                        <span className="text-xs text-muted-foreground">视觉风格</span>
-                        <p className="font-medium text-foreground truncate">{selectedStyle?.label || "火柴人"}</p>
-                      </div>
-                    )}
+                    </div>
+                    <div className="space-y-0.5">
+                      <span className="text-xs text-muted-foreground">事实核验</span>
+                      <p className={`font-medium truncate ${enableResearch ? "text-primary" : "text-muted-foreground"}`}>
+                        {enableResearch ? "已开启联网核对" : "未开启"}
+                      </p>
+                    </div>
                   </div>
                 </div>
 
-                {/* TTS Voice & Speed */}
-                {showAdvanced && <div id="production-setting-voice" className="space-y-2.5 border-t border-border pt-3">
-                  <div className="flex items-center justify-between">
-                    <label htmlFor="studio-voice" className="text-sm font-medium text-foreground flex items-center gap-2">
-                      <Volume2 className="h-4 w-4 text-primary" />
-                      <span>旁白配音音色</span>
-                    </label>
-                    <span className="font-mono text-xs text-muted-foreground">{taskSpeed.toFixed(1)}x 语速</span>
+                {/* Knowledge Mode: Target Scene Count (Core spec) */}
+                {productionMode === "knowledge" && creationMode === "generate" && (
+                  <div className="space-y-2.5 rounded-xl border border-border bg-card/60 p-3.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold text-foreground">分镜篇幅规划</span>
+                      <span className="font-mono text-xs text-primary font-medium">
+                        目标 {targetSceneCount} 镜 · 约 {targetSceneCount * 4} 秒
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-5 gap-1.5">
+                      {SCENE_COUNT_PRESETS.map((preset) => (
+                        <button
+                          key={preset.count}
+                          type="button"
+                          onClick={() => setTargetSceneCount(preset.count)}
+                          aria-pressed={targetSceneCount === preset.count}
+                          className={`min-h-11 px-1 rounded-lg text-center border transition-all cursor-pointer select-none ${
+                            targetSceneCount === preset.count
+                              ? "bg-primary text-primary-foreground border-primary shadow-xs font-semibold"
+                              : "bg-card text-muted-foreground border-border hover:bg-secondary hover:text-foreground"
+                          }`}
+                        >
+                          <div className="text-xs font-bold font-mono">{preset.count} 镜</div>
+                          <div className="text-[10px] opacity-80 mt-0.5">{preset.desc.split(" ")[0]}</div>
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                  <Select
-                    id="studio-voice"
-                    value={taskVoiceId}
-                    onChange={(e) => setTaskVoiceId(e.target.value)}
-                    className="h-9 text-sm"
-                  >
-                    <option value="">使用系统默认音色</option>
-                    {taskVoiceId && !taskVoices.some((v) => v.id === taskVoiceId) && (
-                      <option value={taskVoiceId}>{taskVoiceId}</option>
-                    )}
-                    {taskVoices.map((v) => (
-                      <option key={v.id} value={v.id}>
-                        {v.name} · {v.locale}
-                      </option>
-                    ))}
-                  </Select>
-                  {isVoicesLoading && <p className="text-xs text-muted-foreground">加载发音人音色列表中…</p>}
-                  {isVoicesError && (
-                    <p className="text-xs text-destructive flex items-center gap-1">
-                      <span>音色列表加载失败</span>
-                      <button type="button" onClick={() => refetchVoices()} className="underline ml-1">重试</button>
-                    </p>
-                  )}
+                )}
 
-                  {/* Speed selector chips */}
-                  <div className="flex items-center gap-2 pt-0.5">
-                    {SPEED_PRESETS.map((spd) => (
-                      <button
-                        key={spd}
-                        type="button"
-                        onClick={() => setTaskSpeed(spd)}
-                        aria-pressed={Math.abs(taskSpeed - spd) < 0.05}
-                        className={`min-h-11 flex-1 rounded-md text-xs font-mono transition-colors cursor-pointer ${
-                          Math.abs(taskSpeed - spd) < 0.05
-                            ? "bg-primary text-primary-foreground font-semibold shadow-xs"
-                            : "bg-card text-muted-foreground hover:bg-secondary hover:text-foreground border border-border"
-                        }`}
-                      >
-                        {spd}x
-                      </button>
-                    ))}
-                  </div>
-                </div>}
-
-                {/* Visual Mode & Template */}
-                {showAdvanced && <div id="production-setting-visual" className="space-y-2.5 pt-3 border-t border-border">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div className="space-y-1.5">
-                      <label htmlFor="studio-content-mode" className="text-sm font-medium text-foreground">
-                        画面来源
+                {/* TTS Voice & Speed (Visible in knowledge, or when showAdvanced in other modes) */}
+                {(productionMode === "knowledge" || showAdvanced) && (
+                  <div id="production-setting-voice" className="space-y-2.5 border-t border-border pt-3">
+                    <div className="flex items-center justify-between">
+                      <label htmlFor="studio-voice" className="text-sm font-medium text-foreground flex items-center gap-2">
+                        <Volume2 className="h-4 w-4 text-primary" />
+                        <span>旁白配音音色</span>
                       </label>
-                      <Select
-                        id="studio-content-mode"
-                        value={contentMode}
-                        aria-describedby="studio-content-mode-description"
-                        onChange={(e) => {
-                          const next = e.target.value as ContentMode;
-                          setContentMode(next);
-                        }}
-                        className="h-9 text-sm"
-                      >
-                        {CONTENT_MODE_GROUPS.map((group) => (
-                          <optgroup key={group.value} label={group.label}>
-                            {group.modes.map((mode) => (
-                              <option key={mode} value={mode}>
-                                {CONTENT_MODE_SPECS[mode].label}
-                              </option>
-                            ))}
-                          </optgroup>
-                        ))}
-                      </Select>
-                      <p id="studio-content-mode-description" className="text-xs text-muted-foreground">
-                        {CONTENT_MODE_SPECS[contentMode].selectionHint}
-                      </p>
+                      <span className="font-mono text-xs text-muted-foreground">{taskSpeed.toFixed(1)}x 语速</span>
                     </div>
-
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between">
-                        <label htmlFor="studio-template" className="text-sm font-medium text-foreground">
-                          排版模板
-                        </label>
-                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 border-border text-muted-foreground font-mono">
-                          {projectAspect} 画幅
-                        </Badge>
-                      </div>
-                      <Select
-                        id="studio-template"
-                        value={selectedTemplateId}
-                        onChange={(e) => {
-                          const next = e.target.value;
-                          setSelectedTemplateId(next);
-                          const item = availableTemplates.find((candidate) => candidate.id === next) ||
-                            templates.find((candidate) => candidate.id === next);
-                          setTemplateParams(item?.default_params || {});
-                        }}
-                        className="h-9 text-sm"
-                        disabled={availableTemplates.length === 0}
-                      >
-                        {availableTemplates.length === 0 ? (
-                          <option value="">当前画幅暂无可用模板</option>
-                        ) : (
-                          availableTemplates.map((item) => (
-                            <option key={item.id} value={item.id}>
-                              {formatTemplateName(item.id, item.name)}
-                            </option>
-                          ))
-                        )}
-                      </Select>
-                    </div>
-                  </div>
-
-                  {/* Selected Template Compact Preview */}
-                  {selectedTemplate && (
-                    <div className="flex items-center gap-3 p-2.5 rounded-lg border border-border bg-card/60">
-                      <div className={`relative shrink-0 rounded-md overflow-hidden bg-secondary/40 border border-border flex items-center justify-center ${
-                        projectAspect === "16:9"
-                          ? "w-20 aspect-[16/9]"
-                          : projectAspect === "1:1"
-                          ? "w-14 aspect-square"
-                          : "w-11 aspect-[9/16]"
-                      }`}>
-                        <img
-                          src={`/api/v1/templates/previews/${encodeURIComponent(selectedTemplate.id)}`}
-                          alt={`${formatTemplateName(selectedTemplate.id, selectedTemplate.name)} 预览`}
-                          className="h-full w-full object-cover"
-                          onError={(e) => {
-                            (e.currentTarget as HTMLElement).style.display = "none";
-                          }}
-                        />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1.5">
-                          <p className="text-xs font-medium text-foreground truncate">
-                            {formatTemplateName(selectedTemplate.id, selectedTemplate.name)}
-                          </p>
-                          <Badge variant="secondary" className="text-[10px] px-1 py-0 h-4 shrink-0 font-mono">
-                            {selectedTemplate.aspect_ratio || projectAspect}
-                          </Badge>
-                        </div>
-                        <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
-                          {selectedTemplate.parameter_schema?.length
-                            ? `${selectedTemplate.parameter_schema.length} 项可调参数 · 支持 ${selectedTemplate.supported_content_modes.length} 种画面来源`
-                            : `支持 ${selectedTemplate.supported_content_modes.length} 种画面来源`}
-                        </p>
-                      </div>
-                    </div>
-                  )}
-
-                  {availableTemplates.length === 0 && (
-                    <p className="text-xs text-amber-500/90 dark:text-amber-400/90 bg-amber-500/10 border border-amber-500/20 rounded-md p-2">
-                      当前项目画幅（{projectAspect}）下未找到匹配“{CONTENT_MODE_LABELS[contentMode]}”模式的排版模板，请切换画面来源或联系管理员添加模板。
-                    </p>
-                  )}
-
-                  {/* If uploaded_asset is chosen */}
-                  {contentMode === "uploaded_asset" && (
-                    <div className="space-y-1.5">
-                      <label htmlFor="studio-source-asset" className="text-sm font-medium text-foreground">
-                        默认绑定我的素材 <span className="text-destructive">*</span>
-                      </label>
-                      <Select
-                        id="studio-source-asset"
-                        value={sourceAssetId}
-                        onChange={(e) => setSourceAssetId(e.target.value)}
-                        required
-                        className="h-9 text-sm"
-                      >
-                        <option value="">请选择图片或视频素材</option>
-                        {assets
-                          .filter((asset) => asset.asset_type === "image" || asset.asset_type === "video")
-                          .map((asset) => (
-                            <option key={asset.id} value={asset.id}>
-                              {asset.file_name}（{ASSET_TYPE_LABELS[asset.asset_type] || asset.asset_type}）
-                            </option>
-                          ))}
-                      </Select>
-                    </div>
-                  )}
-                </div>}
-
-                {/* Background Music Section */}
-                {showAdvanced && <div id="production-setting-bgm" className="space-y-2.5 pt-3 border-t border-border">
-                  <div className="flex items-center justify-between">
-                    <label className="text-sm font-medium text-foreground flex items-center gap-2">
-                      <Music className="h-4 w-4 text-primary" />
-                      <span>背景音乐</span>
-                    </label>
-                    <label htmlFor="studio-bgm-toggle" className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
-                      <input
-                        id="studio-bgm-toggle"
-                        type="checkbox"
-                        checked={bgmEnabled}
-                        onChange={(e) => setBgmEnabled(e.target.checked)}
-                        className="rounded border-border text-primary focus:ring-primary h-4 w-4 cursor-pointer"
-                      />
-                      <span>启用</span>
-                    </label>
-                  </div>
-
-                  {bgmEnabled && (
-                    <div className="space-y-2.5 rounded-lg bg-card/80 p-3 border border-border">
-                      <Select
-                        id="studio-bgm-select"
-                        value={bgmAssetId}
-                        onChange={(e) => setBgmAssetId(e.target.value)}
-                        className="h-9 text-sm"
-                      >
-                        <option value="">使用项目默认背景音乐</option>
-                        {projectBgm.map((asset) => (
-                          <option key={asset.id} value={asset.id}>
-                            {asset.file_name}
-                          </option>
-                        ))}
-                      </Select>
-
-                      <div className="flex items-center gap-2.5 text-xs text-muted-foreground">
-                        <span className="shrink-0">音量</span>
-                        <input
-                          type="range"
-                          min="0"
-                          max="0.5"
-                          step="0.01"
-                          value={bgmVolume}
-                          onChange={(e) => setBgmVolume(Number(e.target.value))}
-                          className="flex-1 h-1.5 bg-secondary rounded-lg appearance-none cursor-pointer accent-primary"
-                        />
-                        <span className="font-mono w-8 text-right text-foreground font-medium">
-                          {bgmVolume.toFixed(2)}
-                        </span>
-                      </div>
-
-                      {bgmAssetId && projectBgm.find((a) => a.id === bgmAssetId) && (
-                        <audio
-                          controls
-                          preload="none"
-                          className="h-8 w-full mt-1"
-                          src={assetFileUrl(projectBgm.find((a) => a.id === bgmAssetId)!.file_path)}
-                        />
+                    <Select
+                      id="studio-voice"
+                      value={taskVoiceId}
+                      onChange={(e) => setTaskVoiceId(e.target.value)}
+                      className="h-9 text-sm"
+                    >
+                      <option value="">使用系统默认音色</option>
+                      {taskVoiceId && !taskVoices.some((v) => v.id === taskVoiceId) && (
+                        <option value={taskVoiceId}>{taskVoiceId}</option>
                       )}
-                    </div>
-                  )}
-                </div>}
+                      {taskVoices.map((v) => (
+                        <option key={v.id} value={v.id}>
+                          {v.name} · {v.locale}
+                        </option>
+                      ))}
+                    </Select>
+                    {isVoicesLoading && <p className="text-xs text-muted-foreground">加载发音人音色列表中…</p>}
+                    {isVoicesError && (
+                      <p className="text-xs text-destructive flex items-center gap-1">
+                        <span>音色列表加载失败</span>
+                        <button type="button" onClick={() => refetchVoices()} className="underline ml-1">重试</button>
+                      </p>
+                    )}
 
-                {/* Additional generation settings */}
-                {showAdvanced && (
-                    <div id="production-setting-generation" className="mt-3 space-y-3 rounded-lg border border-border bg-card/80 p-3.5">
-                      {/* Knowledge planning controls */}
-                      {productionMode === "knowledge" && creationMode === "generate" && (
-                        <div className="space-y-2.5 pb-2.5 border-b border-border/60">
-                          <div className="flex items-center justify-between">
-                            <span className="text-xs font-medium text-foreground">分镜规划</span>
-                            <span className="font-mono text-[11px] text-primary font-medium">
-                              目标 {targetSceneCount} 镜 · 约 {targetSceneCount * 4} 秒
-                            </span>
-                          </div>
-                          <div className="grid grid-cols-5 gap-2">
-                            {SCENE_COUNT_PRESETS.map((preset) => (
-                              <button
-                                key={preset.count}
-                                type="button"
-                                onClick={() => setTargetSceneCount(preset.count)}
-                                aria-pressed={targetSceneCount === preset.count}
-                                className={`min-h-11 px-1.5 rounded-lg text-center border transition-all cursor-pointer select-none ${
-                                  targetSceneCount === preset.count
-                                    ? "bg-primary text-primary-foreground border-primary shadow-xs font-semibold"
-                                    : "bg-card text-muted-foreground border-border hover:bg-secondary hover:text-foreground"
-                                }`}
-                              >
-                                <div className="text-xs font-bold font-mono">{preset.count} 镜</div>
-                                <div className="text-[10px] opacity-80 mt-0.5">{preset.desc.split(" ")[0]}</div>
-                              </button>
-                            ))}
-                          </div>
+                    {/* Speed selector chips */}
+                    <div className="flex items-center gap-2 pt-0.5">
+                      {SPEED_PRESETS.map((spd) => (
+                        <button
+                          key={spd}
+                          type="button"
+                          onClick={() => setTaskSpeed(spd)}
+                          aria-pressed={Math.abs(taskSpeed - spd) < 0.05}
+                          className={`min-h-9 flex-1 rounded-md text-xs font-mono transition-colors cursor-pointer ${
+                            Math.abs(taskSpeed - spd) < 0.05
+                              ? "bg-primary text-primary-foreground font-semibold shadow-xs"
+                              : "bg-card text-muted-foreground hover:bg-secondary hover:text-foreground border border-border"
+                          }`}
+                        >
+                          {spd}x
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Advanced Technical Settings: Collapsible in Knowledge mode, or expanded in other modes when showAdvanced */}
+                {productionMode === "knowledge" ? (
+                  <div className="border-t border-border pt-3">
+                    <button
+                      type="button"
+                      onClick={() => setShowAdvanced((v) => !v)}
+                      aria-expanded={showAdvanced}
+                      className="flex min-h-11 w-full items-center justify-between rounded-xl border border-border/80 bg-card/60 px-3.5 py-2.5 text-left text-sm font-medium transition-colors hover:bg-card hover:text-foreground cursor-pointer"
+                    >
+                      <span className="flex items-center gap-2">
+                        <Settings2 aria-hidden="true" className="h-4 w-4 text-primary" />
+                        <span>高级制作设置</span>
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground font-normal hidden sm:inline truncate max-w-[180px]">
+                          {CONTENT_MODE_LABELS[contentMode]} · {bgmEnabled ? "含BGM" : "无BGM"}
+                        </span>
+                        <ChevronDown
+                          aria-hidden="true"
+                          className={`h-4 w-4 text-muted-foreground transition-transform duration-200 ${
+                            showAdvanced ? "rotate-180" : ""
+                          }`}
+                        />
+                      </div>
+                    </button>
+                    {showAdvanced && (
+                      <div className="mt-3 space-y-4 rounded-xl border border-border/80 bg-card/40 p-3.5">
+                        {/* Visual Mode & Template */}
+                        <div id="production-setting-visual" className="space-y-2.5">
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             <div className="space-y-1.5">
-                              <label htmlFor="studio-hook" className="text-xs text-muted-foreground">开场表达</label>
+                              <label htmlFor="studio-content-mode" className="text-xs font-medium text-foreground">
+                                画面来源
+                              </label>
                               <Select
-                                id="studio-hook"
-                                value={taskHookType}
-                                onChange={(event) => setTaskHookType(event.target.value)}
+                                id="studio-content-mode"
+                                value={contentMode}
+                                aria-describedby="studio-content-mode-description"
+                                onChange={(e) => {
+                                  const next = e.target.value as ContentMode;
+                                  setContentMode(next);
+                                }}
                                 className="h-9 text-sm"
                               >
-                                {HOOK_OPTIONS.map((hook) => (
-                                  <option key={hook.value} value={hook.value}>{hook.label}</option>
+                                {CONTENT_MODE_GROUPS.map((group) => (
+                                  <optgroup key={group.value} label={group.label}>
+                                    {group.modes.map((mode) => (
+                                      <option key={mode} value={mode}>
+                                        {CONTENT_MODE_SPECS[mode].label}
+                                      </option>
+                                    ))}
+                                  </optgroup>
                                 ))}
                               </Select>
+                              <p id="studio-content-mode-description" className="text-[11px] text-muted-foreground">
+                                {CONTENT_MODE_SPECS[contentMode].selectionHint}
+                              </p>
                             </div>
-                            <div className="flex items-end text-xs leading-relaxed text-muted-foreground">
-                              镜头数只影响规划目标；最终场景会根据旁白和信息量调整。
+
+                            <div className="space-y-1.5">
+                              <div className="flex items-center justify-between">
+                                <label htmlFor="studio-template" className="text-xs font-medium text-foreground">
+                                  排版模板
+                                </label>
+                                <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 border-border text-muted-foreground font-mono">
+                                  {projectAspect} 画幅
+                                </Badge>
+                              </div>
+                              <Select
+                                id="studio-template"
+                                value={selectedTemplateId}
+                                onChange={(e) => {
+                                  const next = e.target.value;
+                                  setSelectedTemplateId(next);
+                                  const item = availableTemplates.find((candidate) => candidate.id === next) ||
+                                    templates.find((candidate) => candidate.id === next);
+                                  setTemplateParams(item?.default_params || {});
+                                }}
+                                className="h-9 text-sm"
+                                disabled={availableTemplates.length === 0}
+                              >
+                                {availableTemplates.length === 0 ? (
+                                  <option value="">当前画幅暂无可用模板</option>
+                                ) : (
+                                  availableTemplates.map((item) => (
+                                    <option key={item.id} value={item.id}>
+                                      {formatTemplateName(item.id, item.name)}
+                                    </option>
+                                  ))
+                                )}
+                              </Select>
                             </div>
                           </div>
+
+                          {/* Selected Template Compact Preview */}
+                          {selectedTemplate && (
+                            <div className="flex items-center gap-3 p-2.5 rounded-lg border border-border bg-card/60">
+                              <div className={`relative shrink-0 rounded-md overflow-hidden bg-secondary/40 border border-border flex items-center justify-center ${
+                                projectAspect === "16:9"
+                                  ? "w-16 aspect-[16/9]"
+                                  : projectAspect === "1:1"
+                                  ? "w-12 aspect-square"
+                                  : "w-10 aspect-[9/16]"
+                              }`}>
+                                <img
+                                  src={`/api/v1/templates/previews/${encodeURIComponent(selectedTemplate.id)}`}
+                                  alt={`${formatTemplateName(selectedTemplate.id, selectedTemplate.name)} 预览`}
+                                  className="h-full w-full object-cover"
+                                  onError={(e) => {
+                                    (e.currentTarget as HTMLElement).style.display = "none";
+                                  }}
+                                />
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-1.5">
+                                  <p className="text-xs font-medium text-foreground truncate">
+                                    {formatTemplateName(selectedTemplate.id, selectedTemplate.name)}
+                                  </p>
+                                  <Badge variant="secondary" className="text-[10px] px-1 py-0 h-4 shrink-0 font-mono">
+                                    {selectedTemplate.aspect_ratio || projectAspect}
+                                  </Badge>
+                                </div>
+                                <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
+                                  {selectedTemplate.parameter_schema?.length
+                                    ? `${selectedTemplate.parameter_schema.length} 项可调参数 · 支持 ${selectedTemplate.supported_content_modes.length} 种画面来源`
+                                    : `支持 ${selectedTemplate.supported_content_modes.length} 种画面来源`}
+                                </p>
+                              </div>
+                            </div>
+                          )}
+
+                          {availableTemplates.length === 0 && (
+                            <p className="text-xs text-amber-500/90 dark:text-amber-400/90 bg-amber-500/10 border border-amber-500/20 rounded-md p-2">
+                              当前项目画幅（{projectAspect}）下未找到匹配“{CONTENT_MODE_LABELS[contentMode]}”模式的排版模板，请切换画面来源或联系管理员添加模板。
+                            </p>
+                          )}
+
+                          {contentMode === "uploaded_asset" && (
+                            <div className="space-y-1.5">
+                              <label htmlFor="studio-source-asset" className="text-xs font-medium text-foreground">
+                                默认绑定我的素材 <span className="text-destructive">*</span>
+                              </label>
+                              <Select
+                                id="studio-source-asset"
+                                value={sourceAssetId}
+                                onChange={(e) => setSourceAssetId(e.target.value)}
+                                required
+                                className="h-9 text-sm"
+                              >
+                                <option value="">请选择图片或视频素材</option>
+                                {assets
+                                  .filter((asset) => asset.asset_type === "image" || asset.asset_type === "video")
+                                  .map((asset) => (
+                                    <option key={asset.id} value={asset.id}>
+                                      {asset.file_name}（{ASSET_TYPE_LABELS[asset.asset_type] || asset.asset_type}）
+                                    </option>
+                                  ))}
+                              </Select>
+                            </div>
+                          )}
                         </div>
-                      )}
 
-                      {/* Workflows */}
-                      <div className="space-y-1.5">
-                        <label htmlFor="studio-img-workflow" className="text-xs text-muted-foreground">
-                          图像生成工作流
-                        </label>
-                        <Select
-                          id="studio-img-workflow"
-                          value={imageWorkflowId}
-                          onChange={(e) => setImageWorkflowId(e.target.value)}
-                          disabled={contentMode !== "generated_image"}
-                          className="h-9 text-sm"
-                        >
-                          <option value="">使用默认图像工作流</option>
-                          {workflows
-                            .filter((w) => w.type === "image")
-                            .map((w) => (
-                              <option key={w.id} value={w.id}>
-                                {w.name}
-                              </option>
-                            ))}
-                        </Select>
+                        {/* Background Music Section */}
+                        <div id="production-setting-bgm" className="space-y-2 border-t border-border/80 pt-3">
+                          <div className="flex items-center justify-between">
+                            <label className="text-xs font-medium text-foreground flex items-center gap-1.5">
+                              <Music className="h-3.5 w-3.5 text-primary" />
+                              <span>背景音乐</span>
+                            </label>
+                            <label htmlFor="studio-bgm-toggle" className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+                              <input
+                                id="studio-bgm-toggle"
+                                type="checkbox"
+                                checked={bgmEnabled}
+                                onChange={(e) => setBgmEnabled(e.target.checked)}
+                                className="rounded border-border text-primary focus:ring-primary h-3.5 w-3.5 cursor-pointer accent-primary"
+                              />
+                              <span>启用</span>
+                            </label>
+                          </div>
+
+                          {bgmEnabled && (
+                            <div className="space-y-2 rounded-lg bg-card/80 p-2.5 border border-border">
+                              <Select
+                                id="studio-bgm-select"
+                                value={bgmAssetId}
+                                onChange={(e) => setBgmAssetId(e.target.value)}
+                                className="h-8 text-xs"
+                              >
+                                <option value="">使用项目默认背景音乐</option>
+                                {projectBgm.map((asset) => (
+                                  <option key={asset.id} value={asset.id}>
+                                    {asset.file_name}
+                                  </option>
+                                ))}
+                              </Select>
+
+                              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                <span className="shrink-0">音量</span>
+                                <input
+                                  type="range"
+                                  min="0"
+                                  max="0.5"
+                                  step="0.01"
+                                  value={bgmVolume}
+                                  onChange={(e) => setBgmVolume(Number(e.target.value))}
+                                  className="flex-1 h-1.5 bg-secondary rounded-lg appearance-none cursor-pointer accent-primary"
+                                />
+                                <span className="font-mono w-7 text-right text-foreground font-medium">
+                                  {bgmVolume.toFixed(2)}
+                                </span>
+                              </div>
+
+                              {bgmAssetId && projectBgm.find((a) => a.id === bgmAssetId) && (
+                                <audio
+                                  controls
+                                  preload="none"
+                                  className="h-7 w-full mt-1"
+                                  src={assetFileUrl(projectBgm.find((a) => a.id === bgmAssetId)!.file_path)}
+                                />
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* ComfyUI Workflows */}
+                        <div id="production-setting-generation" className="space-y-2 border-t border-border/80 pt-3">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-semibold text-foreground">底层生成工作流</span>
+                            <span className="text-[10px] text-muted-foreground font-normal">仅限 ComfyUI 专用</span>
+                          </div>
+
+                          <div className="space-y-1">
+                            <label htmlFor="studio-img-workflow" className="text-[11px] text-muted-foreground">
+                              图像生成工作流
+                            </label>
+                            <Select
+                              id="studio-img-workflow"
+                              value={imageWorkflowId}
+                              onChange={(e) => setImageWorkflowId(e.target.value)}
+                              disabled={contentMode !== "generated_image"}
+                              className="h-8 text-xs"
+                            >
+                              <option value="">使用默认图像工作流</option>
+                              {workflows
+                                .filter((w) => w.type === "image")
+                                .map((w) => (
+                                  <option key={w.id} value={w.id}>
+                                    {w.name}
+                                  </option>
+                                ))}
+                            </Select>
+                          </div>
+
+                          <div className="space-y-1">
+                            <label htmlFor="studio-video-workflow" className="text-[11px] text-muted-foreground">
+                              视频生成工作流
+                            </label>
+                            <Select
+                              id="studio-video-workflow"
+                              value={videoWorkflowId}
+                              onChange={(e) => setVideoWorkflowId(e.target.value)}
+                              disabled={contentMode !== "generated_video"}
+                              className="h-8 text-xs"
+                            >
+                              <option value="">使用默认视频工作流</option>
+                              {workflows
+                                .filter((w) => w.type === "video")
+                                .map((w) => (
+                                  <option key={w.id} value={w.id}>
+                                    {w.name}
+                                  </option>
+                                ))}
+                            </Select>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  showAdvanced && (
+                    <>
+                      {/* Visual Mode & Template */}
+                      <div id="production-setting-visual" className="space-y-2.5 pt-3 border-t border-border">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div className="space-y-1.5">
+                            <label htmlFor="studio-content-mode" className="text-sm font-medium text-foreground">
+                              画面来源
+                            </label>
+                            <Select
+                              id="studio-content-mode"
+                              value={contentMode}
+                              aria-describedby="studio-content-mode-description"
+                              onChange={(e) => {
+                                const next = e.target.value as ContentMode;
+                                setContentMode(next);
+                              }}
+                              className="h-9 text-sm"
+                            >
+                              {CONTENT_MODE_GROUPS.map((group) => (
+                                <optgroup key={group.value} label={group.label}>
+                                  {group.modes.map((mode) => (
+                                    <option key={mode} value={mode}>
+                                      {CONTENT_MODE_SPECS[mode].label}
+                                    </option>
+                                  ))}
+                                </optgroup>
+                              ))}
+                            </Select>
+                            <p id="studio-content-mode-description" className="text-xs text-muted-foreground">
+                              {CONTENT_MODE_SPECS[contentMode].selectionHint}
+                            </p>
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <div className="flex items-center justify-between">
+                              <label htmlFor="studio-template" className="text-sm font-medium text-foreground">
+                                排版模板
+                              </label>
+                              <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 border-border text-muted-foreground font-mono">
+                                {projectAspect} 画幅
+                              </Badge>
+                            </div>
+                            <Select
+                              id="studio-template"
+                              value={selectedTemplateId}
+                              onChange={(e) => {
+                                const next = e.target.value;
+                                setSelectedTemplateId(next);
+                                const item = availableTemplates.find((candidate) => candidate.id === next) ||
+                                  templates.find((candidate) => candidate.id === next);
+                                setTemplateParams(item?.default_params || {});
+                              }}
+                              className="h-9 text-sm"
+                              disabled={availableTemplates.length === 0}
+                            >
+                              {availableTemplates.length === 0 ? (
+                                <option value="">当前画幅暂无可用模板</option>
+                              ) : (
+                                availableTemplates.map((item) => (
+                                  <option key={item.id} value={item.id}>
+                                    {formatTemplateName(item.id, item.name)}
+                                  </option>
+                                ))
+                              )}
+                            </Select>
+                          </div>
+                        </div>
+
+                        {/* Selected Template Compact Preview */}
+                        {selectedTemplate && (
+                          <div className="flex items-center gap-3 p-2.5 rounded-lg border border-border bg-card/60">
+                            <div className={`relative shrink-0 rounded-md overflow-hidden bg-secondary/40 border border-border flex items-center justify-center ${
+                              projectAspect === "16:9"
+                                ? "w-20 aspect-[16/9]"
+                                : projectAspect === "1:1"
+                                ? "w-14 aspect-square"
+                                : "w-11 aspect-[9/16]"
+                            }`}>
+                              <img
+                                src={`/api/v1/templates/previews/${encodeURIComponent(selectedTemplate.id)}`}
+                                alt={`${formatTemplateName(selectedTemplate.id, selectedTemplate.name)} 预览`}
+                                className="h-full w-full object-cover"
+                                onError={(e) => {
+                                  (e.currentTarget as HTMLElement).style.display = "none";
+                                }}
+                              />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5">
+                                <p className="text-xs font-medium text-foreground truncate">
+                                  {formatTemplateName(selectedTemplate.id, selectedTemplate.name)}
+                                </p>
+                                <Badge variant="secondary" className="text-[10px] px-1 py-0 h-4 shrink-0 font-mono">
+                                  {selectedTemplate.aspect_ratio || projectAspect}
+                                </Badge>
+                              </div>
+                              <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
+                                {selectedTemplate.parameter_schema?.length
+                                  ? `${selectedTemplate.parameter_schema.length} 项可调参数 · 支持 ${selectedTemplate.supported_content_modes.length} 种画面来源`
+                                  : `支持 ${selectedTemplate.supported_content_modes.length} 种画面来源`}
+                              </p>
+                            </div>
+                          </div>
+                        )}
+
+                        {availableTemplates.length === 0 && (
+                          <p className="text-xs text-amber-500/90 dark:text-amber-400/90 bg-amber-500/10 border border-amber-500/20 rounded-md p-2">
+                            当前项目画幅（{projectAspect}）下未找到匹配“{CONTENT_MODE_LABELS[contentMode]}”模式的排版模板，请切换画面来源或联系管理员添加模板。
+                          </p>
+                        )}
+
+                        {contentMode === "uploaded_asset" && (
+                          <div className="space-y-1.5">
+                            <label htmlFor="studio-source-asset" className="text-sm font-medium text-foreground">
+                              默认绑定我的素材 <span className="text-destructive">*</span>
+                            </label>
+                            <Select
+                              id="studio-source-asset"
+                              value={sourceAssetId}
+                              onChange={(e) => setSourceAssetId(e.target.value)}
+                              required
+                              className="h-9 text-sm"
+                            >
+                              <option value="">请选择图片或视频素材</option>
+                              {assets
+                                .filter((asset) => asset.asset_type === "image" || asset.asset_type === "video")
+                                .map((asset) => (
+                                  <option key={asset.id} value={asset.id}>
+                                    {asset.file_name}（{ASSET_TYPE_LABELS[asset.asset_type] || asset.asset_type}）
+                                  </option>
+                                ))}
+                            </Select>
+                          </div>
+                        )}
                       </div>
 
-                      <div className="space-y-1.5">
-                        <label htmlFor="studio-video-workflow" className="text-xs text-muted-foreground">
-                          视频生成工作流
-                        </label>
-                        <Select
-                          id="studio-video-workflow"
-                          value={videoWorkflowId}
-                          onChange={(e) => setVideoWorkflowId(e.target.value)}
-                          disabled={contentMode !== "generated_video"}
-                          className="h-9 text-sm"
-                        >
-                          <option value="">使用默认视频工作流</option>
-                          {workflows
-                            .filter((w) => w.type === "video")
-                            .map((w) => (
-                              <option key={w.id} value={w.id}>
-                                {w.name}
-                              </option>
-                            ))}
-                        </Select>
+                      {/* Background Music Section */}
+                      <div id="production-setting-bgm" className="space-y-2.5 pt-3 border-t border-border">
+                        <div className="flex items-center justify-between">
+                          <label className="text-sm font-medium text-foreground flex items-center gap-2">
+                            <Music className="h-4 w-4 text-primary" />
+                            <span>背景音乐</span>
+                          </label>
+                          <label htmlFor="studio-bgm-toggle" className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+                            <input
+                              id="studio-bgm-toggle"
+                              type="checkbox"
+                              checked={bgmEnabled}
+                              onChange={(e) => setBgmEnabled(e.target.checked)}
+                              className="rounded border-border text-primary focus:ring-primary h-4 w-4 cursor-pointer"
+                            />
+                            <span>启用</span>
+                          </label>
+                        </div>
+
+                        {bgmEnabled && (
+                          <div className="space-y-2.5 rounded-lg bg-card/80 p-3 border border-border">
+                            <Select
+                              id="studio-bgm-select"
+                              value={bgmAssetId}
+                              onChange={(e) => setBgmAssetId(e.target.value)}
+                              className="h-9 text-sm"
+                            >
+                              <option value="">使用项目默认背景音乐</option>
+                              {projectBgm.map((asset) => (
+                                <option key={asset.id} value={asset.id}>
+                                  {asset.file_name}
+                                </option>
+                              ))}
+                            </Select>
+
+                            <div className="flex items-center gap-2.5 text-xs text-muted-foreground">
+                              <span className="shrink-0">音量</span>
+                              <input
+                                type="range"
+                                min="0"
+                                max="0.5"
+                                step="0.01"
+                                value={bgmVolume}
+                                onChange={(e) => setBgmVolume(Number(e.target.value))}
+                                className="flex-1 h-1.5 bg-secondary rounded-lg appearance-none cursor-pointer accent-primary"
+                              />
+                              <span className="font-mono w-8 text-right text-foreground font-medium">
+                                {bgmVolume.toFixed(2)}
+                              </span>
+                            </div>
+
+                            {bgmAssetId && projectBgm.find((a) => a.id === bgmAssetId) && (
+                              <audio
+                                controls
+                                preload="none"
+                                className="h-8 w-full mt-1"
+                                src={assetFileUrl(projectBgm.find((a) => a.id === bgmAssetId)!.file_path)}
+                              />
+                            )}
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  )}
+
+                      {/* Additional generation settings */}
+                      <div id="production-setting-generation" className="mt-3 space-y-3 rounded-lg border border-border bg-card/80 p-3.5">
+                        <div className="space-y-1.5">
+                          <label htmlFor="studio-img-workflow" className="text-xs text-muted-foreground">
+                            图像生成工作流
+                          </label>
+                          <Select
+                            id="studio-img-workflow"
+                            value={imageWorkflowId}
+                            onChange={(e) => setImageWorkflowId(e.target.value)}
+                            disabled={contentMode !== "generated_image"}
+                            className="h-9 text-sm"
+                          >
+                            <option value="">使用默认图像工作流</option>
+                            {workflows
+                              .filter((w) => w.type === "image")
+                              .map((w) => (
+                                <option key={w.id} value={w.id}>
+                                  {w.name}
+                                </option>
+                              ))}
+                          </Select>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label htmlFor="studio-video-workflow" className="text-xs text-muted-foreground">
+                            视频生成工作流
+                          </label>
+                          <Select
+                            id="studio-video-workflow"
+                            value={videoWorkflowId}
+                            onChange={(e) => setVideoWorkflowId(e.target.value)}
+                            disabled={contentMode !== "generated_video"}
+                            className="h-9 text-sm"
+                          >
+                            <option value="">使用默认视频工作流</option>
+                            {workflows
+                              .filter((w) => w.type === "video")
+                              .map((w) => (
+                                <option key={w.id} value={w.id}>
+                                  {w.name}
+                                </option>
+                              ))}
+                          </Select>
+                        </div>
+                      </div>
+                    </>
+                  )
+                )}
               </div>
             </div>
           </div>

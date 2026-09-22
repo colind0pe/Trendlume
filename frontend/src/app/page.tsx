@@ -112,21 +112,21 @@ export default function DashboardPage() {
           {[
             {
               mode: "knowledge" as const,
-              href: "/projects",
+              href: "/projects?mode=knowledge",
               icon: BookOpen,
-              action: "新建 Knowledge 项目",
+              action: "进入知识视频项目",
             },
             {
               mode: "commerce" as const,
-              href: "/projects",
+              href: "/projects?mode=commerce",
               icon: ShoppingBag,
-              action: "进入 Commerce 项目",
+              action: "进入商品视频项目",
             },
             {
               mode: "drama" as const,
-              href: "/projects",
+              href: "/projects?mode=drama",
               icon: Clapperboard,
-              action: "进入 Drama 项目",
+              action: "进入短剧项目",
             },
           ].map(({ mode, href, icon: Icon, action }) => (
             <Card

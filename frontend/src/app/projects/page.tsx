@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, FolderKanban, LayoutGrid, List, Plus, Trash2 } from "lucide-react";
 import { api } from "@/lib/api-client";
@@ -20,17 +21,38 @@ import { ProductionModeSelector } from "@/components/projects/production-mode-se
 import { PRODUCTION_MODE_SPECS } from "@/lib/ui-constants";
 import type { ProductionMode } from "@/lib/types";
 
-export default function ProjectsPage() {
+const isProductionMode = (value: unknown): value is ProductionMode =>
+  value === "knowledge" || value === "commerce" || value === "drama";
+
+export default function ProjectsPage({
+  searchParams,
+}: {
+  searchParams?: { mode?: string | string[] };
+}) {
+  const router = useRouter();
   const queryClient = useQueryClient();
+  const requestedMode = Array.isArray(searchParams?.mode) ? searchParams?.mode[0] : searchParams?.mode;
   const [viewMode, setViewMode] = React.useState<"grid" | "list">("grid");
   const [searchQuery, setSearchQuery] = React.useState("");
   const [aspectFilter, setAspectFilter] = React.useState<string>("all");
+  const [modeFilter, setModeFilter] = React.useState<ProductionMode | "all">(
+    isProductionMode(requestedMode) ? requestedMode : "all",
+  );
   const [isCreateOpen, setIsCreateOpen] = React.useState(false);
   const [name, setName] = React.useState("");
   const [description, setDescription] = React.useState("");
   const [aspectRatio, setAspectRatio] = React.useState("9:16");
   const [primaryProductionMode, setPrimaryProductionMode] = React.useState<ProductionMode>("knowledge");
   const [projectToDelete, setProjectToDelete] = React.useState<{ id: string; name: string } | null>(null);
+
+  React.useEffect(() => {
+    setModeFilter(isProductionMode(requestedMode) ? requestedMode : "all");
+  }, [requestedMode]);
+
+  const changeModeFilter = (mode: ProductionMode | "all") => {
+    setModeFilter(mode);
+    router.replace(mode === "all" ? "/projects" : `/projects?mode=${mode}`, { scroll: false });
+  };
 
   const { data: projects = [], isLoading } = useQuery({
     queryKey: ["projects"],
@@ -44,9 +66,16 @@ export default function ProjectsPage() {
         project.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         (project.description && project.description.toLowerCase().includes(searchQuery.toLowerCase()));
       const matchesAspect = aspectFilter === "all" || project.aspect_ratio === aspectFilter;
-      return matchesSearch && matchesAspect;
+      const matchesMode = modeFilter === "all" || project.mode === modeFilter;
+      return matchesSearch && matchesAspect && matchesMode;
     });
-  }, [projects, searchQuery, aspectFilter]);
+  }, [projects, searchQuery, aspectFilter, modeFilter]);
+
+  const countsByMode = React.useMemo(() => {
+    const counts = { all: projects.length, knowledge: 0, commerce: 0, drama: 0 };
+    projects.forEach((project) => counts[project.mode]++);
+    return counts;
+  }, [projects]);
 
   const countsByAspect = React.useMemo(() => {
     const counts = { all: projects.length, "9:16": 0, "16:9": 0, "1:1": 0 };
@@ -130,8 +159,48 @@ export default function ProjectsPage() {
       />
 
       {/* Search & Filter Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div className="inline-flex h-9 items-center justify-start gap-1 rounded-lg glass-pill p-1 text-muted-foreground overflow-x-auto no-scrollbar shadow-xs" role="tablist" aria-label="按画幅筛选">
+      <div className="space-y-3 rounded-xl border border-border/70 bg-card/40 p-3 sm:p-4">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+          <div className="inline-flex h-9 max-w-full items-center justify-start gap-1 overflow-x-auto rounded-lg glass-pill p-1 text-muted-foreground no-scrollbar shadow-xs" role="tablist" aria-label="按内容赛道筛选">
+            {[
+              { id: "all" as const, label: "全部赛道", count: countsByMode.all },
+              { id: "knowledge" as const, label: "知识视频", count: countsByMode.knowledge },
+              { id: "commerce" as const, label: "商品视频", count: countsByMode.commerce },
+              { id: "drama" as const, label: "短剧", count: countsByMode.drama },
+            ].map((chip) => {
+              const isActive = modeFilter === chip.id;
+              return (
+                <button
+                  key={chip.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={isActive}
+                  onClick={() => changeModeFilter(chip.id)}
+                  className={`inline-flex h-7 items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-3 text-xs font-medium transition-all duration-150 ease-out sm:text-sm ${
+                    isActive
+                      ? "border border-border/80 bg-card font-semibold text-foreground shadow-xs"
+                      : "text-muted-foreground hover:bg-card/40 hover:text-foreground"
+                  }`}
+                >
+                  <span>{chip.label}</span>
+                  <span className={`font-mono text-xs tabular-nums ${isActive ? "font-semibold text-foreground/85" : "opacity-60"}`}>({chip.count})</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="w-full xl:w-72">
+            <SearchInput
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onClear={() => setSearchQuery("")}
+              placeholder="搜索项目名称或简介…"
+              className="h-9 text-sm"
+            />
+          </div>
+        </div>
+
+        <div className="inline-flex h-9 max-w-full items-center justify-start gap-1 overflow-x-auto rounded-lg glass-pill p-1 text-muted-foreground no-scrollbar shadow-xs" role="tablist" aria-label="按画幅筛选">
           {[
             { id: "all", label: "全部画幅", count: countsByAspect.all },
             { id: "9:16", label: "竖屏 9:16", count: countsByAspect["9:16"] },
@@ -160,16 +229,6 @@ export default function ProjectsPage() {
             );
           })}
         </div>
-
-        <div className="w-full sm:w-72">
-          <SearchInput
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            onClear={() => setSearchQuery("")}
-            placeholder="搜索项目名称或简介…"
-            className="h-9 text-sm"
-          />
-        </div>
       </div>
 
       {isLoading ? (
@@ -182,7 +241,7 @@ export default function ProjectsPage() {
         <EmptyState
           icon={FolderKanban}
           title="未找到匹配的项目"
-          description="尝试更改搜索关键词或画幅筛选条件。"
+          description="尝试更改搜索关键词、内容赛道或画幅筛选条件。"
           action={(
             <Button
               variant="outline"
@@ -190,6 +249,7 @@ export default function ProjectsPage() {
               onClick={() => {
                 setSearchQuery("");
                 setAspectFilter("all");
+                changeModeFilter("all");
               }}
               className="h-8 text-xs sm:text-sm"
             >
