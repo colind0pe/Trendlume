@@ -2,6 +2,7 @@ import json
 from unittest.mock import AsyncMock
 
 import pytest
+
 from src.schemas.generation import (
     PlatformMetadata,
     ScriptGenerateRequest,

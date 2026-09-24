@@ -1,6 +1,6 @@
 {
   "name": "trendlume-standalone-build",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Build-time runtime binaries for the Trendlume standalone executable",
   "dependencies": {

@@ -15,7 +15,11 @@ from uuid import uuid4
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.domain.production_workflows import ProductionWorkflow, get_production_workflow
 from src.models.asset import AssetModel
+from src.models.product import ProductAssetModel, ProductModel
+from src.models.production_context import ProductionContextSnapshotModel
+from src.models.project import ProjectAssetBindingModel
 from src.models.task import TaskModel
 from src.models.workflow import (
     WorkflowArtifactModel,
@@ -25,7 +29,6 @@ from src.models.workflow import (
 )
 from src.services.media_probe import MediaProbeService
 
-STEP_KEYS = ('topic', 'research', 'planning', 'script', 'storyboard', 'assets', 'voice', 'subtitles', 'composition', 'export')
 SUCCESS_STATUSES = ('completed', 'completed_with_warning', 'skipped', 'reused')
 _SECRET_KEYS = {
     'api_key', 'apikey', 'password', 'secret', 'token', 'access_token',
@@ -125,11 +128,19 @@ class LeaseLostError(asyncio.CancelledError):
 
 
 class WorkflowRuntime:
-    def __init__(self, db: AsyncSession, storage_root: Path, job_id: str, lease_token: str):
+    def __init__(
+        self,
+        db: AsyncSession,
+        storage_root: Path,
+        job_id: str,
+        lease_token: str,
+        workflow: ProductionWorkflow | None = None,
+    ):
         self.db = db
         self.root = storage_root.resolve()
         self.job_id = job_id
         self.lease_token = lease_token
+        self.workflow = workflow or get_production_workflow(None)
 
     async def assert_lease(self):
         # A conditional write serializes against reclaim/cancel in the same transaction.
@@ -175,14 +186,22 @@ class WorkflowRuntime:
         return target
 
     async def begin(self, step_key: str, inputs: dict, unit_key: str = '', input_artifacts=None, force: bool = False) -> WorkflowStepRunModel:
-        if step_key not in STEP_KEYS:
+        if not self.workflow.has_stage(step_key):
             raise ValueError(f'Unknown workflow stage: {step_key}')
         dependencies = list(input_artifacts or [])
         job = await self.db.get(WorkflowJobModel, self.job_id)
         if job is None:
             raise LeaseLostError('Workflow job does not exist')
         task_id = job.task_id
-        payload = redact(inputs)
+        snapshot = await self.db.get(
+            ProductionContextSnapshotModel, job.production_context_snapshot_id
+        )
+        if snapshot is None:
+            raise LeaseLostError('Workflow job snapshot does not exist')
+        context_hash = snapshot.context_hash
+        fingerprint_inputs = dict(inputs or {})
+        fingerprint_inputs["_production_context_hash"] = context_hash
+        payload = redact(fingerprint_inputs)
         # Preserve producer lineage even when a forced rerun emits identical
         # bytes. Downstream stages must still checkpoint against the new run.
         digest = fingerprint({'version': '1', 'inputs': payload,
@@ -258,15 +277,45 @@ class WorkflowRuntime:
             if not path.is_file() or not path.stat().st_size:
                 raise ValueError('Artifact is missing or empty')
             media_info = await probe_file(path)
-            artifacts.append(WorkflowArtifactModel(id=str(uuid4()), task_id=run.task_id, step_run_id=run.id,
+            artifacts.append(WorkflowArtifactModel(id=str(uuid4()), job_id=run.job_id, task_id=run.task_id, step_run_id=run.id,
                 asset_id=spec.asset_id, kind=spec.kind, relative_path=relative, size_bytes=path.stat().st_size,
                 sha256=await sha256_file(path), media_info=media_info or spec.media_info, source=spec.source))
         await self.assert_lease()
         task = await self.db.get(TaskModel, run.task_id)
+        if task is None:
+            await self.db.rollback()
+            raise ValueError("Artifact task does not exist")
         for artifact in artifacts:
             if artifact.asset_id:
                 asset = await self.db.get(AssetModel, artifact.asset_id)
-                if asset is None or asset.project_id != task.project_id:
+                project_binding = None
+                product_asset = None
+                if asset is not None:
+                    project_binding = await self.db.scalar(
+                        select(ProjectAssetBindingModel.id)
+                        .where(
+                            ProjectAssetBindingModel.asset_id == asset.id,
+                            ProjectAssetBindingModel.project_id == task.project_id,
+                        )
+                        .limit(1)
+                    )
+                    if artifact.source == "product":
+                        product_asset = await self.db.scalar(
+                            select(ProductAssetModel.id)
+                            .join(ProductModel, ProductModel.id == ProductAssetModel.product_id)
+                            .where(
+                                ProductAssetModel.asset_id == asset.id,
+                                ProductModel.project_id == task.project_id,
+                            )
+                            .limit(1)
+                        )
+                metadata = (asset.metadata_json or {}) if asset is not None else {}
+                project_owned = asset is not None and (
+                    project_binding is not None
+                    or metadata.get("project_id") == task.project_id
+                )
+                product_owned = asset is not None and product_asset is not None
+                if not project_owned and not product_owned:
                     await self.db.rollback()
                     raise ValueError("Artifact asset does not belong to the task project")
                 if artifact.source == "generated":

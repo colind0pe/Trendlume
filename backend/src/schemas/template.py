@@ -62,7 +62,7 @@ class ProjectTemplateResponse(BaseModel):
     name: str
     aspect_ratio: str
     style_preset: str
-    template_id: str = "default_portrait"
+    template_id: str = "image_gallery_matted"
     template_version: str = "1"
     font_family: str
     primary_color: str

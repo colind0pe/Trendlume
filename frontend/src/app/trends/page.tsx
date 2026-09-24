@@ -28,6 +28,7 @@ import { api, ApiError } from "@/lib/api-client";
 import type {
   Asset,
   ContentMode,
+  KnowledgeBrief,
   Project,
   TemplateCatalogItem,
   TrendItem,
@@ -314,6 +315,9 @@ function TrendDetailSheet({
   const [contentMode, setContentMode] = React.useState<ContentMode>("generated_image");
   const [selectedTemplateId, setSelectedTemplateId] = React.useState("");
   const [taskGenre, setTaskGenre] = React.useState("auto");
+  const [knowledgeAudience, setKnowledgeAudience] = React.useState("");
+  const [knowledgeThesis, setKnowledgeThesis] = React.useState("");
+  const [knowledgeViewerTakeaway, setKnowledgeViewerTakeaway] = React.useState("");
   const [taskHookType, setTaskHookType] = React.useState("auto");
   const [taskStylePreset, setTaskStylePreset] = React.useState("stick_figure");
   const [customPromptPrefix, setCustomPromptPrefix] = React.useState("");
@@ -409,19 +413,25 @@ function TrendDetailSheet({
   );
   const selectedTemplate = availableTemplates.find((template) => template.id === selectedTemplateId);
   const usesAiVisualStyle = contentMode === "generated_image" || contentMode === "generated_video";
-  const projectTemplateId = selectedProject?.template?.template_id || "";
+  const projectTemplateId = String(
+    selectedProject?.default_production_settings?.template_id || "",
+  );
 
   React.useEffect(() => {
     if (createdProposal && !localProposal) {
       const options = createdProposal.generation_options || {};
       const count = Number(options.target_scene_count ?? 8);
-      const speed = Number(options.voice_speed ?? options.speed ?? 1.0);
+      const speed = Number(options.speed ?? 1.0);
       const volume = Number(options.bgm_volume ?? 0.2);
       const savedVoiceId = typeof options.voice_id === "string"
         ? options.voice_id
-        : selectedProject?.default_voice_id || "";
+        : String(selectedProject?.default_production_settings?.voice_id || "");
 
       setAngle(createdProposal.angle || "");
+      const brief = createdProposal.knowledge_brief;
+      setKnowledgeAudience(brief?.audience || "");
+      setKnowledgeThesis(brief?.thesis || "");
+      setKnowledgeViewerTakeaway(brief?.viewer_takeaway || "");
       setSceneCount(Number.isFinite(count) ? Math.max(8, Math.min(20, count)) : 8);
       setEnableResearch(options.enable_research !== false);
       setContentMode(isContentMode(options.content_mode) ? options.content_mode : "generated_image");
@@ -435,7 +445,7 @@ function TrendDetailSheet({
       setBgmEnabled(options.bgm_enabled !== false);
       setBgmAssetId(typeof options.bgm_asset_id === "string"
         ? options.bgm_asset_id
-        : selectedProject?.bgm_asset_id || "");
+        : String(selectedProject?.default_production_settings?.bgm_asset_id || ""));
       setBgmVolume(Number.isFinite(volume) ? Math.max(0, Math.min(0.5, volume)) : 0.2);
       setSourceAssetId(typeof options.source_asset_id === "string" ? options.source_asset_id : "");
     }
@@ -465,9 +475,8 @@ function TrendDetailSheet({
   ]);
 
   // 2. 投产或保存
-  type TrendAction = "create" | "generate";
-  const actionMutation = useMutation<TrendProposalActionResponse, Error, TrendAction>({
-    mutationFn: async (action) => {
+  const actionMutation = useMutation<TrendProposalActionResponse, Error, void>({
+    mutationFn: async () => {
       if (!proposal) throw new Error("选题方案尚未就绪。");
       if (templatesQuery.isLoading) throw new Error("正在加载排版模板，请稍后再试。");
       if (!selectedTemplateId || !selectedTemplate) {
@@ -496,27 +505,38 @@ function TrendDetailSheet({
         },
         current.generation_options,
       );
-      if (angle.trim() !== current.angle || JSON.stringify(nextOptions) !== JSON.stringify(current.generation_options)) {
+      const currentKnowledgeBrief = current.knowledge_brief;
+      const nextKnowledgeBrief: KnowledgeBrief = {
+        audience: knowledgeAudience.trim(),
+        thesis: knowledgeThesis.trim() || angle.trim(),
+        viewer_takeaway: knowledgeViewerTakeaway.trim(),
+        key_claims: currentKnowledgeBrief?.key_claims || [],
+        source_refs: currentKnowledgeBrief?.source_refs || [],
+        genre: taskGenre,
+      };
+      const existingKnowledgeBrief = {
+        audience: currentKnowledgeBrief?.audience || "",
+        thesis: currentKnowledgeBrief?.thesis || "",
+        viewer_takeaway: currentKnowledgeBrief?.viewer_takeaway || "",
+        key_claims: currentKnowledgeBrief?.key_claims || [],
+        source_refs: currentKnowledgeBrief?.source_refs || [],
+        genre: currentKnowledgeBrief?.genre || "auto",
+      };
+      const briefChanged = JSON.stringify(nextKnowledgeBrief) !== JSON.stringify(existingKnowledgeBrief);
+      if (angle.trim() !== current.angle || JSON.stringify(nextOptions) !== JSON.stringify(current.generation_options) || briefChanged) {
         current = await api.updateTrendProposal(current.id, {
           expected_revision: current.revision,
           angle: angle.trim() || current.angle,
+          knowledge_brief: nextKnowledgeBrief,
           generation_options: nextOptions,
         });
         setLocalProposal(current);
       }
-      return action === "create"
-        ? api.approveTrendProposal(current.id, current.revision)
-        : api.approveAndRunTrendProposal(current.id, current.revision);
+      return api.approveTrendProposal(current.id, current.revision);
     },
-    onSuccess: (data, action) => {
+    onSuccess: (data) => {
       setLocalProposal(data.proposal);
-      if (action === "create") {
-        toast("任务草稿已保存", "success");
-      } else if (data.queue_status === "queued") {
-        toast("已创建任务并进入生成流水线", "success");
-      } else {
-        toast(data.queue_error || "任务已创建，暂未进入队列", "warning");
-      }
+      toast("已创建待审核任务", "success");
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       queryClient.invalidateQueries({ queryKey: ["project", data.proposal.project_id] });
       queryClient.invalidateQueries({ queryKey: ["project-tasks", data.proposal.project_id] });
@@ -545,7 +565,6 @@ function TrendDetailSheet({
   const isWorking = isProposalPending || actionMutation.isPending || rejectMutation.isPending;
   const taskCreated = proposal?.status === "task_created" || proposal?.status === "queue_failed";
   const proposalClosed = taskCreated || proposal?.status === "rejected";
-  const actionInProgress = actionMutation.variables;
   const platformConfig = PLATFORMS_CONFIG[item.platform] || { badgeClass: "bg-secondary text-foreground", dotClass: "bg-primary" };
   const canSubmitGeneration = Boolean(
     proposal &&
@@ -569,7 +588,7 @@ function TrendDetailSheet({
         </div>
         <SheetTitle>{item.title}</SheetTitle>
         <SheetDescription>
-          确认选题角度与参数后，即可创建任务或开始生成。
+          热点只是输入源；确认受众、主张和观众价值后，创建一条知识视频任务。
         </SheetDescription>
       </SheetHeader>
 
@@ -717,8 +736,47 @@ function TrendDetailSheet({
               />
             </div>
 
-            {/* 创作角度编辑 */}
-            <Field label="创作角度" htmlFor="proposal-angle-input">
+            {/* Knowledge Brief */}
+            <div className="space-y-3 rounded-lg border border-primary/20 bg-primary/5 p-3">
+              <div>
+                <p className="text-xs font-semibold text-foreground">知识视频 Brief</p>
+                <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">
+                  这些字段会沿着脚本和分镜保存，帮助画面服务于信息逻辑。
+                </p>
+              </div>
+              <Field label="面向谁" htmlFor="proposal-audience-input">
+                <Input
+                  id="proposal-audience-input"
+                  value={knowledgeAudience}
+                  onChange={(event) => setKnowledgeAudience(event.target.value)}
+                  disabled={proposalClosed || isWorking}
+                  placeholder="例如：第一次接触这个话题的普通观众"
+                />
+              </Field>
+              <Field label="核心主张" htmlFor="proposal-thesis-input">
+                <Textarea
+                  id="proposal-thesis-input"
+                  value={knowledgeThesis}
+                  onChange={(event) => setKnowledgeThesis(event.target.value)}
+                  rows={2}
+                  disabled={proposalClosed || isWorking}
+                  placeholder="一句话说清这条视频希望观众理解什么"
+                />
+              </Field>
+              <Field label="观众看完带走什么" htmlFor="proposal-takeaway-input">
+                <Textarea
+                  id="proposal-takeaway-input"
+                  value={knowledgeViewerTakeaway}
+                  onChange={(event) => setKnowledgeViewerTakeaway(event.target.value)}
+                  rows={2}
+                  disabled={proposalClosed || isWorking}
+                  placeholder="例如：能用一个例子解释热点背后的机制"
+                />
+              </Field>
+            </div>
+
+            {/* The angle is a reviewable editorial input and feeds the thesis when needed. */}
+            <Field label="知识切入角度" htmlFor="proposal-angle-input">
               <Textarea
                 id="proposal-angle-input"
                 value={angle}
@@ -730,13 +788,13 @@ function TrendDetailSheet({
             </Field>
 
             {/* 关键要点 */}
-            {proposal.content_brief.key_points && proposal.content_brief.key_points.length > 0 && (
+            {proposal.knowledge_brief.key_claims && proposal.knowledge_brief.key_claims.length > 0 && (
               <div className="space-y-1.5 text-xs">
                 <span className="font-medium text-muted-foreground">关键要点：</span>
                 <div className="flex flex-wrap gap-1.5">
-                  {proposal.content_brief.key_points.map((pt, idx) => (
-                    <span key={idx} className="rounded-md border border-border/80 bg-secondary/40 px-2 py-0.5 text-foreground text-[11px]">
-                      {pt}
+                  {proposal.knowledge_brief.key_claims.map((claim) => (
+                    <span key={claim.id} className="rounded-md border border-border/80 bg-secondary/40 px-2 py-0.5 text-foreground text-[11px]">
+                      {claim.statement}
                     </span>
                   ))}
                 </div>
@@ -746,7 +804,7 @@ function TrendDetailSheet({
             {/* 生成规划 */}
             <div className="space-y-2.5 rounded-lg border border-border/60 bg-secondary/20 p-3">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-xs font-semibold text-foreground">生成规划</span>
+                <span className="text-xs font-semibold text-foreground">知识视频生成规划</span>
                 <span className="font-mono text-[11px] font-medium text-primary">
                   目标 {sceneCount} 镜 · 约 {sceneCount * 4} 秒
                 </span>
@@ -790,10 +848,10 @@ function TrendDetailSheet({
               </label>
             </div>
 
-            {/* 与新建视频任务共用的生成设置 */}
+            {/* 与知识视频任务共用的生成设置 */}
             <div className="space-y-3 rounded-lg border border-primary/20 bg-primary/5 p-3">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-xs font-semibold text-foreground">视频设置</span>
+                <span className="text-xs font-semibold text-foreground">知识视频设置</span>
               </div>
 
               <div className="grid gap-3 sm:grid-cols-2">
@@ -857,7 +915,7 @@ function TrendDetailSheet({
                   ) : null}
                 </Field>
 
-                <Field label="题材方向" htmlFor="trend-genre">
+                <Field label="知识方向" htmlFor="trend-genre">
                   <Select
                     id="trend-genre"
                     value={taskGenre}
@@ -1054,7 +1112,7 @@ function TrendDetailSheet({
             <div className={cn("rounded-lg border p-2.5 text-xs text-center", proposal.status === "queue_failed" ? "border-warning/30 bg-warning/10 text-warning" : "border-success/30 bg-success/10 text-success")}>
               {proposal.status === "queue_failed"
                 ? "任务已保存，排队暂未完成。"
-                : "任务已创建并进入流水线。"}
+                : "任务草稿已创建，请审核后再开始生产。"}
             </div>
             <div className="grid grid-cols-2 gap-2">
               <Button
@@ -1087,25 +1145,15 @@ function TrendDetailSheet({
                   : "当前画面来源没有匹配模板，请切换来源后再试。"}
               </p>
             )}
-            <div className="grid grid-cols-2 gap-2">
+            <div>
               <Button
                 type="button"
-                variant="outline"
-                onClick={() => actionMutation.mutate("create")}
+                onClick={() => actionMutation.mutate()}
                 disabled={isWorking || !canSubmitGeneration}
-                className="gap-1.5"
+                className="w-full gap-1.5"
               >
-                {actionMutation.isPending && actionInProgress === "create" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-                保存草稿
-              </Button>
-              <Button
-                type="button"
-                onClick={() => actionMutation.mutate("generate")}
-                disabled={isWorking || !canSubmitGeneration}
-                className="gap-1.5 shadow-xs"
-              >
-                {actionMutation.isPending && actionInProgress === "generate" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5 fill-current" />}
-                开始生成
+                {actionMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                创建待审核任务
               </Button>
             </div>
             <Button

@@ -2,9 +2,11 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, FolderKanban, LayoutGrid, List, Plus, Trash2 } from "lucide-react";
 import { api } from "@/lib/api-client";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -16,17 +18,42 @@ import { Input, SearchInput } from "@/components/ui/input";
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDate } from "@/lib/utils";
+import { ProductionModeSelector } from "@/components/projects/production-mode-selector";
+import { PRODUCTION_MODE_SPECS } from "@/lib/ui-constants";
+import type { ProductionMode } from "@/lib/types";
 
-export default function ProjectsPage() {
+const isProductionMode = (value: unknown): value is ProductionMode =>
+  value === "knowledge" || value === "commerce" || value === "drama";
+
+export default function ProjectsPage({
+  searchParams,
+}: {
+  searchParams?: { mode?: string | string[] };
+}) {
+  const router = useRouter();
   const queryClient = useQueryClient();
+  const requestedMode = Array.isArray(searchParams?.mode) ? searchParams?.mode[0] : searchParams?.mode;
   const [viewMode, setViewMode] = React.useState<"grid" | "list">("grid");
   const [searchQuery, setSearchQuery] = React.useState("");
   const [aspectFilter, setAspectFilter] = React.useState<string>("all");
+  const [modeFilter, setModeFilter] = React.useState<ProductionMode | "all">(
+    isProductionMode(requestedMode) ? requestedMode : "all",
+  );
   const [isCreateOpen, setIsCreateOpen] = React.useState(false);
   const [name, setName] = React.useState("");
   const [description, setDescription] = React.useState("");
   const [aspectRatio, setAspectRatio] = React.useState("9:16");
+  const [primaryProductionMode, setPrimaryProductionMode] = React.useState<ProductionMode>("knowledge");
   const [projectToDelete, setProjectToDelete] = React.useState<{ id: string; name: string } | null>(null);
+
+  React.useEffect(() => {
+    setModeFilter(isProductionMode(requestedMode) ? requestedMode : "all");
+  }, [requestedMode]);
+
+  const changeModeFilter = (mode: ProductionMode | "all") => {
+    setModeFilter(mode);
+    router.replace(mode === "all" ? "/projects" : `/projects?mode=${mode}`, { scroll: false });
+  };
 
   const { data: projects = [], isLoading } = useQuery({
     queryKey: ["projects"],
@@ -40,9 +67,16 @@ export default function ProjectsPage() {
         project.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         (project.description && project.description.toLowerCase().includes(searchQuery.toLowerCase()));
       const matchesAspect = aspectFilter === "all" || project.aspect_ratio === aspectFilter;
-      return matchesSearch && matchesAspect;
+      const matchesMode = modeFilter === "all" || project.mode === modeFilter;
+      return matchesSearch && matchesAspect && matchesMode;
     });
-  }, [projects, searchQuery, aspectFilter]);
+  }, [projects, searchQuery, aspectFilter, modeFilter]);
+
+  const countsByMode = React.useMemo(() => {
+    const counts = { all: projects.length, knowledge: 0, commerce: 0, drama: 0 };
+    projects.forEach((project) => counts[project.mode]++);
+    return counts;
+  }, [projects]);
 
   const countsByAspect = React.useMemo(() => {
     const counts = { all: projects.length, "9:16": 0, "16:9": 0, "1:1": 0 };
@@ -55,12 +89,13 @@ export default function ProjectsPage() {
   }, [projects]);
 
   const createMutation = useMutation({
-    mutationFn: (data: { name: string; description: string; aspect_ratio: string }) => api.createProject(data),
+    mutationFn: (data: Record<string, unknown>) => api.createProject(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       setIsCreateOpen(false);
       setName("");
       setDescription("");
+      setPrimaryProductionMode("knowledge");
     },
   });
 
@@ -75,7 +110,12 @@ export default function ProjectsPage() {
   const handleCreate = (event: React.FormEvent) => {
     event.preventDefault();
     if (!name.trim()) return;
-    createMutation.mutate({ name, description, aspect_ratio: aspectRatio });
+    const profile = primaryProductionMode === "knowledge"
+      ? { knowledge_profile: {} }
+      : primaryProductionMode === "commerce"
+        ? { commerce_profile: {} }
+        : { drama_profile: { series_title: name }, drama_style_guide: {} };
+    createMutation.mutate({ name, description, aspect_ratio: aspectRatio, mode: primaryProductionMode, ...profile });
   };
 
   const requestDelete = (project: { id: string; name: string }) => setProjectToDelete(project);
@@ -84,7 +124,7 @@ export default function ProjectsPage() {
     <PageContainer width="wide" className="space-y-6">
       <PageHeader
         title="项目库"
-        description="管理短视频项目、画布规格与默认排版模板。"
+        description="管理视频项目和默认设置。"
         actions={(
           <>
             <div className="inline-flex items-center rounded-xl glass-pill p-1 shadow-xs" role="group" aria-label="项目显示方式">
@@ -120,8 +160,48 @@ export default function ProjectsPage() {
       />
 
       {/* Search & Filter Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div className="inline-flex h-9 items-center justify-start gap-1 rounded-lg glass-pill p-1 text-muted-foreground overflow-x-auto no-scrollbar shadow-xs" role="tablist" aria-label="按画幅筛选">
+      <div className="space-y-3 rounded-xl border border-border/70 bg-card/40 p-3 sm:p-4">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+          <div className="inline-flex h-9 max-w-full items-center justify-start gap-1 overflow-x-auto rounded-lg glass-pill p-1 text-muted-foreground no-scrollbar shadow-xs" role="tablist" aria-label="按内容赛道筛选">
+            {[
+              { id: "all" as const, label: "全部赛道", count: countsByMode.all },
+              { id: "knowledge" as const, label: "知识视频", count: countsByMode.knowledge },
+              { id: "commerce" as const, label: "商品视频", count: countsByMode.commerce },
+              { id: "drama" as const, label: "短剧", count: countsByMode.drama },
+            ].map((chip) => {
+              const isActive = modeFilter === chip.id;
+              return (
+                <button
+                  key={chip.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={isActive}
+                  onClick={() => changeModeFilter(chip.id)}
+                  className={`inline-flex h-7 items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-3 text-xs font-medium transition-all duration-150 ease-out sm:text-sm ${
+                    isActive
+                      ? "border border-border/80 bg-card font-semibold text-foreground shadow-xs"
+                      : "text-muted-foreground hover:bg-card/40 hover:text-foreground"
+                  }`}
+                >
+                  <span>{chip.label}</span>
+                  <span className={`font-mono text-xs tabular-nums ${isActive ? "font-semibold text-foreground/85" : "opacity-60"}`}>({chip.count})</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="w-full xl:w-72">
+            <SearchInput
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onClear={() => setSearchQuery("")}
+              placeholder="搜索项目名称或简介…"
+              className="h-9 text-sm"
+            />
+          </div>
+        </div>
+
+        <div className="inline-flex h-9 max-w-full items-center justify-start gap-1 overflow-x-auto rounded-lg glass-pill p-1 text-muted-foreground no-scrollbar shadow-xs" role="tablist" aria-label="按画幅筛选">
           {[
             { id: "all", label: "全部画幅", count: countsByAspect.all },
             { id: "9:16", label: "竖屏 9:16", count: countsByAspect["9:16"] },
@@ -150,16 +230,6 @@ export default function ProjectsPage() {
             );
           })}
         </div>
-
-        <div className="w-full sm:w-72">
-          <SearchInput
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            onClear={() => setSearchQuery("")}
-            placeholder="搜索项目名称或简介…"
-            className="h-9 text-sm"
-          />
-        </div>
       </div>
 
       {isLoading ? (
@@ -172,7 +242,7 @@ export default function ProjectsPage() {
         <EmptyState
           icon={FolderKanban}
           title="未找到匹配的项目"
-          description="尝试更改搜索关键词或画幅筛选条件。"
+          description="尝试更改搜索关键词、内容赛道或画幅筛选条件。"
           action={(
             <Button
               variant="outline"
@@ -180,6 +250,7 @@ export default function ProjectsPage() {
               onClick={() => {
                 setSearchQuery("");
                 setAspectFilter("all");
+                changeModeFilter("all");
               }}
               className="h-8 text-xs sm:text-sm"
             >
@@ -193,9 +264,22 @@ export default function ProjectsPage() {
             <Card key={project.id} className="group flex flex-col justify-between hover:border-primary/40 transition-colors duration-200">
               <CardHeader className="p-4 sm:p-5 pb-3">
                 <div className="flex items-start justify-between gap-2">
-                  <span className="rounded-md border border-border/80 bg-secondary/80 px-2 py-0.5 font-mono text-xs font-medium text-foreground shadow-xs">
-                    {project.aspect_ratio}
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="rounded-md border border-primary/20 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                      {PRODUCTION_MODE_SPECS[project.mode].label}
+                    </span>
+                    {PRODUCTION_MODE_SPECS[project.mode].badge && (
+                      <Badge
+                        variant="warning"
+                        className="text-[10px] font-medium tracking-wide uppercase px-1.5 py-0"
+                      >
+                        {PRODUCTION_MODE_SPECS[project.mode].badge}
+                      </Badge>
+                    )}
+                    <span className="rounded-md border border-border/80 bg-secondary/80 px-2 py-0.5 font-mono text-xs font-medium text-foreground shadow-xs">
+                      {project.aspect_ratio}
+                    </span>
+                  </div>
                   <IconButton
                     label={`删除项目 ${project.name}`}
                     variant="ghost"
@@ -217,7 +301,7 @@ export default function ProjectsPage() {
               <CardContent className="space-y-2 border-t border-border/50 p-4 sm:p-5 py-3 text-xs sm:text-sm text-muted-foreground">
                 <div className="flex justify-between items-center gap-3">
                   <span>模板风格</span>
-                  <span className="truncate font-medium text-foreground">{project.template?.name || "默认模板"}</span>
+                  <span className="truncate font-medium text-foreground">系列默认设置</span>
                 </div>
                 <div className="flex justify-between items-center gap-3">
                   <span>更新日期</span>
@@ -241,6 +325,17 @@ export default function ProjectsPage() {
             <div key={project.id} className="flex items-center justify-between gap-4 p-4 sm:px-5 transition-colors hover:bg-secondary/40">
               <div className="min-w-0 flex-1 space-y-1">
                 <div className="flex items-center gap-2.5">
+                  <span className="rounded-md border border-primary/20 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                    {PRODUCTION_MODE_SPECS[project.mode].label}
+                  </span>
+                  {PRODUCTION_MODE_SPECS[project.mode].badge && (
+                    <Badge
+                      variant="warning"
+                      className="text-[10px] font-medium tracking-wide uppercase px-1.5 py-0"
+                    >
+                      {PRODUCTION_MODE_SPECS[project.mode].badge}
+                    </Badge>
+                  )}
                   <span className="rounded-md border border-border/80 bg-secondary/80 px-2 py-0.5 font-mono text-xs font-medium text-foreground shadow-xs">
                     {project.aspect_ratio}
                   </span>
@@ -251,7 +346,7 @@ export default function ProjectsPage() {
                 <p className="truncate text-xs sm:text-sm text-muted-foreground">{project.description || "暂无项目说明"}</p>
               </div>
               <div className="flex shrink-0 items-center gap-3 text-sm text-muted-foreground">
-                <span className="hidden lg:inline font-medium text-foreground/80">{project.template?.name || "默认模板"}</span>
+                <span className="hidden lg:inline font-medium text-foreground/80">系列工作区</span>
                 <span className="hidden sm:inline font-mono text-xs tabular-nums text-foreground/70">{formatDate(project.updated_at)}</span>
                 <Link href={`/projects/${project.id}`}>
                   <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs sm:text-sm">
@@ -277,9 +372,11 @@ export default function ProjectsPage() {
       <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen} className="max-w-xl">
         <DialogHeader>
           <DialogTitle className="text-base sm:text-lg font-semibold">新建项目</DialogTitle>
-          <DialogDescription>定义项目名称与画布比例，作为视频创作与排版预设的容器。</DialogDescription>
+          <DialogDescription>选择内容类型、项目名称和画幅。</DialogDescription>
         </DialogHeader>
         <form onSubmit={handleCreate} className="space-y-4 pt-1">
+          <ProductionModeSelector value={primaryProductionMode} onChange={setPrimaryProductionMode} />
+
           <Field label="项目名称" htmlFor="project-name" required>
             <Input
               id="project-name"

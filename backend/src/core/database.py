@@ -70,10 +70,32 @@ _REQUIRED_TABLES = {
     "trend_project_matches",
     "topic_proposals",
     "trend_subscriptions",
+    "products",
+    "product_assets",
+    "project_asset_bindings",
+    "production_context_snapshots",
+    "knowledge_task_details",
+    "commerce_task_details",
+    "drama_task_episodes",
+    "drama_project_profiles",
+    "drama_style_guides",
+    "drama_characters",
+    "drama_locations",
+    "drama_props",
+    "drama_task_scenes",
+    "drama_task_shots",
+    "drama_task_dialogue_lines",
+    "knowledge_project_profiles",
+    "commerce_project_profiles",
 }
 
 _REQUIRED_COLUMNS = {
-    "workflow_jobs": {"lease_token"},
+    "projects": {"mode", "default_production_settings"},
+    "tasks": {"project_id", "editorial_status", "production_status", "generation_settings"},
+    "products": {"title", "source_snapshot", "truth_sheet"},
+    "product_assets": {"product_id", "asset_id", "source_kind"},
+    "scenes": {"visual_role", "claim_refs", "source_refs", "production_metadata"},
+    "workflow_jobs": {"lease_token", "production_context_snapshot_id"},
     "workflow_step_runs": {"input_fingerprint", "output_payload", "validity"},
     "project_templates": {"template_id", "template_version"},
     "provider_configs": {
@@ -82,6 +104,12 @@ _REQUIRED_COLUMNS = {
         "last_test_message",
         "last_test_latency_ms",
     },
+    "production_context_snapshots": {"task_id", "project_id", "mode", "context_hash", "context_payload"},
+    "knowledge_project_profiles": {"project_id", "positioning", "evidence_strategy"},
+    "commerce_project_profiles": {"project_id", "brand", "marketing_goal", "platform_defaults"},
+    "knowledge_task_details": {"task_id", "topic", "claims", "sources", "review_status"},
+    "commerce_task_details": {"task_id", "creative_angle", "product_facts_version"},
+    "drama_task_episodes": {"task_id", "project_id", "episode_number", "review_status"},
 }
 
 
@@ -107,6 +135,14 @@ async def verify_schema(database_engine: AsyncEngine | None = None) -> list[str]
         inspector = inspect(connection)
         existing_tables = set(inspector.get_table_names())
         missing = sorted(_REQUIRED_TABLES - existing_tables)
+        if "alembic_version" in existing_tables:
+            revision = connection.exec_driver_sql(
+                "SELECT version_num FROM alembic_version"
+            ).scalar_one_or_none()
+            if revision != "001":
+                missing.append(
+                    f"unsupported database revision {revision or 'none'}; recreate the database with revision 001"
+                )
 
         for table_name, required_columns in _REQUIRED_COLUMNS.items():
             if table_name not in existing_tables:

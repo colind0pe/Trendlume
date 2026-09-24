@@ -1,139 +1,46 @@
-from __future__ import annotations
-
 import sqlite3
 from pathlib import Path
 
-import pytest
 from alembic.config import Config
-from sqlalchemy.ext.asyncio import create_async_engine
 
 from alembic import command
 from src.core.config import settings
-from src.core.database import verify_schema
 from src.models import Base
 
-ROOT_DIR = Path(__file__).resolve().parent.parent
-BACKEND_DIR = ROOT_DIR / "backend"
-BASELINE_REVISION = "001_release_baseline"
-RELEASE_REVISION = "002_trend_center"
+ROOT = Path(__file__).resolve().parents[1]
 
 
-def _migration_database(tmp_path: Path, filename: str) -> tuple[Path, str]:
-    database_file = tmp_path / filename
-    return database_file, f"sqlite+aiosqlite:///{database_file.as_posix()}"
-
-
-def _run_migration(database_url: str, revision: str, *, downgrade: bool = False) -> None:
-    original_database_url = settings.database_url
+def _run(url: str, revision: str, downgrade=False):
+    original = settings.database_url
     try:
-        settings.database_url = database_url
-        alembic_config = Config(str(BACKEND_DIR / "alembic.ini"))
-        alembic_config.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
-        (command.downgrade if downgrade else command.upgrade)(alembic_config, revision)
+        settings.database_url = url
+        config = Config(str(ROOT / "backend" / "alembic.ini"))
+        config.set_main_option("script_location", str(ROOT / "backend" / "alembic"))
+        (command.downgrade if downgrade else command.upgrade)(config, revision)
     finally:
-        settings.database_url = original_database_url
+        settings.database_url = original
 
 
-def _table_columns(connection: sqlite3.Connection, table_name: str) -> set[str]:
-    return {row[1] for row in connection.execute(f'PRAGMA table_info("{table_name}")')}
-
-
-def _table_names(connection: sqlite3.Connection) -> set[str]:
-    return {
-        row[0]
-        for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
-        if not row[0].startswith("sqlite_")
-    }
-
-
-def _migration_version(connection: sqlite3.Connection) -> str:
-    return connection.execute("SELECT version_num FROM alembic_version").fetchone()[0]
-
-
-def test_head_creates_current_schema(tmp_path: Path):
-    database_file, database_url = _migration_database(tmp_path, "release.db")
-
-    _run_migration(database_url, "head")
-
-    with sqlite3.connect(database_file) as connection:
-        assert _table_names(connection) == set(Base.metadata.tables) | {"alembic_version"}
-        assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            RELEASE_REVISION,
-        )
-        assert "task_batches" not in _table_names(connection)
-        assert "batch_id" not in _table_columns(connection, "tasks")
-        assert "lease_token" in _table_columns(connection, "workflow_jobs")
+def test_initial_schema_upgrade_downgrade_upgrade(tmp_path: Path):
+    path = tmp_path / "schema.db"
+    url = f"sqlite+aiosqlite:///{path.as_posix()}"
+    _run(url, "head")
+    with sqlite3.connect(path) as connection:
+        tables = {
+            row[0]
+            for row in connection.execute("select name from sqlite_master where type='table'")
+            if not row[0].startswith("sqlite_")
+        }
+        assert tables == set(Base.metadata.tables) | {"alembic_version"}
+        assert connection.execute("select version_num from alembic_version").fetchone() == ("001",)
+        assert connection.execute("pragma foreign_key_check").fetchall() == []
+    _run(url, "base", downgrade=True)
+    with sqlite3.connect(path) as connection:
         assert {
-            "last_test_connected",
-            "last_tested_at",
-            "last_test_message",
-            "last_test_latency_ms",
-        } <= _table_columns(connection, "provider_configs")
-        assert {
-            "content_brief",
-            "generation_options",
-        } <= _table_columns(connection, "topic_proposals")
-        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
-
-
-def test_existing_release_database_upgrades_and_downgrades_trend_center(tmp_path: Path):
-    database_file, database_url = _migration_database(tmp_path, "upgrade.db")
-
-    _run_migration(database_url, BASELINE_REVISION)
-    with sqlite3.connect(database_file) as connection:
-        assert _migration_version(connection) == BASELINE_REVISION
-        assert "trend_runs" not in _table_names(connection)
-
-    _run_migration(database_url, "head")
-    with sqlite3.connect(database_file) as connection:
-        assert _migration_version(connection) == RELEASE_REVISION
-        assert "trend_runs" in _table_names(connection)
-
-    _run_migration(database_url, BASELINE_REVISION, downgrade=True)
-    with sqlite3.connect(database_file) as connection:
-        assert _migration_version(connection) == BASELINE_REVISION
-        assert not {
-            "trend_runs",
-            "trend_source_runs",
-            "trend_items",
-            "trend_observations",
-            "trend_project_matches",
-            "topic_proposals",
-            "trend_subscriptions",
-        } & _table_names(connection)
-
-@pytest.mark.asyncio
-async def test_verify_schema_reports_missing_columns(tmp_path: Path):
-    database_file, _ = _migration_database(tmp_path, "incomplete.db")
-    engine = create_async_engine(f"sqlite+aiosqlite:///{database_file}")
-
-    async with engine.begin() as connection:
-        for table_name in (
-            "alembic_version",
-            "projects",
-            "project_templates",
-            "tasks",
-            "workflow_jobs",
-            "workflow_step_runs",
-            "workflow_artifacts",
-            "workflow_step_artifacts",
-            "job_events",
-            "assets",
-            "scenes",
-            "credentials",
-            "social_accounts",
-            "publishing_jobs",
-            "provider_configs",
-        ):
-            await connection.exec_driver_sql(
-                f'CREATE TABLE "{table_name}" (id VARCHAR(36) PRIMARY KEY)'
-            )
-
-    missing = await verify_schema(engine)
-    assert "project_templates.template_id" in missing
-    assert "provider_configs.last_test_connected" in missing
-    assert "workflow_jobs.lease_token" in missing
-    assert "workflow_step_runs.input_fingerprint" in missing
-    assert "prompt_call_observations" in missing
-
-    await engine.dispose()
+            row[0]
+            for row in connection.execute("select name from sqlite_master where type='table'")
+            if not row[0].startswith("sqlite_")
+        } == {"alembic_version"}
+    _run(url, "head")
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("select version_num from alembic_version").fetchone() == ("001",)

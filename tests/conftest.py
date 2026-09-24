@@ -1,3 +1,5 @@
+# Imports below intentionally follow the local path bootstrap.
+# ruff: noqa: E402
 import sys
 from collections.abc import AsyncGenerator
 from pathlib import Path
@@ -17,11 +19,6 @@ if str(root_dir) not in sys.path:
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
-from src.api.app import create_app
-from src.core.database import Base, get_db
-from src.providers.registry import provider_registry
-from src.services.template_renderer import TemplateRenderer
-
 from tests.mocks import (
     MockImageProvider,
     MockLLMProvider,
@@ -29,6 +26,12 @@ from tests.mocks import (
     MockTTSProvider,
     MockVideoProvider,
 )
+
+from src.api.app import create_app
+from src.core.database import Base, get_db
+from src.providers.registry import provider_registry
+from src.services.template_renderer import TemplateRenderer
+
 
 @pytest.fixture(autouse=True)
 def setup_test_providers(monkeypatch):

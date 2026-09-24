@@ -11,7 +11,7 @@ from src.providers.image.comfyui_image import (
 )
 from src.providers.image.protocol import DEFAULT_IMAGE_TEST_PROMPT
 from src.providers.image.style_presets import DEFAULT_IMAGE_STYLE_PRESET, ImageStylePreset
-from src.providers.llm.defaults import DEFAULT_OPENAI_MODEL, default_llm_model
+from src.providers.llm.defaults import DEFAULT_OPENAI_MODEL
 from src.providers.tts.edge_tts import EdgeTTSProvider
 from src.schemas.common import APIResponse
 from src.schemas.provider import (
@@ -73,7 +73,7 @@ async def provider_capabilities(
         type_capabilities = {
             "llm": ["script_generation"],
             "search": ["topic_research"],
-            "tts": ["speech_synthesis", "voice_speed"],
+            "tts": ["speech_synthesis"],
             "image": ["scene_image"],
             "video": ["scene_video"],
             "material": ["online_scene_video"],
@@ -99,56 +99,6 @@ async def system_config_summary(
 ):
     """Return the safe aggregate used by the system configuration center."""
     return APIResponse(data=await manager.get_system_config_summary())
-
-
-@router.get("/config", response_model=APIResponse[dict])
-async def get_provider_config_summary(
-    manager: ProviderManager = Depends(get_provider_manager),
-):
-    """Get active provider readiness summary for UI dashboard"""
-    all_providers = await manager.list_providers()
-
-    default_llm = next((p for p in all_providers if p.provider_type == "llm" and p.is_default), None)
-    default_img = next((p for p in all_providers if p.provider_type == "image" and p.is_default), None)
-    default_vid = next((p for p in all_providers if p.provider_type == "video" and p.is_default), None)
-    default_search = next((p for p in all_providers if p.provider_type == "search" and p.is_default), None)
-    default_tts = next((p for p in all_providers if p.provider_type == "tts" and p.is_default), None)
-    comfyui_image_workflow = (
-        (default_img.config.get("default_workflow") if default_img else None)
-        or DEFAULT_COMFYUI_IMAGE_WORKFLOW
-    )
-
-    # Collect provider keys for quick preset matching in UI
-    provider_keys: dict[str, str | None] = {}
-    for p in all_providers:
-        if p.provider_type == "llm":
-            key_val = p.masked_credentials.get("api_key")
-            provider_keys[p.provider_name] = key_val
-
-    return APIResponse(
-        data={
-            "active_provider_id": default_llm.provider_name if default_llm else "deepseek",
-            "provider_keys": provider_keys,
-            "openai_base_url": (default_llm.config.get("base_url") if default_llm else "https://api.deepseek.com"),
-            "openai_model": (
-                default_llm.config.get("model") if default_llm else default_llm_model("deepseek")
-            ),
-            "comfyui_base_url": (default_img.config.get("base_url") if default_img else "http://127.0.0.1:8188"),
-            "comfyui_image_workflow": comfyui_image_workflow,
-            "comfyui_video_workflow": (default_vid.config.get("default_workflow") if default_vid else "video/video_wan2.1_fusionx.json"),
-            "is_llm_configured": bool(default_llm and default_llm.has_credentials and default_llm.enabled),
-            "is_image_configured": bool(default_img and default_img.enabled),
-            "is_video_configured": bool(default_vid and default_vid.enabled),
-            "is_search_configured": bool(default_search and default_search.has_credentials and default_search.enabled),
-            "is_tts_configured": bool(default_tts and default_tts.enabled),
-            "has_openai_key": bool(default_llm and default_llm.has_credentials),
-            "has_comfyui_key": bool(default_img and default_img.has_credentials),
-            "has_tavily_key": bool(default_search and default_search.has_credentials),
-            "masked_openai_key": default_llm.masked_credentials.get("api_key") if default_llm else None,
-            "masked_comfyui_key": default_img.masked_credentials.get("api_key") if default_img else None,
-            "masked_tavily_key": default_search.masked_credentials.get("api_key") if default_search else None,
-        }
-    )
 
 
 @router.get("/voices", response_model=APIResponse[list[dict]])
@@ -182,7 +132,6 @@ class TTSVoiceTestRequest(BaseModel):
 
 
 @router.post("/voices/test")
-@router.post("/tts/test")
 async def test_tts_voice(
     payload: TTSVoiceTestRequest,
     manager: ProviderManager = Depends(get_provider_manager),
@@ -373,75 +322,6 @@ async def test_provider_connection(
     """Test connection with specified or in-flight provider configuration"""
     res = await manager.test_provider(payload)
     return APIResponse(data=res)
-
-
-class ProviderConfigureRequest(BaseModel):
-    provider_id: str | None = None
-    openai_api_key: str | None = None
-    openai_base_url: str | None = None
-    openai_model: str | None = None
-    comfyui_base_url: str | None = None
-    comfyui_api_key: str | None = None
-    comfyui_image_workflow: str | None = None
-    comfyui_video_workflow: str | None = None
-    tavily_api_key: str | None = None
-
-
-@router.post("/configure", response_model=APIResponse[dict])
-async def configure_providers_legacy(
-    payload: ProviderConfigureRequest,
-    manager: ProviderManager = Depends(get_provider_manager),
-):
-    """Legacy configure endpoint: updates LLM, Search, Image & Video configs in SQLite"""
-    pid = payload.provider_id or "deepseek"
-    llm_p = await manager.repo.get_by_name("llm", pid)
-    if llm_p:
-        cfg = dict(llm_p.config or {})
-        if payload.openai_base_url:
-            cfg["base_url"] = payload.openai_base_url
-        if payload.openai_model:
-            cfg["model"] = payload.openai_model
-        creds = {"api_key": payload.openai_api_key} if payload.openai_api_key is not None else None
-        await manager.update_provider(
-            llm_p.id,
-            ProviderConfigUpdate(config=cfg, credentials=creds, is_default=True),
-        )
-
-    if payload.tavily_api_key is not None:
-        search_p = await manager.repo.get_by_name("search", "tavily")
-        if search_p:
-            await manager.update_provider(
-                search_p.id,
-                ProviderConfigUpdate(credentials={"api_key": payload.tavily_api_key}),
-            )
-
-    img_p = await manager.repo.get_by_name("image", "comfyui")
-    if img_p:
-        img_cfg = dict(img_p.config or {})
-        if payload.comfyui_base_url:
-            img_cfg["base_url"] = payload.comfyui_base_url
-        if payload.comfyui_image_workflow:
-            img_cfg["default_workflow"] = payload.comfyui_image_workflow
-        img_creds = {"api_key": payload.comfyui_api_key} if payload.comfyui_api_key is not None else None
-        await manager.update_provider(
-            img_p.id,
-            ProviderConfigUpdate(config=img_cfg, credentials=img_creds),
-        )
-
-    vid_p = await manager.repo.get_by_name("video", "comfyui")
-    if vid_p:
-        vid_cfg = dict(vid_p.config or {})
-        if payload.comfyui_base_url:
-            vid_cfg["base_url"] = payload.comfyui_base_url
-        if payload.comfyui_video_workflow:
-            vid_cfg["default_workflow"] = payload.comfyui_video_workflow
-        vid_creds = {"api_key": payload.comfyui_api_key} if payload.comfyui_api_key is not None else None
-        await manager.update_provider(
-            vid_p.id,
-            ProviderConfigUpdate(config=vid_cfg, credentials=vid_creds),
-        )
-
-    return APIResponse(data={"message": "AI Provider 配置已成功持久化至 SQLite 并即时生效"})
 
 
 # -----------------------------------------------------------------------------

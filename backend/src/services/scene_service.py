@@ -62,6 +62,10 @@ class SceneService:
             visual_prompt=data.visual_prompt,
             duration_seconds=data.duration_seconds,
             layout_params=self._manual_sources(data.layout_params, data.audio_asset_id, data.media_asset_id),
+            visual_role=data.visual_role.value,
+            claim_refs=list(data.claim_refs),
+            source_refs=list(data.source_refs),
+            production_metadata=dict(data.production_metadata),
             audio_asset_id=data.audio_asset_id,
             media_asset_id=data.media_asset_id,
         )
@@ -90,6 +94,10 @@ class SceneService:
                 visual_prompt=sc.visual_prompt,
                 duration_seconds=sc.duration_seconds,
                 layout_params=self._manual_sources(sc.layout_params, sc.audio_asset_id, sc.media_asset_id),
+                visual_role=sc.visual_role.value,
+                claim_refs=list(sc.claim_refs),
+                source_refs=list(sc.source_refs),
+                production_metadata=dict(sc.production_metadata),
                 audio_asset_id=sc.audio_asset_id,
                 media_asset_id=sc.media_asset_id,
             )
@@ -109,6 +117,8 @@ class SceneService:
             steps.update({"voice", "subtitles", "composition"})
         if {"visual_prompt", "media_asset_id"} & changed.keys():
             steps.update({"assets", "composition"})
+        if {"layout_params", "visual_role", "claim_refs", "source_refs", "production_metadata"} & changed.keys():
+            steps.update({"assets", "composition"})
         if "layout_params" in changed:
             steps.add("composition")
         await self._before_edit(scene.task_id, steps, scene.id)
@@ -124,6 +134,14 @@ class SceneService:
             scene.duration_seconds = data.duration_seconds
         if data.layout_params is not None:
             scene.layout_params = {**data.layout_params, **({"input_source": "manual"} if not self.execution_context else {})}
+        if data.visual_role is not None:
+            scene.visual_role = data.visual_role.value
+        if data.claim_refs is not None:
+            scene.claim_refs = list(data.claim_refs)
+        if data.source_refs is not None:
+            scene.source_refs = list(data.source_refs)
+        if data.production_metadata is not None:
+            scene.production_metadata = dict(data.production_metadata)
         if data.audio_asset_id is not None:
             scene.audio_asset_id = data.audio_asset_id
         if data.media_asset_id is not None:

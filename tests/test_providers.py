@@ -40,6 +40,42 @@ async def test_openai_structured_output_repairs_json_and_empty_custom_params(mon
 
 
 @pytest.mark.asyncio
+async def test_openai_structured_output_normalizes_visibility_alias_without_repair(monkeypatch):
+    from src.providers.llm.openai_client import OpenAICompatibleLLMProvider
+
+    raw_response = json.dumps(
+        {
+            "title": "测试标题",
+            "hook": "先看一个关键事实",
+            "narration": "这是一段测试旁白。",
+            "scenes": [
+                {
+                    "sequence_index": 0,
+                    "narration_text": "这是第一段旁白。",
+                    "visual_prompt": "干净简洁的测试场景",
+                }
+            ],
+            "metadata": {"visibility": "公开可见"},
+        },
+        ensure_ascii=False,
+    )
+    calls = []
+
+    async def fake_generate_text(**kwargs):
+        calls.append(kwargs)
+        return raw_response
+
+    provider = OpenAICompatibleLLMProvider(api_key="mock-key")
+    monkeypatch.setattr(provider, "generate_text", fake_generate_text)
+
+    script = await provider.generate_structured("hello", StructuredScript)
+
+    assert script.metadata.visibility == "public"
+    assert provider.last_structured_repair_count == 0
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_provider_registry_unconfigured_validation():
     from src.core.exceptions import ValidationException
     from src.providers.registry import ProviderRegistry
@@ -289,6 +325,7 @@ def test_provider_registry_passes_llm_provider_name():
 @pytest.mark.asyncio
 async def test_openai_compatible_llm_retries_remote_disconnect(monkeypatch):
     import httpx
+
     from src.providers.llm.openai_client import OpenAICompatibleLLMProvider
 
     sleep_delays = []
@@ -340,6 +377,7 @@ async def test_openai_compatible_llm_retries_remote_disconnect(monkeypatch):
 @pytest.mark.asyncio
 async def test_openai_compatible_llm_retries_dns_without_warning(monkeypatch):
     import httpx
+
     from src.providers.llm.openai_client import OpenAICompatibleLLMProvider
 
     class CapturedLogger:
@@ -412,6 +450,7 @@ async def test_openai_compatible_llm_reports_terminal_transport_errors(
     monkeypatch, failure_kind, expected_message
 ):
     import httpx
+
     from src.core.exceptions import ProviderException
     from src.providers.llm.openai_client import OpenAICompatibleLLMProvider
 
@@ -478,6 +517,7 @@ async def test_openai_compatible_llm_does_not_retry_http_errors(
     monkeypatch, status_code, error_message
 ):
     import httpx
+
     from src.core.exceptions import ProviderException
     from src.providers.llm.openai_client import OpenAICompatibleLLMProvider
 
@@ -520,6 +560,7 @@ async def test_openai_compatible_llm_does_not_retry_http_errors(
 @pytest.mark.asyncio
 async def test_openai_compatible_llm_redacts_credentials_from_http_errors(monkeypatch):
     import httpx
+
     from src.core.exceptions import ProviderException
     from src.providers.llm.openai_client import OpenAICompatibleLLMProvider
 

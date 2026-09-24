@@ -22,7 +22,9 @@ class ProjectTemplateModel(Base):
     name: Mapped[str] = mapped_column(String(255), default="默认排版模版", nullable=False)
     aspect_ratio: Mapped[str] = mapped_column(String(10), default="9:16", nullable=False)
     style_preset: Mapped[str] = mapped_column(String(50), default="modern_clean", nullable=False)
-    template_id: Mapped[str] = mapped_column(String(255), default="default_portrait", nullable=False)
+    template_id: Mapped[str] = mapped_column(
+        String(255), default="image_gallery_matted", nullable=False
+    )
     template_version: Mapped[str] = mapped_column(String(32), default="1", nullable=False)
     font_family: Mapped[str] = mapped_column(
         String(100), default="Inter, sans-serif", nullable=False

@@ -22,6 +22,40 @@ class AspectRatio(StrEnum):
     SQUARE_1_1 = "1:1"
 
 
+class ProductionMode(StrEnum):
+    KNOWLEDGE = "knowledge"
+    COMMERCE = "commerce"
+    DRAMA = "drama"
+
+
+class CreativeAngle(StrEnum):
+    DIRECT = "direct"
+    PAIN_POINT = "pain_point"
+    USE_CASE = "use_case"
+    DEMO = "demo"
+    REVIEW = "review"
+    COMPARISON = "comparison"
+    STORY = "story"
+
+
+class VisualRole(StrEnum):
+    """Information or commercial role of a storyboard scene."""
+
+    CONCEPT = "concept"
+    PROCESS = "process"
+    COMPARISON = "comparison"
+    TIMELINE = "timeline"
+    DATA = "data"
+    EXAMPLE = "example"
+    QUOTE = "quote"
+    B_ROLL = "b_roll"
+    PRODUCT_SHOT = "product_shot"
+    CONTEXT = "context"
+    BENEFIT = "benefit"
+    PROOF = "proof"
+    CTA = "cta"
+
+
 class ProjectStatus(StrEnum):
     DRAFT = "draft"
     CONFIGURED = "configured"

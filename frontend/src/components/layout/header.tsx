@@ -5,28 +5,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { ChevronRight } from "lucide-react";
-import { useTaskEvents, type TaskEvent } from "@/lib/use-task-events";
+import { TASK_REFRESH_EVENTS, useTaskEvents, type TaskEvent } from "@/lib/use-task-events";
 import { ThemeToggle } from "@/components/theme-provider";
-
-const TASK_LIST_REFRESH_EVENTS = new Set([
-  "task.queued",
-  "task.started",
-  "task.completed",
-  "task.failed",
-  "task.cancelled",
-  "task_queued",
-  "task_started",
-  "task_completed",
-  "task_failed",
-  "task_cancelled",
-  "job.started",
-  "job.retrying",
-  "job.completed",
-  "job.failed",
-  "job.cancelled",
-  "job.uncertain",
-  "step.completed",
-]);
 
 export function Header() {
   const pathname = usePathname();
@@ -41,7 +21,7 @@ export function Header() {
       if (event.event === "publish.verification_needed") {
         queryClient.invalidateQueries({ queryKey: ["pending-verifications"] });
       }
-      if (event.data?.task_id && TASK_LIST_REFRESH_EVENTS.has(event.event)) {
+      if (event.data?.task_id && TASK_REFRESH_EVENTS.has(event.event)) {
         refreshTaskLists();
       }
     },

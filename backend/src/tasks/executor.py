@@ -5,8 +5,11 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.core.database import async_session_factory
+from src.core.exceptions import ValidationException
+from src.models.production_context import ProductionContextSnapshotModel
+from src.models.task import TaskModel
 from src.models.workflow import WorkflowJobModel
-from src.services.durable_pipeline import DurableVideoPipeline
+from src.services.production_pipeline import production_pipeline_registry
 from src.services.rendering_service import RenderingService
 from src.tasks.job import Job
 
@@ -20,7 +23,23 @@ class VideoWorkflowExecutor:
 
     async def execute(self, job: Job) -> dict[str, Any]:
         async with self.session_factory() as session:
-            pipeline = DurableVideoPipeline(session, job, self.rendering_service_factory)
+            task = await session.get(TaskModel, job.task_id)
+            if task is None:
+                raise ValidationException("任务不存在")
+            job_record = await session.get(WorkflowJobModel, job.id)
+            if job_record is None:
+                raise ValidationException("WorkflowJob 不存在")
+            snapshot = await session.get(
+                ProductionContextSnapshotModel, job_record.production_context_snapshot_id
+            )
+            if snapshot is None:
+                raise ValidationException("WorkflowJob 缺少生产上下文快照")
+            pipeline = production_pipeline_registry.create(
+                snapshot.mode,
+                session,
+                job,
+                self.rendering_service_factory,
+            )
             try:
                 result = await pipeline.execute()
             except BaseException:
@@ -29,6 +48,9 @@ class VideoWorkflowExecutor:
                     await pipeline.runtime.assert_lease()
                     record = await session.get(WorkflowJobModel, job.id)
                     record.status, record.lease_token = 'failed', None
+                    task = await session.get(TaskModel, job.task_id)
+                    if task is not None:
+                        task.production_status = 'failed'
                     await session.commit()
                 raise
             if getattr(pipeline, 'owns_job', False):

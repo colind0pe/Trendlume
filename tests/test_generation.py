@@ -1,16 +1,36 @@
+import json
+
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from src.core.exceptions import ProviderException, ValidationException
+from src.models.task import TaskModel
 from src.providers.llm.protocol import StructuredOutputException
 from src.schemas.generation import (
-    ContentGenerateRequest,
     ResearchResponse,
     ResearchSource,
     ScriptGenerateRequest,
+    PlatformMetadata,
     StructuredScript,
 )
 from src.services.generation_service import GenerationService
 from src.storage.local_storage import LocalStorageService
+
+
+def test_template_media_uses_task_generation_settings():
+    task = TaskModel(
+        id="task-template-media",
+        project_id="project-template-media",
+        title="模板尺寸",
+        generation_settings={"template_id": "image_gallery_matted"},
+    )
+    service = GenerationService.__new__(GenerationService)
+    service.production_settings = None
+
+    aspect_ratio, width, height = service._resolve_template_media(task, "16:9")
+
+    assert aspect_ratio == "1:1"
+    assert (width, height) == (1024, 1024)
 
 
 def test_split_narration_script_modes():
@@ -144,11 +164,22 @@ def test_generate_schema_example():
     from src.providers.llm.openai_client import _generate_schema_example
 
     example_str = _generate_schema_example(StructuredScript)
+    example = json.loads(example_str)
     assert "$defs" not in example_str
     assert "title" in example_str
     assert "scenes" in example_str
     assert "visual_prompt" in example_str
     assert '"platform_custom_params": {}' in example_str
+    assert isinstance(example["knowledge_brief"], dict)
+    assert isinstance(example["knowledge_brief"]["audience"], str)
+    assert example["metadata"]["visibility"] == "public"
+    assert example["scenes"][0]["visual_role"] == "concept"
+
+
+def test_platform_metadata_normalizes_common_visibility_labels():
+    assert PlatformMetadata(visibility="公开可见").visibility == "public"
+    assert PlatformMetadata(visibility="好友可见").visibility == "friend"
+    assert PlatformMetadata(visibility="仅自己可见").visibility == "private"
 
 
 def test_research_context_is_bounded_and_marked_as_untrusted_data():
@@ -254,47 +285,6 @@ async def test_generated_script_rejects_wrong_target_count(test_session: AsyncSe
     monkeypatch.setattr(service, "_get_llm_provider", get_provider)
     with pytest.raises(ValidationException, match="期望 8 个分镜.*实际 1 个"):
         await service.generate_script(ScriptGenerateRequest(topic="主题", target_scene_count=8))
-
-
-@pytest.mark.asyncio
-async def test_narration_rejects_wrong_target_count(test_session: AsyncSession, monkeypatch):
-    class ShortLLM:
-        async def generate_text(self, prompt="", **kwargs):
-            return "只有一段"
-
-    service = GenerationService(test_session)
-
-    async def get_provider():
-        return ShortLLM()
-
-    monkeypatch.setattr(service, "_get_llm_provider", get_provider)
-    monkeypatch.setattr(service, "research_topic", lambda *args, **kwargs: None)
-    with pytest.raises(ValidationException, match="期望 8 段旁白.*实际 1 段"):
-        await service.generate_narration(
-            ContentGenerateRequest(topic="主题", target_scene_count=8, enable_research=False)
-        )
-
-
-@pytest.mark.asyncio
-async def test_narration_default_count_preserves_legacy_truncation(
-    test_session: AsyncSession, monkeypatch
-):
-    class LongLLM:
-        async def generate_text(self, prompt="", **kwargs):
-            return "\n".join(f"第 {index} 段" for index in range(1, 11))
-
-    service = GenerationService(test_session)
-
-    async def get_provider():
-        return LongLLM()
-
-    monkeypatch.setattr(service, "_get_llm_provider", get_provider)
-    result = await service.generate_narration(
-        ContentGenerateRequest(topic="主题", enable_research=False)
-    )
-
-    assert len(result.narrations) == 8
-    assert result.narrations[-1] == "第 8 段"
 
 
 @pytest.mark.asyncio

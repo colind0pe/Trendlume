@@ -18,6 +18,16 @@ ABSOLUTE_CLAIM = re.compile(
     r"(?:\b\d+(?:\.\d+)?\s*%|百分之\s*[零一二三四五六七八九十百\d]+|"
     r"所有人|任何人|绝对|彻底|永久|必然|保证|史上最高|历史最高)"
 )
+KNOWLEDGE_VISUAL_ROLES = {
+    "concept",
+    "process",
+    "comparison",
+    "timeline",
+    "data",
+    "example",
+    "quote",
+    "b_roll",
+}
 
 
 def _metric(name: str, passed: bool, detail: str = "") -> dict[str, Any]:
@@ -55,6 +65,52 @@ def evaluate_case(case: dict[str, Any]) -> dict[str, Any]:
         indexes = [scene.get("sequence_index") for scene in scenes]
         metrics.append(_metric("contiguous_scene_indexes", indexes == list(range(len(scenes)))))
         metrics.append(_metric("structured_shape", all(output.get(key) is not None for key in ("title", "hook", "narration", "scenes"))))
+
+    if expected.get("knowledge_provenance"):
+        brief = output.get("knowledge_brief") or {}
+        claims = brief.get("key_claims") or []
+        claim_ids = {str(claim.get("id")) for claim in claims if isinstance(claim, dict) and claim.get("id")}
+        brief_sources = {str(ref) for ref in brief.get("source_refs") or []}
+        metrics.append(
+            _metric(
+                "knowledge_brief_contract",
+                all(bool(brief.get(field)) for field in ("audience", "thesis", "viewer_takeaway"))
+                and bool(claims),
+            )
+        )
+        claim_sources = {
+            str(ref)
+            for claim in claims
+            if isinstance(claim, dict)
+            for ref in claim.get("source_refs") or []
+        }
+        scene_claim_refs = {
+            str(ref)
+            for scene in output.get("scenes") or []
+            if isinstance(scene, dict)
+            for ref in scene.get("claim_refs") or []
+        }
+        scene_source_refs = {
+            str(ref)
+            for scene in output.get("scenes") or []
+            if isinstance(scene, dict)
+            for ref in scene.get("source_refs") or []
+        }
+        metrics.append(
+            _metric(
+                "knowledge_provenance_closed",
+                bool(brief_sources)
+                and claim_sources.issubset(brief_sources)
+                and scene_source_refs.issubset(brief_sources)
+                and scene_claim_refs.issubset(claim_ids),
+            )
+        )
+        metrics.append(
+            _metric(
+                "visual_role_contract",
+                all(scene.get("visual_role") in KNOWLEDGE_VISUAL_ROLES for scene in output.get("scenes") or []),
+            )
+        )
 
     target = expected.get("target_scene_count")
     if target is not None:

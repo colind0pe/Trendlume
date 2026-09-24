@@ -216,6 +216,68 @@ const PRESET_OPTIONS: Record<string, PresetOption[]> = {
       baseUrlPlaceholder: "https://ark.cn-beijing.volces.com/api/v3",
       modelPlaceholder: "doubao-seedream-5-0-260128",
     },
+    {
+      type: "image",
+      name: "aliyun",
+      display: "阿里云百炼 Qwen Image",
+      defaultBaseUrl: "https://dashscope.aliyuncs.com/api/v1",
+      defaultModel: "qwen-image-3.0-pro",
+      keyUrl: "https://bailian.console.aliyun.com/",
+      hint: "支持文生图和 1–3 张角色/场景参考图。使用专属业务空间时，请把 Base URL 换成对应地域的 Workspace Endpoint。",
+      hasBaseUrl: true,
+      hasModel: true,
+      hasApiKey: true,
+      baseUrlPlaceholder: "https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api/v1",
+      modelPlaceholder: "qwen-image-3.0-pro",
+    },
+    {
+      type: "image",
+      name: "google",
+      display: "Google Gemini Image",
+      defaultBaseUrl: "https://generativelanguage.googleapis.com/v1",
+      defaultModel: "gemini-3.1-flash-image",
+      keyUrl: "https://aistudio.google.com/api-keys",
+      hint: "支持多参考图角色一致性和图片编辑；短剧镜头会传递全部已绑定的角色与场景参考图。",
+      hasBaseUrl: true,
+      hasModel: true,
+      hasApiKey: true,
+      baseUrlPlaceholder: "https://generativelanguage.googleapis.com/v1",
+      modelPlaceholder: "gemini-3.1-flash-image",
+      customFields: [
+        {
+          key: "image_size",
+          label: "输出清晰度",
+          type: "select",
+          defaultValue: "1K",
+          options: [
+            { label: "1K（推荐）", value: "1K" },
+            { label: "2K", value: "2K" },
+            { label: "4K", value: "4K" },
+          ],
+        },
+      ],
+    },
+    {
+      type: "image",
+      name: "runninghub",
+      display: "RunningHub 图片工作流",
+      defaultBaseUrl: "https://www.runninghub.ai",
+      keyUrl: "https://www.runninghub.ai/",
+      hint: "运行你在 RunningHub 发布的 ComfyUI 工作流。节点 ID 必须与该工作流的 API 格式一致；多张参考图按节点顺序绑定。",
+      hasBaseUrl: true,
+      hasModel: false,
+      hasApiKey: true,
+      baseUrlPlaceholder: "https://www.runninghub.ai",
+      customFields: [
+        { key: "workflow_id", label: "Workflow ID", type: "text", required: true, description: "RunningHub 工作流页面 URL 中的数字 ID。" },
+        { key: "prompt_node_id", label: "提示词节点 ID", type: "text", required: true },
+        { key: "prompt_field_name", label: "提示词字段名", type: "text", defaultValue: "text", required: true },
+        { key: "reference_node_ids", label: "参考图节点 ID", type: "text", description: "可选；多个节点用英文逗号分隔，顺序对应角色和场景参考图。" },
+        { key: "reference_field_name", label: "参考图字段名", type: "text", defaultValue: "image" },
+        { key: "width_node_id", label: "宽度节点 ID", type: "text" },
+        { key: "height_node_id", label: "高度节点 ID", type: "text" },
+      ],
+    },
   ],
   video: [
     {
@@ -244,6 +306,79 @@ const PRESET_OPTIONS: Record<string, PresetOption[]> = {
       hasApiKey: true,
       baseUrlPlaceholder: "https://ark.cn-beijing.volces.com/api/v3",
       modelPlaceholder: "doubao-seedance-2-0-260128",
+    },
+    {
+      type: "video",
+      name: "aliyun",
+      display: "阿里云百炼 Wan 2.7",
+      defaultBaseUrl: "https://dashscope.aliyuncs.com/api/v1",
+      defaultModel: "wan2.7-i2v",
+      keyUrl: "https://bailian.console.aliyun.com/",
+      hint: "用于短剧首帧或首尾帧生视频，支持 2–15 秒镜头；建议搭配 Qwen Image 先生成角色一致的关键帧。",
+      hasBaseUrl: true,
+      hasModel: true,
+      hasApiKey: true,
+      baseUrlPlaceholder: "https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api/v1",
+      modelPlaceholder: "wan2.7-i2v",
+      customFields: [
+        {
+          key: "text_model",
+          label: "文生视频模型",
+          type: "text",
+          defaultValue: "wan2.7-t2v",
+          description: "镜头没有首帧素材时使用；有首帧时仍使用上方的图生视频模型。",
+          required: true,
+        },
+        {
+          key: "resolution",
+          label: "输出清晰度",
+          type: "select",
+          defaultValue: "720P",
+          options: [
+            { label: "720P（推荐）", value: "720P" },
+            { label: "1080P", value: "1080P" },
+          ],
+        },
+      ],
+    },
+    {
+      type: "video",
+      name: "google",
+      display: "Google Veo 3.1",
+      defaultBaseUrl: "https://generativelanguage.googleapis.com/v1beta",
+      defaultModel: "veo-3.1-generate-preview",
+      keyUrl: "https://aistudio.google.com/api-keys",
+      hint: "支持 4/6/8 秒、最多 3 张角色/道具参考图，或首尾帧插值；两种约束模式不能同时使用。",
+      hasBaseUrl: true,
+      hasModel: true,
+      hasApiKey: true,
+      baseUrlPlaceholder: "https://generativelanguage.googleapis.com/v1beta",
+      modelPlaceholder: "veo-3.1-generate-preview",
+    },
+    {
+      type: "video",
+      name: "runninghub",
+      display: "RunningHub 视频工作流",
+      defaultBaseUrl: "https://www.runninghub.ai",
+      keyUrl: "https://www.runninghub.ai/",
+      hint: "运行自定义视频工作流。只填写工作流真实存在的节点；短剧参考图、首帧、尾帧均按显式节点映射传入。",
+      hasBaseUrl: true,
+      hasModel: false,
+      hasApiKey: true,
+      baseUrlPlaceholder: "https://www.runninghub.ai",
+      customFields: [
+        { key: "workflow_id", label: "Workflow ID", type: "text", required: true },
+        { key: "prompt_node_id", label: "提示词节点 ID", type: "text", required: true },
+        { key: "prompt_field_name", label: "提示词字段名", type: "text", defaultValue: "text", required: true },
+        { key: "first_frame_node_id", label: "首帧节点 ID", type: "text", description: "图生视频工作流必填；纯文生视频可留空。" },
+        { key: "last_frame_node_id", label: "尾帧节点 ID", type: "text", description: "仅首尾帧工作流填写。" },
+        { key: "reference_node_ids", label: "角色/道具参考图节点 ID", type: "text", description: "可选；多个节点用英文逗号分隔。" },
+        { key: "reference_field_name", label: "图片字段名", type: "text", defaultValue: "image" },
+        { key: "duration_node_id", label: "时长节点 ID", type: "text" },
+        { key: "duration_field_name", label: "时长字段名", type: "text", defaultValue: "duration" },
+        { key: "width_node_id", label: "宽度节点 ID", type: "text" },
+        { key: "height_node_id", label: "高度节点 ID", type: "text" },
+      ],
     },
   ],
   material: [
@@ -343,8 +478,6 @@ const VOLCENGINE_TTS_DEFAULT_RESOURCE_ID = "seed-tts-2.0";
 const VOLCENGINE_TTS_DEFAULT_SPEED_RATIO = 1.0;
 const VOLCENGINE_TTS_MIN_SPEED_RATIO = 0.5;
 const VOLCENGINE_TTS_MAX_SPEED_RATIO = 2.0;
-const VOLCENGINE_TTS_LEGACY_VOICE = "zh_female_cancan_mars_bigtts";
-const VOLCENGINE_TTS_LEGACY_RESOURCE_ID = "volc.service_type.10029";
 const DEFAULT_IMAGE_TEST_PROMPT = "一只橘猫坐在窗边，温暖阳光";
 const DEFAULT_IMAGE_TEST_STYLE = "cinematic_real";
 const IMAGE_TEST_STYLE_OPTIONS = STYLE_PRESET_OPTIONS.filter((style) => style.value !== "custom");
@@ -945,15 +1078,7 @@ function ProviderWorkspace({
       setIsDefault(existing.is_default);
 
       customDefs.forEach((cf) => {
-        let val = existing.config?.[cf.key];
-        if (vendorName === "volcengine" && categoryKey === "tts") {
-          if (cf.key === "resource_id" && val === VOLCENGINE_TTS_LEGACY_RESOURCE_ID) {
-            val = VOLCENGINE_TTS_DEFAULT_RESOURCE_ID;
-          }
-          if (cf.key === "default_voice" && (val === VOLCENGINE_TTS_LEGACY_VOICE || !val)) {
-            val = VOLCENGINE_TTS_DEFAULT_VOICE;
-          }
-        }
+        const val = existing.config?.[cf.key];
         newCustomValues[cf.key] = val !== undefined ? String(val) : String(cf.defaultValue ?? "");
       });
 
@@ -1098,6 +1223,10 @@ function ProviderWorkspace({
     return { config, credentials };
   };
 
+  const getMissingRequiredCustomField = () => currentPreset?.customFields?.find(
+    (field) => field.required && !String(customFieldValues[field.key] ?? field.defaultValue ?? "").trim(),
+  );
+
   const saveCurrentProvider = async () => {
     const { config, credentials } = buildProviderPayload();
 
@@ -1153,6 +1282,11 @@ function ProviderWorkspace({
       toast("请填写 Base URL 端点地址。", "warning");
       return;
     }
+    const missingCustomField = getMissingRequiredCustomField();
+    if (missingCustomField) {
+      toast(`请填写${missingCustomField.label}。`, "warning");
+      return;
+    }
 
     setIsTesting(true);
     setTestResult(null);
@@ -1202,6 +1336,11 @@ function ProviderWorkspace({
     }
     if (currentPreset?.hasBaseUrl && !baseUrl.trim()) {
       toast("请填写 Base URL 端点地址。", "warning");
+      return;
+    }
+    const missingCustomField = getMissingRequiredCustomField();
+    if (missingCustomField) {
+      toast(`请填写${missingCustomField.label}。`, "warning");
       return;
     }
 
@@ -1512,7 +1651,7 @@ function ProviderWorkspace({
                   {currentPreset.customFields.map((cf) => (
                     <div key={cf.key} className="space-y-1">
                       <label htmlFor={`custom-field-${cf.key}`} className="text-xs font-medium text-foreground">
-                        {cf.label}
+                        {cf.label}{cf.required ? " *" : ""}
                       </label>
                       {cf.type === "select" ? (
                         <Select
@@ -1529,6 +1668,7 @@ function ProviderWorkspace({
                               setPreviewVoiceId(newVal);
                             }
                           }}
+                          required={cf.required}
                         >
                           {cf.options?.map((opt) => (
                             <option key={opt.value} value={opt.value}>
@@ -1553,6 +1693,7 @@ function ProviderWorkspace({
                             }
                           }}
                           placeholder={cf.placeholder}
+                          required={cf.required}
                           className="font-mono"
                         />
                       )}

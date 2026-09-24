@@ -1,5 +1,6 @@
 import asyncio
 import json
+import mimetypes
 import uuid
 from pathlib import Path
 
@@ -40,64 +41,85 @@ class ComfyUIVideoProvider:
         prompt: str,
         width: int,
         height: int,
-        duration_seconds: float,
+        reference_image_name: str | None = None,
     ) -> dict:
-        """Load video workflow JSON from workflows directory or build default video graph"""
+        """Load and parameterize one canonical workflow catalog entry."""
         wf_target = workflow_name or self.default_workflow
         workflows_dir = Path(__file__).resolve().parent.parent.parent.parent / "workflows"
         wf_path = workflow_service.resolve_workflow_file(wf_target, workflows_dir)
+        if wf_path is None:
+            raise ProviderException("ComfyUI", f"工作流不存在或不是 canonical catalog id: {wf_target}")
+        try:
+            with open(wf_path, encoding="utf-8") as f:
+                graph = json.load(f)
+        except (OSError, TypeError, ValueError) as exc:
+            raise ProviderException("ComfyUI", f"读取视频工作流失败 ({wf_target}): {exc}") from exc
+        if not isinstance(graph, dict):
+            raise ProviderException("ComfyUI", f"视频工作流必须是节点对象 ({wf_target})")
 
-        if wf_path and wf_path.exists():
-            try:
-                with open(wf_path, encoding="utf-8") as f:
-                    graph = json.load(f)
+        reference_bound = False
+        # Inject prompt, dimensions, and an optional uploaded reference. A
+        # text-to-video workflow must not pretend to be image-conditioned.
+        for node_id, node in graph.items():
+            if not isinstance(node, dict):
+                continue
+            inputs = node.get("inputs", {})
+            class_type = node.get("class_type", "")
+            title = node.get("_meta", {}).get("title", "")
 
-                # Inject prompt and dimensions into graph nodes if matching
-                for node_id, node in graph.items():
-                    if not isinstance(node, dict):
-                        continue
-                    inputs = node.get("inputs", {})
-                    class_type = node.get("class_type", "")
-                    title = node.get("_meta", {}).get("title", "")
+            if "$prompt" in title or class_type == "CLIPTextEncode" or "prompt" in str(title).lower():
+                if "text" in inputs and isinstance(inputs["text"], str):
+                    inputs["text"] = prompt
+                elif "value" in inputs and isinstance(inputs["value"], str):
+                    inputs["value"] = prompt
 
-                    if "$prompt" in title or class_type == "CLIPTextEncode" or "prompt" in str(title).lower():
-                        if "text" in inputs and isinstance(inputs["text"], str):
-                            inputs["text"] = prompt
-                        elif "value" in inputs and isinstance(inputs["value"], str):
-                            inputs["value"] = prompt
+            if "EmptyLatentImage" in class_type or "Wan" in class_type:
+                if "width" in inputs and isinstance(inputs["width"], (int, float)):
+                    inputs["width"] = width
+                if "height" in inputs and isinstance(inputs["height"], (int, float)):
+                    inputs["height"] = height
 
-                    if "EmptyLatentImage" in class_type or "Wan" in class_type:
-                        if "width" in inputs and isinstance(inputs["width"], (int, float)):
-                            inputs["width"] = width
-                        if "height" in inputs and isinstance(inputs["height"], (int, float)):
-                            inputs["height"] = height
+            if reference_image_name and class_type in {"LoadImage", "LoadImageOutput"}:
+                if "image" in inputs:
+                    inputs["image"] = reference_image_name
+                    reference_bound = True
 
-                logger.info(f"Loaded ComfyUI video workflow graph from {wf_path}")
-                return graph
-            except Exception as e:
-                logger.warning(f"Failed to parse custom video workflow {wf_path}, fallback to default: {e}")
+        if reference_image_name and not reference_bound:
+            raise ProviderException(
+                "ComfyUI",
+                f"工作流 {wf_target} 不包含可绑定首帧参考图的 LoadImage 节点；"
+                "请改用 image-to-video 工作流，不能静默退化为文生视频。",
+            )
 
-        # Fallback standard video generation prompt graph
-        return {
-            "10": {
-                "class_type": "VHS_VideoCombine",
-                "inputs": {
-                    "filenames": ["11", 0],
-                    "format": "video/h264-mp4",
-                    "frame_rate": 24,
-                    "loop_count": 0,
-                    "save_output": True,
-                },
-            },
-            "11": {
-                "class_type": "EmptyLatentImage",
-                "inputs": {
-                    "batch_size": int(duration_seconds * 12),
-                    "height": height,
-                    "width": width,
-                },
-            },
-        }
+        logger.info(f"Loaded ComfyUI video workflow graph from {wf_path}")
+        return graph
+
+    async def _upload_reference_image(self, client: httpx.AsyncClient, path: str) -> str:
+        reference_path = Path(path)
+        if not reference_path.is_file():
+            raise ProviderException("ComfyUI", f"首帧参考图不存在: {path}")
+        mime_type = mimetypes.guess_type(reference_path.name)[0] or "application/octet-stream"
+        try:
+            with reference_path.open("rb") as stream:
+                response = await client.post(
+                    f"{self.base_url}/upload/image",
+                    files={"image": (reference_path.name, stream, mime_type)},
+                    data={"type": "input", "overwrite": "true"},
+                )
+        except OSError as exc:
+            raise ProviderException("ComfyUI", f"读取首帧参考图失败: {path}") from exc
+        if response.status_code != 200:
+            raise ProviderException(
+                "ComfyUI",
+                f"上传首帧参考图失败 (Status {response.status_code}): {response.text[:500]}",
+            )
+        try:
+            name = response.json().get("name")
+        except ValueError as exc:
+            raise ProviderException("ComfyUI", "上传首帧参考图响应不是有效 JSON。") from exc
+        if not isinstance(name, str) or not name:
+            raise ProviderException("ComfyUI", "上传首帧参考图响应缺少文件名。")
+        return name
 
     async def generate_video(
         self,
@@ -120,11 +142,27 @@ class ComfyUIVideoProvider:
         else:
             width, height = int(width), int(height)
         client_id = f"trendlume_vid_{uuid.uuid4().hex[:8]}"
-        prompt_graph = self._load_workflow_graph(workflow, prompt, width, height, duration_seconds)
         headers = self._get_headers()
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout, headers=headers) as client:
+                reference_image_name = (
+                    await self._upload_reference_image(client, image_url)
+                    if image_url and not image_url.startswith(("http://", "https://", "data:"))
+                    else None
+                )
+                if image_url and not reference_image_name:
+                    raise ProviderException(
+                        "ComfyUI",
+                        "当前 ComfyUI 视频适配器只支持本地首帧文件，无法安全地忽略远程 image_url。",
+                    )
+                prompt_graph = self._load_workflow_graph(
+                    workflow,
+                    prompt,
+                    width,
+                    height,
+                    reference_image_name=reference_image_name,
+                )
                 queue_res = await client.post(
                     f"{self.base_url}/prompt",
                     json={"prompt": prompt_graph, "client_id": client_id},

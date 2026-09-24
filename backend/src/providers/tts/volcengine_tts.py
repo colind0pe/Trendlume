@@ -24,8 +24,6 @@ class VolcengineTTSProvider:
     DEFAULT_SPEED_RATIO = 1.0
     MIN_SPEED_RATIO = 0.5
     MAX_SPEED_RATIO = 2.0
-    LEGACY_DEFAULT_VOICE = "zh_female_cancan_mars_bigtts"
-    LEGACY_DEFAULT_RESOURCE_ID = "volc.service_type.10029"
 
     def __init__(
         self,
@@ -54,17 +52,6 @@ class VolcengineTTSProvider:
         if not math.isfinite(speed_ratio):
             speed_ratio = cls.DEFAULT_SPEED_RATIO
         return max(cls.MIN_SPEED_RATIO, min(cls.MAX_SPEED_RATIO, speed_ratio))
-
-    @classmethod
-    def normalize_legacy_defaults(cls, config: dict | None) -> dict:
-        """Upgrade the defaults created by the first V3 integration in memory."""
-        normalized = dict(config or {})
-        resource_id = str(normalized.get("resource_id") or "").strip()
-        voice_id = str(normalized.get("default_voice") or "").strip()
-        if resource_id == cls.LEGACY_DEFAULT_RESOURCE_ID and voice_id in ("", cls.LEGACY_DEFAULT_VOICE):
-            normalized["resource_id"] = cls.DEFAULT_RESOURCE_ID
-            normalized["default_voice"] = cls.DEFAULT_VOICE
-        return normalized
 
     def _headers(self, request_id: str) -> dict[str, str]:
         return {

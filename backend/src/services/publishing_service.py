@@ -8,7 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.exceptions import NotFoundException, ValidationException
 from src.core.security import redact_sensitive_text, secret_cipher
-from src.domain.enums import AssetType, CredentialType, PlatformType, PublishJobStatus
+from src.domain.enums import (
+    AssetType,
+    CredentialType,
+    PlatformType,
+    PublishJobStatus,
+)
 from src.models.asset import AssetModel
 from src.models.provider_config import ProviderConfigModel
 from src.models.publishing import CredentialModel, PublishingJobModel, SocialAccountModel
@@ -18,13 +23,11 @@ from src.providers.publishing.cookie_helper import normalize_storage_state
 from src.providers.publishing.douyin import DouyinPublishingProvider
 from src.providers.publishing.protocol import PublishingProvider
 from src.repositories.asset_repository import AssetRepository
-from src.repositories.project_repository import ProjectRepository
 from src.repositories.publishing_repository import (
     CredentialRepository,
     PublishingJobRepository,
     SocialAccountRepository,
 )
-from src.repositories.task_repository import TaskRepository
 from src.schemas.generation import PlatformMetadata
 from src.schemas.publishing import (
     AccountCheckResponse,
@@ -55,9 +58,7 @@ class PublishingService:
         self.cred_repo = CredentialRepository(session)
         self.acc_repo = SocialAccountRepository(session)
         self.job_repo = PublishingJobRepository(session)
-        self.task_repo = TaskRepository(session)
         self.asset_repo = AssetRepository(session)
-        self.project_repo = ProjectRepository(session)
         self.rendering_service = rendering_service or RenderingService(session, storage=storage)
         self.auth = auth_service
 
@@ -135,17 +136,36 @@ class PublishingService:
     async def _attach_task_links(self, jobs: list[PublishingJobModel]) -> None:
         if not jobs:
             return
-        assets = (await self.session.execute(select(AssetModel).where(
-            AssetModel.id.in_([job.video_asset_id for job in jobs])
-        ))).scalars().all()
+        assets = (
+            (
+                await self.session.execute(
+                    select(AssetModel).where(
+                        AssetModel.id.in_([job.video_asset_id for job in jobs])
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
         asset_tasks = {asset.id: (asset.metadata_json or {}).get("task_id") for asset in assets}
-        tasks = (await self.session.execute(select(TaskModel).where(
-            TaskModel.project_id.in_({job.project_id for job in jobs})
-        ))).scalars().all()
+        tasks = (
+            (
+                await self.session.execute(
+                    select(TaskModel).where(
+                        TaskModel.project_id.in_({job.project_id for job in jobs})
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
         tasks_by_id = {task.id: task for task in tasks}
-        video_tasks = {(task.result_payload or {}).get("final_video_asset_id"): task.id for task in tasks}
         for job in jobs:
-            task_id = (job.custom_params or {}).get("task_id") or (job.custom_params or {}).get("source_task_id") or asset_tasks.get(job.video_asset_id) or video_tasks.get(job.video_asset_id)
+            task_id = (
+                (job.custom_params or {}).get("task_id")
+                or (job.custom_params or {}).get("source_task_id")
+                or asset_tasks.get(job.video_asset_id)
+            )
             task = tasks_by_id.get(task_id)
             job.task_id = task.id if task and task.project_id == job.project_id else None
 
@@ -235,7 +255,9 @@ class PublishingService:
                 pub_provider.last_test_connected = True
                 pub_provider.last_tested_at = datetime.now(UTC)
                 display_label = acc.account_name or acc.username or "抖音账号"
-                pub_provider.last_test_message = f"抖音账号【{display_label}】凭证检测有效，发布服务就绪。"
+                pub_provider.last_test_message = (
+                    f"抖音账号【{display_label}】凭证检测有效，发布服务就绪。"
+                )
             else:
                 other_accounts = list(await self.acc_repo.list_by_platform(acc.platform))
                 has_other_valid = any(
@@ -310,7 +332,9 @@ class PublishingService:
         if pub_provider:
             pub_provider.last_test_connected = True
             pub_provider.last_tested_at = datetime.now(UTC)
-            pub_provider.last_test_message = f"抖音账号【{acc.account_name}】扫码授权成功，发布服务就绪。"
+            pub_provider.last_test_message = (
+                f"抖音账号【{acc.account_name}】扫码授权成功，发布服务就绪。"
+            )
             await self.session.commit()
 
         return acc
@@ -368,11 +392,25 @@ class PublishingService:
         project_id: str,
         expected_type: AssetType,
         label: str,
+        *,
+        ownership_verified: bool = False,
     ) -> AssetModel:
         asset = await self.asset_repo.get_by_id(asset_id)
         if not asset:
             raise ValidationException(f"{label}素材不存在或已被删除。")
-        if asset.project_id != project_id:
+        from src.models.project import ProjectAssetBindingModel
+
+        bound = await self.session.scalar(
+            select(ProjectAssetBindingModel.id).where(
+                ProjectAssetBindingModel.project_id == project_id,
+                ProjectAssetBindingModel.asset_id == asset_id,
+            )
+        )
+        if (
+            not ownership_verified
+            and not bound
+            and (asset.metadata_json or {}).get("project_id") != project_id
+        ):
             raise ValidationException(f"{label}素材不属于当前项目。")
         if asset.asset_type != expected_type.value:
             raise ValidationException(f"{label}素材类型必须为 {expected_type.value}。")
@@ -417,17 +455,38 @@ class PublishingService:
         return metadata, params
 
     async def create_publishing_job(self, data: PublishingJobCreate) -> PublishingJobModel:
+        from src.models.workflow import WorkflowArtifactModel, WorkflowJobModel
+
         metadata, normalized_params = self._normalize_publish_metadata(
             data.title,
             data.description,
             data.tags,
             data.custom_params,
         )
+        workflow_job = await self.session.get(WorkflowJobModel, data.workflow_job_id)
+        artifact = await self.session.get(WorkflowArtifactModel, data.artifact_id)
+        if (
+            workflow_job is None
+            or workflow_job.status != "completed"
+            or artifact is None
+            or artifact.job_id != workflow_job.id
+            or artifact.task_id != workflow_job.task_id
+            or artifact.kind != "final_video"
+            or not artifact.asset_id
+        ):
+            raise ValidationException("发布来源必须是成功 WorkflowJob 的最终视频 Artifact。")
+        task = await self.session.get(TaskModel, workflow_job.task_id)
+        if task is None or task.project_id != data.project_id:
+            raise ValidationException("WorkflowJob 不属于当前项目。")
+        account = await self.get_account(data.account_id)
+        if account.status != "active":
+            raise ValidationException("发布账号当前不可用。")
         await self._validate_publish_asset(
-            data.video_asset_id,
+            artifact.asset_id,
             data.project_id,
             AssetType.VIDEO,
             "视频",
+            ownership_verified=True,
         )
         if data.cover_asset_id:
             await self._validate_publish_asset(
@@ -438,10 +497,15 @@ class PublishingService:
             )
 
         job_id = f"pub_{uuid.uuid4().hex[:12]}"
+        normalized_params.update({
+            "source_workflow_job_id": workflow_job.id,
+            "source_artifact_id": artifact.id,
+            "task_id": workflow_job.task_id,
+        })
         job = PublishingJobModel(
             id=job_id,
             project_id=data.project_id,
-            video_asset_id=data.video_asset_id,
+            video_asset_id=artifact.asset_id,
             account_id=data.account_id,
             platform=data.platform.value,
             title=metadata.title,
@@ -483,111 +547,6 @@ class PublishingService:
         await self._attach_task_links([job])
         return job
 
-    # ========================================================================
-    # Task Publishing Workflow
-    # ========================================================================
-    async def prepare_task_publishing(
-        self,
-        task_id: str,
-        account_id: str | None = None,
-        title: str | None = None,
-        description: str | None = None,
-        tags: list[str] | None = None,
-        cover_asset_id: str | None = None,
-        scheduled_at: datetime | None = None,
-        custom_params: dict[str, Any] | None = None,
-    ) -> PublishingJobModel:
-        """Ensure final video exists, generate metadata if missing, and create PublishingJob"""
-        task = await self.task_repo.get_by_id(task_id)
-        if not task:
-            raise NotFoundException("Task", task_id)
-
-        # 1. Resolve Account
-        if not account_id:
-            accounts = await self.list_accounts(PlatformType.DOUYIN.value)
-            if not accounts:
-                raise ValidationException("未检测到已绑定的抖音账号，请先在发布中心完成抖音创作者扫码登录。")
-            account_id = accounts[0].id
-
-        # 2. Ensure Final Video Asset
-        video_asset_id = (task.result_payload or {}).get("final_video_asset_id")
-        if not video_asset_id:
-            composed_asset = await self.rendering_service.compose_task_video(task_id)
-            video_asset_id = composed_asset.id
-
-        # 3. Reuse the metadata generated with the storyboard.  Explicit
-        # publish-form values still win, while old tasks fall back to the
-        # historical defaults.
-        input_payload = task.input_payload or {}
-        generated_metadata = input_payload.get("metadata")
-        if not isinstance(generated_metadata, dict):
-            generated_metadata = {}
-        else:
-            try:
-                generated_metadata = PlatformMetadata.model_validate(generated_metadata).model_dump()
-            except Exception:
-                logger.warning("Ignoring malformed generated platform metadata for task %s", task_id)
-                generated_metadata = {}
-
-        pub_title = (
-            title
-            if title is not None and title.strip()
-            else generated_metadata.get("title")
-            or task.title
-            or "精彩短视频"
-        )
-        pub_desc = (
-            description
-            if description is not None
-            else generated_metadata.get("description")
-            or task.description
-            or input_payload.get("hook", "")
-        )
-        pub_tags = (
-            tags
-            if tags is not None
-            else generated_metadata.get("tags")
-            or ["Trendlume", "科普", "热点视频", "AI创作"]
-        )
-
-        generated_custom_params = {
-            key: generated_metadata[key]
-            for key in (
-                "platform",
-                "declaration",
-                "location",
-                "collection_name",
-                "visibility",
-                "allow_download",
-            )
-            if generated_metadata.get(key) is not None
-        }
-        platform_custom_params = generated_metadata.get("platform_custom_params")
-        if isinstance(platform_custom_params, dict):
-            generated_custom_params.update(platform_custom_params)
-        if custom_params:
-            generated_custom_params.update(custom_params)
-        generated_custom_params["task_id"] = task.id
-
-        # 4. Create PublishingJob
-        job = await self.create_publishing_job(
-            PublishingJobCreate(
-                project_id=task.project_id,
-                video_asset_id=video_asset_id,
-                account_id=account_id,
-                platform=PlatformType.DOUYIN,
-                title=pub_title,
-                description=pub_desc,
-                tags=pub_tags,
-                cover_asset_id=cover_asset_id,
-                custom_params=generated_custom_params,
-                # Keep the timezone-aware value on the ORM instance for API callers.
-                # The durable queue normalizes it to naive UTC for SQLite comparisons.
-                scheduled_at=scheduled_at,
-            )
-        )
-        return job
-
     async def execute_publish_job(self, publishing_job_id: str) -> PublishingJobModel:
         """Execute publishing job via Douyin provider and update status"""
         job = await self.get_job(publishing_job_id)
@@ -621,11 +580,13 @@ class PublishingService:
                     credential_data = self._credential_payload(cred)
 
             params = dict(job.custom_params or {})
-            params.update({
-                "job_id": job.id,
-                "account_id": account.id if account else "",
-                "account_name": account.account_name if account else "",
-            })
+            params.update(
+                {
+                    "job_id": job.id,
+                    "account_id": account.id if account else "",
+                    "account_name": account.account_name if account else "",
+                }
+            )
             attempt_started = True
             res = await self.provider.publish_video(
                 video_path=video_path,
@@ -643,11 +604,20 @@ class PublishingService:
                 # Persist a compact, redacted provider summary for diagnostics;
                 # never retain cookies, tokens, headers, or the full response.
                 raw_summary = res.raw_response if isinstance(res.raw_response, dict) else {}
-                blocked = {"token", "access_token", "refresh_token", "cookie", "cookies", "headers", "authorization"}
+                blocked = {
+                    "token",
+                    "access_token",
+                    "refresh_token",
+                    "cookie",
+                    "cookies",
+                    "headers",
+                    "authorization",
+                }
                 summary = {
                     str(key): value
                     for key, value in raw_summary.items()
-                    if str(key).lower() not in blocked and isinstance(value, (str, int, float, bool, type(None)))
+                    if str(key).lower() not in blocked
+                    and isinstance(value, (str, int, float, bool, type(None)))
                 }
                 job.custom_params = {
                     **(job.custom_params or {}),
@@ -675,7 +645,11 @@ class PublishingService:
         except Exception as e:
             safe_error = redact_sensitive_text(str(e))
             logger.error(f"Publish execution error for job {job.id}: {safe_error}")
-            job.status = PublishJobStatus.UNCERTAIN.value if attempt_started else PublishJobStatus.FAILED.value
+            job.status = (
+                PublishJobStatus.UNCERTAIN.value
+                if attempt_started
+                else PublishJobStatus.FAILED.value
+            )
             job.error_message = safe_error
             await self.job_repo.update(job)
             await self.session.commit()

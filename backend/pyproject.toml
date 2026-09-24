@@ -1,6 +1,6 @@
 [project]
 name = "trendlume-backend"
-version = "0.2.0"
+version = "0.3.0"
 description = "Trendlume - AI Video Creation Engine"
 readme = "README.md"
 license = { text = "Apache-2.0" }

@@ -2,12 +2,19 @@ from __future__ import annotations
 
 import httpx
 import pytest
+
 from src.core.exceptions import ValidationException
 from src.core.security import secret_cipher
 from src.models.provider_config import ProviderConfigModel
-from src.providers.image.volcengine_image import VolcengineImageProvider
+from src.providers.image.aliyun_image import AliyunImageProvider
+from src.providers.image.google_image import GoogleImageProvider
 from src.providers.image.protocol import ImageResult
+from src.providers.image.runninghub_image import RunningHubImageProvider
+from src.providers.image.volcengine_image import VolcengineImageProvider
 from src.providers.tts.volcengine_tts import VolcengineTTSProvider
+from src.providers.video.aliyun_video import AliyunVideoProvider
+from src.providers.video.google_video import GoogleVideoProvider
+from src.providers.video.runninghub_video import RunningHubVideoProvider
 from src.providers.video.volcengine_video import VolcengineVideoProvider
 from src.schemas.provider import ProviderConfigUpdate, ProviderTestRequest
 from src.services.provider_manager import ProviderManager
@@ -76,27 +83,6 @@ async def test_provider_manager_builds_volcengine_media_providers(test_session):
     assert tts_provider.api_key == "tts-key-old"
     assert tts_provider.default_voice == "voice-test"
     assert tts_provider.default_speed_ratio == 1.4
-
-
-@pytest.mark.asyncio
-async def test_provider_manager_normalizes_legacy_volcengine_tts_defaults(test_session):
-    tts = await _add_provider(
-        test_session,
-        provider_type="tts",
-        provider_name="volcengine",
-        provider_id="legacy-volc-tts",
-        config={
-            "resource_id": "volc.service_type.10029",
-            "default_voice": "zh_female_cancan_mars_bigtts",
-        },
-        credentials={"api_key": "tts-key"},
-    )
-
-    provider = await ProviderManager(test_session).get_tts(tts.id)
-
-    assert isinstance(provider, VolcengineTTSProvider)
-    assert provider.resource_id == "seed-tts-2.0"
-    assert provider.default_voice == "zh_female_vv_uranus_bigtts"
 
 
 @pytest.mark.asyncio
@@ -238,4 +224,60 @@ def test_volcengine_required_fields_are_reported():
         "X-Api-Key",
         "Base URL",
         "Resource ID",
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider_type", "provider_name", "provider_class", "config"),
+    [
+        ("image", "aliyun", AliyunImageProvider, {"base_url": "https://aliyun.example/api/v1", "model": "qwen-test"}),
+        ("image", "google", GoogleImageProvider, {"base_url": "https://google.example/v1", "model": "gemini-test"}),
+        ("image", "runninghub", RunningHubImageProvider, {"base_url": "https://runninghub.example", "workflow_id": "wf-image", "prompt_node_id": "6"}),
+        ("video", "aliyun", AliyunVideoProvider, {"base_url": "https://aliyun.example/api/v1", "model": "wan-test"}),
+        ("video", "google", GoogleVideoProvider, {"base_url": "https://google.example/v1beta", "model": "veo-test"}),
+        ("video", "runninghub", RunningHubVideoProvider, {"base_url": "https://runninghub.example", "workflow_id": "wf-video", "prompt_node_id": "6"}),
+    ],
+)
+async def test_provider_manager_builds_cloud_media_providers(
+    test_session,
+    provider_type,
+    provider_name,
+    provider_class,
+    config,
+):
+    provider = await _add_provider(
+        test_session,
+        provider_type=provider_type,
+        provider_name=provider_name,
+        provider_id=f"{provider_name}-{provider_type}",
+        config=config,
+        credentials={"api_key": "secret"},
+    )
+
+    manager = ProviderManager(test_session)
+    instance = (
+        await manager.get_image(provider.id)
+        if provider_type == "image"
+        else await manager.get_video(provider.id)
+    )
+
+    assert isinstance(instance, provider_class)
+
+
+def test_runninghub_required_fields_are_reported():
+    model = ProviderConfigModel(
+        id="missing-runninghub",
+        provider_type="video",
+        provider_name="runninghub",
+        display_name="RunningHub",
+        enabled=True,
+        is_default=False,
+        config={"base_url": "https://www.runninghub.ai"},
+        credentials_encrypted=None,
+    )
+    assert set(ProviderManager._missing_provider_fields(model)) == {
+        "API Key",
+        "Workflow ID",
+        "提示词节点 ID",
     }

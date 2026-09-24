@@ -200,42 +200,68 @@ def extract_chat_completion_content(data: Any) -> str:
 
 
 def _generate_schema_example(schema_class: type[BaseModel]) -> str:
-    """Generate a clean, intuitive JSON example template from a Pydantic model for LLM prompting"""
+    """Generate a clean JSON data example from a Pydantic model for LLM prompting."""
     try:
         schema = schema_class.model_json_schema()
         defs = schema.get("$defs", {})
 
-        def resolve_prop(prop_info: dict) -> Any:
-            if "$ref" in prop_info:
-                ref_name = prop_info["$ref"].split("/")[-1]
+        def resolve_node(node: dict) -> Any:
+            if not isinstance(node, dict):
+                return "<string>"
+
+            if "const" in node:
+                return node["const"]
+            if node.get("enum"):
+                return node["enum"][0]
+
+            default = node.get("default")
+            if default not in (None, ""):
+                return default
+
+            if "$ref" in node:
+                ref_name = node["$ref"].split("/")[-1]
                 if ref_name in defs:
-                    return resolve_obj(defs[ref_name])
-            prop_type = prop_info.get("type", "string")
+                    return resolve_node(defs[ref_name])
+
+            for union_key in ("anyOf", "oneOf"):
+                branches = node.get(union_key)
+                if not isinstance(branches, list):
+                    continue
+                non_null = [branch for branch in branches if branch.get("type") != "null"]
+                if not non_null:
+                    return None
+                selected = non_null[0]
+                # Optional scalar fields with a null default are clearer as null;
+                # nested models still need their object shape shown to the LLM.
+                if default is None and selected.get("type") in {"string", "number", "integer", "boolean"}:
+                    return None
+                return resolve_node(selected)
+
+            if isinstance(node.get("allOf"), list) and node["allOf"]:
+                return resolve_node(node["allOf"][0])
+
+            prop_type = node.get("type", "string")
+            if isinstance(prop_type, list):
+                prop_type = next((item for item in prop_type if item != "null"), "string")
             if prop_type == "array":
-                items = prop_info.get("items", {})
-                if "$ref" in items:
-                    ref_name = items["$ref"].split("/")[-1]
-                    if ref_name in defs:
-                        return [resolve_obj(defs[ref_name])]
-                return [resolve_prop(items)]
-            elif prop_type == "integer":
+                return [resolve_node(node.get("items", {}))]
+            if prop_type == "integer":
                 return 0
-            elif prop_type == "number":
+            if prop_type == "number":
                 return 4.0
-            elif prop_type == "boolean":
+            if prop_type == "boolean":
                 return True
-            elif prop_type == "object":
+            if prop_type == "object":
+                properties = node.get("properties")
+                if isinstance(properties, dict):
+                    return {key: resolve_node(value) for key, value in properties.items()}
                 return {}
-            else:
-                desc = prop_info.get("description")
-                return f"<{desc}>" if desc else "<string>"
+
+            desc = node.get("description")
+            return f"<{desc}>" if desc else "<string>"
 
         def resolve_obj(obj_schema: dict) -> dict:
-            props = obj_schema.get("properties", {})
-            res = {}
-            for k, v in props.items():
-                res[k] = resolve_prop(v)
-            return res
+            return resolve_node(obj_schema)
 
         example_dict = resolve_obj(schema)
         return json.dumps(example_dict, ensure_ascii=False, indent=2)
@@ -568,16 +594,24 @@ class OpenAICompatibleLLMProvider:
 
         # Self-correction retry pass
         self.last_structured_repair_count = 1
+        repair_reason = "schema validation failure" if validation_error else "malformed JSON or echoed schema"
         logger.warning(
-            f"LLM output was malformed or echoed schema (is_schema_echo={is_schema_echo}). Executing self-repair pass..."
+            f"LLM structured output requires self-repair (reason={repair_reason}, "
+            f"is_schema_echo={is_schema_echo}). Executing self-repair pass..."
         )
         safe_prompt = redact_sensitive_text(prompt, limit=4000)
         safe_failed_output = redact_sensitive_text(raw_response, limit=4000)
+        repair_instruction = (
+            "【注意】：你刚才返回的是可解析的 JSON 数据实体，但字段值未通过 schema 校验。"
+            "请根据具体校验错误修正字段类型和枚举值。"
+            if validation_error
+            else "【注意】：你刚才返回的结果不是可校验的 JSON 实体，可能包含 Schema 元数据或 JSON 语法错误。"
+        )
         correction_prompt = (
             f"原始任务（已截断和脱敏）:\n{safe_prompt}\n\n"
             f"失败输出（已截断和脱敏）:\n{safe_failed_output}\n\n"
             f"具体校验错误（已截断和脱敏）:\n{validation_error or 'JSON 无法解析或返回了 Schema 定义'}\n\n"
-            "【注意】：你刚才返回的结果不是可校验的 JSON 实体，可能包含 Schema 元数据或 JSON 语法错误。\n"
+            f"{repair_instruction}\n"
             "请不要返回任何 $defs 或 properties 定义，修正语法并返回包含具体创作内容的 JSON 实体对象。示例：\n"
             + example_json
         )

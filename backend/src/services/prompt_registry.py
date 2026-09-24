@@ -53,18 +53,18 @@ _SPECS = (
     PromptSpec(
         "script.structured",
         "v1",
-        "structured storyboard | factuality before hook | bounded scenes | metadata contract | visual mode rules",
+        "knowledge production storyboard | audience thesis viewer takeaway | source-grounded claims | visual roles | bounded scenes | metadata contract | visual mode rules",
     ),
     PromptSpec(
         "script.structured",
         "v2-candidate",
-        "structured storyboard candidate | source-grounded hook | explicit uncertainty | bounded scenes | metadata contract | visual mode rules",
+        "knowledge storyboard candidate | audience value | source-grounded hook and claims | explicit uncertainty | visual roles | bounded scenes | metadata contract | visual mode rules",
         status="candidate",
     ),
     PromptSpec(
         "script.text_fallback",
         "v1",
-        "structured storyboard text fallback | title hook narration visual fields | parseable labelled sections",
+        "knowledge storyboard text fallback | thesis and viewer takeaway | title hook narration visual roles | parseable labelled sections",
     ),
     PromptSpec(
         "script.fixed_title",
@@ -72,35 +72,9 @@ _SPECS = (
         "fixed script title | preserve source wording | thirty characters | no terminal punctuation",
     ),
     PromptSpec(
-        "content.title",
-        "v1",
-        "standalone short-video title | thirty characters | no explanation | source-faithful",
-    ),
-    PromptSpec(
-        "content.title",
-        "v2-candidate",
-        "standalone title candidate | thirty characters | concrete audience value | no unsupported claim",
-        status="candidate",
-    ),
-    PromptSpec(
-        "content.narration",
-        "v1",
-        "spoken narration | requested scene count | natural language | source-grounded | one line per scene",
-    ),
-    PromptSpec(
-        "visual.image",
-        "v1",
-        "图片画面提示词生成 | 只用中文 | 严格遵守画幅比例 | 主体与状态、环境、构图机位、光线材质、风格 | 单一主视觉 | 禁止文字标志水印 | 仅使用来源支持的信息",
-    ),
-    PromptSpec(
-        "visual.video",
-        "v1",
-        "视频画面提示词生成 | 只用中文 | 严格遵守画幅比例 | 主体、连续动作、镜头运动、起止状态、节奏、光线变化 | 保持时序一致 | 禁止文字标志水印 | 仅使用来源支持的信息",
-    ),
-    PromptSpec(
         "visual.fixed_batch",
         "v1",
-        "固定文案批量画面提示词生成 | 只用中文 | 一条旁白对应一项 | 索引从 0 连续递增 | 每条描述可见且可执行的单镜头画面 | 保持风格和画幅约束",
+        "knowledge fixed-script visual planning | visual role follows information logic | 只用中文 | 一条旁白对应一项 | 索引从 0 连续递增 | 每条描述可见且可执行的单镜头画面 | 保持风格和画幅约束",
     ),
     PromptSpec(
         "metadata.platform",

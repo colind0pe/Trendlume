@@ -4,6 +4,7 @@ import time
 from datetime import UTC, datetime
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+import httpx
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,11 +12,14 @@ from src.core.config import settings
 from src.core.exceptions import NotFoundException, ProviderException, ValidationException
 from src.core.security import redact_sensitive_text, secret_cipher
 from src.models.provider_config import ProviderConfigModel
+from src.providers.image.aliyun_image import AliyunImageProvider
 from src.providers.image.comfyui_image import (
     DEFAULT_COMFYUI_IMAGE_WORKFLOW,
     ComfyUIImageProvider,
 )
+from src.providers.image.google_image import GoogleImageProvider
 from src.providers.image.protocol import DEFAULT_IMAGE_TEST_PROMPT, ImageProvider
+from src.providers.image.runninghub_image import RunningHubImageProvider
 from src.providers.image.style_presets import DEFAULT_IMAGE_STYLE_PRESET
 from src.providers.image.volcengine_image import VolcengineImageProvider
 from src.providers.llm.anthropic import AnthropicLLMProvider
@@ -34,8 +38,11 @@ from src.providers.search.tavily import TavilySearchProvider
 from src.providers.tts.edge_tts import EdgeTTSProvider
 from src.providers.tts.protocol import TTSProvider
 from src.providers.tts.volcengine_tts import VolcengineTTSProvider
+from src.providers.video.aliyun_video import AliyunVideoProvider
 from src.providers.video.comfyui_video import ComfyUIVideoProvider
+from src.providers.video.google_video import GoogleVideoProvider
 from src.providers.video.protocol import VideoProvider
+from src.providers.video.runninghub_video import RunningHubVideoProvider
 from src.providers.video.volcengine_video import VolcengineVideoProvider
 from src.repositories.provider_config_repository import ProviderConfigRepository
 from src.repositories.publishing_repository import CredentialRepository, SocialAccountRepository
@@ -209,6 +216,18 @@ class ProviderManager:
                     missing.append("API Key")
                 if not str(cfg.get("model") or "").strip():
                     missing.append("模型")
+            if model.provider_name in {"aliyun", "google"}:
+                if not str(creds.get("api_key") or "").strip():
+                    missing.append("API Key")
+                if not str(cfg.get("model") or "").strip():
+                    missing.append("模型")
+            if model.provider_name == "runninghub":
+                if not str(creds.get("api_key") or "").strip():
+                    missing.append("API Key")
+                if not str(cfg.get("workflow_id") or "").strip():
+                    missing.append("Workflow ID")
+                if not str(cfg.get("prompt_node_id") or "").strip():
+                    missing.append("提示词节点 ID")
         elif model.provider_type == "tts" and model.provider_name == "volcengine":
             if not str(creds.get("api_key") or "").strip():
                 missing.append("X-Api-Key")
@@ -635,12 +654,128 @@ class ProviderManager:
             if model and model.provider_name == "volcengine"
             else "zh-CN-YunxiNeural"
         )
-        config = (
-            VolcengineTTSProvider.normalize_legacy_defaults(model.config or {})
-            if model and model.provider_name == "volcengine"
-            else (model.config or {}) if model else {}
-        )
+        config = (model.config or {}) if model else {}
         return str(config.get("default_voice") or fallback).strip() or fallback
+
+    @staticmethod
+    def _runninghub_options(cfg: dict) -> dict:
+        keys = (
+            "prompt_node_id", "prompt_field_name", "width_node_id", "width_field_name",
+            "height_node_id", "height_field_name", "reference_node_ids", "reference_field_name",
+            "duration_node_id", "duration_field_name", "first_frame_node_id", "first_frame_field_name",
+            "last_frame_node_id", "last_frame_field_name",
+        )
+        return {key: cfg[key] for key in keys if cfg.get(key) not in (None, "")}
+
+    @classmethod
+    def _create_image_provider(cls, provider_name: str, cfg: dict, creds: dict) -> ImageProvider:
+        api_key = str(creds.get("api_key") or "").strip()
+        if provider_name == "comfyui":
+            return ComfyUIImageProvider(
+                base_url=cfg.get("base_url", "http://127.0.0.1:8188"),
+                api_key=api_key or None,
+                default_workflow=cfg.get("default_workflow", DEFAULT_COMFYUI_IMAGE_WORKFLOW),
+                timeout=float(cfg.get("timeout", 180.0)),
+                generation_timeout=float(cfg.get("generation_timeout", 1800.0)),
+            )
+        if not api_key:
+            raise ValidationException(f"{provider_name} 图像生成服务未配置 API Key。")
+        if provider_name == "volcengine":
+            return VolcengineImageProvider(
+                api_key=api_key,
+                base_url=cfg.get("base_url", VolcengineImageProvider.DEFAULT_BASE_URL),
+                model=cfg.get("model", VolcengineImageProvider.DEFAULT_MODEL),
+                timeout=float(cfg.get("timeout", 120.0)),
+                watermark=bool(cfg.get("watermark", False)),
+                response_format=cfg.get("response_format", "url"),
+            )
+        if provider_name == "aliyun":
+            return AliyunImageProvider(
+                api_key=api_key,
+                base_url=cfg.get("base_url", AliyunImageProvider.DEFAULT_BASE_URL),
+                model=cfg.get("model", AliyunImageProvider.DEFAULT_MODEL),
+                timeout=float(cfg.get("timeout", 600.0)),
+                prompt_extend=bool(cfg.get("prompt_extend", True)),
+                watermark=bool(cfg.get("watermark", False)),
+            )
+        if provider_name == "google":
+            return GoogleImageProvider(
+                api_key=api_key,
+                base_url=cfg.get("base_url", GoogleImageProvider.DEFAULT_BASE_URL),
+                model=cfg.get("model", GoogleImageProvider.DEFAULT_MODEL),
+                timeout=float(cfg.get("timeout", 600.0)),
+                image_size=cfg.get("image_size", "1K"),
+            )
+        if provider_name == "runninghub":
+            return RunningHubImageProvider(
+                api_key=api_key,
+                base_url=cfg.get("base_url", RunningHubImageProvider.DEFAULT_BASE_URL),
+                workflow_id=cfg.get("workflow_id", ""),
+                timeout=float(cfg.get("timeout", 60.0)),
+                generation_timeout=float(cfg.get("generation_timeout", 1800.0)),
+                poll_interval=float(cfg.get("poll_interval", 5.0)),
+                **cls._runninghub_options(cfg),
+            )
+        raise ValidationException(f"不支持的图像 Provider 实现: {provider_name}")
+
+    @classmethod
+    def _create_video_provider(cls, provider_name: str, cfg: dict, creds: dict) -> VideoProvider:
+        api_key = str(creds.get("api_key") or "").strip()
+        if provider_name == "comfyui":
+            return ComfyUIVideoProvider(
+                base_url=cfg.get("base_url", "http://127.0.0.1:8188"),
+                api_key=api_key or None,
+                default_workflow=cfg.get("default_workflow", "video/video_wan2.1_fusionx.json"),
+                timeout=float(cfg.get("timeout", 300.0)),
+            )
+        if not api_key:
+            raise ValidationException(f"{provider_name} 视频生成服务未配置 API Key。")
+        if provider_name == "volcengine":
+            return VolcengineVideoProvider(
+                api_key=api_key,
+                base_url=cfg.get("base_url", VolcengineVideoProvider.DEFAULT_BASE_URL),
+                model=cfg.get("model", VolcengineVideoProvider.DEFAULT_MODEL),
+                timeout=float(cfg.get("timeout", 60.0)),
+                generation_timeout=float(cfg.get("generation_timeout", 1800.0)),
+                poll_interval=float(cfg.get("poll_interval", 5.0)),
+                resolution=cfg.get("resolution", "720p"),
+                watermark=bool(cfg.get("watermark", False)),
+                generate_audio=bool(cfg.get("generate_audio", False)),
+            )
+        if provider_name == "aliyun":
+            return AliyunVideoProvider(
+                api_key=api_key,
+                base_url=cfg.get("base_url", AliyunVideoProvider.DEFAULT_BASE_URL),
+                model=cfg.get("model", AliyunVideoProvider.DEFAULT_MODEL),
+                text_model=cfg.get("text_model", "wan2.7-t2v"),
+                timeout=float(cfg.get("timeout", 60.0)),
+                generation_timeout=float(cfg.get("generation_timeout", 1800.0)),
+                poll_interval=float(cfg.get("poll_interval", 10.0)),
+                resolution=cfg.get("resolution", "720P"),
+                prompt_extend=bool(cfg.get("prompt_extend", True)),
+                watermark=bool(cfg.get("watermark", False)),
+            )
+        if provider_name == "google":
+            return GoogleVideoProvider(
+                api_key=api_key,
+                base_url=cfg.get("base_url", GoogleVideoProvider.DEFAULT_BASE_URL),
+                model=cfg.get("model", GoogleVideoProvider.DEFAULT_MODEL),
+                timeout=float(cfg.get("timeout", 60.0)),
+                generation_timeout=float(cfg.get("generation_timeout", 1800.0)),
+                poll_interval=float(cfg.get("poll_interval", 10.0)),
+                resolution=cfg.get("resolution", "720p"),
+            )
+        if provider_name == "runninghub":
+            return RunningHubVideoProvider(
+                api_key=api_key,
+                base_url=cfg.get("base_url", RunningHubVideoProvider.DEFAULT_BASE_URL),
+                workflow_id=cfg.get("workflow_id", ""),
+                timeout=float(cfg.get("timeout", 60.0)),
+                generation_timeout=float(cfg.get("generation_timeout", 1800.0)),
+                poll_interval=float(cfg.get("poll_interval", 5.0)),
+                **cls._runninghub_options(cfg),
+            )
+        raise ValidationException(f"不支持的视频 Provider 实现: {provider_name}")
 
     async def get_tts(self, provider_id: str | None = None) -> TTSProvider:
         """Get active TTS provider instance from SQLite"""
@@ -650,11 +785,7 @@ class ProviderManager:
             return EdgeTTSProvider(default_voice=cfg.get("default_voice") or "zh-CN-YunxiNeural")
 
         creds = secret_cipher.decrypt_dict(model.credentials_encrypted)
-        cfg = (
-            VolcengineTTSProvider.normalize_legacy_defaults(model.config or {})
-            if model.provider_name == "volcengine"
-            else model.config or {}
-        )
+        cfg = model.config or {}
 
         if model.provider_name == "volcengine":
             api_key = str(creds.get("api_key") or "").strip()
@@ -676,67 +807,25 @@ class ProviderManager:
         """Get active Image provider instance from SQLite"""
         model = await self._resolve_model("image", provider_id)
         if not model:
-            raise ValidationException("未配置分镜画面生成服务，请前往【设置中心】配置 ComfyUI 或火山方舟。")
+            raise ValidationException("未配置分镜画面生成服务，请前往【设置中心】配置图片 Provider。")
 
-        creds = secret_cipher.decrypt_dict(model.credentials_encrypted)
-        cfg = model.config or {}
-
-        if model.provider_name == "comfyui":
-            return ComfyUIImageProvider(
-                base_url=cfg.get("base_url", "http://127.0.0.1:8188"),
-                api_key=creds.get("api_key"),
-                default_workflow=cfg.get("default_workflow", DEFAULT_COMFYUI_IMAGE_WORKFLOW),
-                timeout=float(cfg.get("timeout", 180.0)),
-                generation_timeout=float(cfg.get("generation_timeout", 1800.0)),
-            )
-        elif model.provider_name == "volcengine":
-            api_key = str(creds.get("api_key") or "").strip()
-            if not api_key:
-                raise ValidationException("火山方舟图像生成服务未配置 API Key。")
-            return VolcengineImageProvider(
-                api_key=api_key,
-                base_url=cfg.get("base_url", VolcengineImageProvider.DEFAULT_BASE_URL),
-                model=cfg.get("model", VolcengineImageProvider.DEFAULT_MODEL),
-                timeout=float(cfg.get("timeout", 120.0)),
-                watermark=bool(cfg.get("watermark", False)),
-                response_format=cfg.get("response_format", "url"),
-            )
-
-        raise ValidationException(f"不支持的图像 Provider 实现: {model.provider_name}")
+        return self._create_image_provider(
+            model.provider_name,
+            model.config or {},
+            secret_cipher.decrypt_dict(model.credentials_encrypted),
+        )
 
     async def get_video(self, provider_id: str | None = None) -> VideoProvider:
         """Get active Video provider instance from SQLite"""
         model = await self._resolve_model("video", provider_id)
         if not model:
-            raise ValidationException("未配置动态视频生成服务，请前往【设置中心】配置 ComfyUI 或火山方舟 Seedance。")
+            raise ValidationException("未配置动态视频生成服务，请前往【设置中心】配置视频 Provider。")
 
-        creds = secret_cipher.decrypt_dict(model.credentials_encrypted)
-        cfg = model.config or {}
-
-        if model.provider_name == "comfyui":
-            return ComfyUIVideoProvider(
-                base_url=cfg.get("base_url", "http://127.0.0.1:8188"),
-                api_key=creds.get("api_key"),
-                default_workflow=cfg.get("default_workflow", "video/video_wan2.1_fusionx.json"),
-                timeout=float(cfg.get("timeout", 300.0)),
-            )
-        if model.provider_name == "volcengine":
-            api_key = str(creds.get("api_key") or "").strip()
-            if not api_key:
-                raise ValidationException("火山方舟视频生成服务未配置 API Key。")
-            return VolcengineVideoProvider(
-                api_key=api_key,
-                base_url=cfg.get("base_url", VolcengineVideoProvider.DEFAULT_BASE_URL),
-                model=cfg.get("model", VolcengineVideoProvider.DEFAULT_MODEL),
-                timeout=float(cfg.get("timeout", 60.0)),
-                generation_timeout=float(cfg.get("generation_timeout", 1800.0)),
-                poll_interval=float(cfg.get("poll_interval", 5.0)),
-                resolution=cfg.get("resolution", "720p"),
-                watermark=bool(cfg.get("watermark", False)),
-                generate_audio=bool(cfg.get("generate_audio", False)),
-            )
-
-        raise ValidationException(f"不支持的视频 Provider 实现: {model.provider_name}")
+        return self._create_video_provider(
+            model.provider_name,
+            model.config or {},
+            secret_cipher.decrypt_dict(model.credentials_encrypted),
+        )
 
     async def _resolve_model(self, provider_type: str, provider_id: str | None) -> ProviderConfigModel | None:
         if self.snapshot is not None and provider_type in self.snapshot:
@@ -853,6 +942,8 @@ class ProviderManager:
                 result = await self._test_comfyui_connection(cfg, creds)
             elif prov_type in ("image", "video") and prov_name == "volcengine":
                 result = await self._test_volcengine_ark_connection(cfg, creds, prov_type)
+            elif prov_type in ("image", "video") and prov_name in {"aliyun", "google", "runninghub"}:
+                result = await self._test_media_provider_connection(cfg, creds, prov_name)
             elif prov_type == "tts":
                 result = await self._test_tts_connection(prov_name or "edge_tts", cfg, creds)
             elif prov_type == "publishing":
@@ -905,35 +996,12 @@ class ProviderManager:
         prompt = str(test_payload.get("prompt") or DEFAULT_IMAGE_TEST_PROMPT).strip()
         aspect_ratio = str(test_payload.get("aspect_ratio") or "16:9")
         style_preset = str(test_payload.get("style_preset") or DEFAULT_IMAGE_STYLE_PRESET).strip()
-        api_key = str(creds.get("api_key") or "").strip()
-
-        if provider_name == "comfyui":
-            default_workflow = cfg.get("default_workflow") or DEFAULT_COMFYUI_IMAGE_WORKFLOW
-            provider = ComfyUIImageProvider(
-                base_url=cfg.get("base_url") or "http://127.0.0.1:8188",
-                api_key=api_key or None,
-                default_workflow=default_workflow,
-                timeout=float(cfg.get("timeout", 120.0)),
-                generation_timeout=float(cfg.get("generation_timeout", 1800.0)),
-            )
-        elif provider_name == "volcengine":
-            if not api_key:
-                return ProviderTestResponse(
-                    connected=False,
-                    message="未配置火山方舟图像生成 API Key，请先填写密钥。",
-                )
-            provider = VolcengineImageProvider(
-                api_key=api_key,
-                base_url=cfg.get("base_url") or VolcengineImageProvider.DEFAULT_BASE_URL,
-                model=cfg.get("model") or VolcengineImageProvider.DEFAULT_MODEL,
-                timeout=float(cfg.get("timeout", 120.0)),
-                watermark=bool(cfg.get("watermark", False)),
-                response_format=cfg.get("response_format", "url"),
-            )
-        else:
+        try:
+            provider = self._create_image_provider(provider_name, cfg, creds)
+        except ValidationException as exc:
             return ProviderTestResponse(
                 connected=False,
-                message=f"不支持的图像 Provider 实现: {provider_name}",
+                message=str(exc),
             )
 
         workflow_override = str(test_payload.get("workflow") or "").strip() or None
@@ -978,6 +1046,66 @@ class ProviderManager:
             return ProviderTestResponse(
                 connected=False,
                 message=f"{provider_name} 图片生成测试失败: {redact_sensitive_text(str(exc))}",
+                latency_ms=round((time.perf_counter() - start_time) * 1000, 1),
+            )
+
+    async def _test_media_provider_connection(
+        self,
+        cfg: dict,
+        creds: dict,
+        provider_name: str,
+    ) -> ProviderTestResponse:
+        api_key = str(creds.get("api_key") or "").strip()
+        if not api_key:
+            return ProviderTestResponse(connected=False, message="未配置 API Key，请先填写密钥。")
+        base_url = str(cfg.get("base_url") or "").rstrip("/")
+        start_time = time.perf_counter()
+        try:
+            async with httpx.AsyncClient(
+                timeout=float(cfg.get("timeout", 30.0)),
+                trust_env=False,
+            ) as client:
+                if provider_name == "google":
+                    model = str(cfg.get("model") or "").strip()
+                    response = await client.get(
+                        f"{base_url}/models/{model}",
+                        headers={"x-goog-api-key": api_key},
+                    )
+                elif provider_name == "runninghub":
+                    response = await client.post(
+                        f"{base_url}/uc/openapi/accountStatus",
+                        json={"apikey": api_key},
+                        headers={"Authorization": f"Bearer {api_key}"},
+                    )
+                else:
+                    root_url = base_url.removesuffix("/api/v1")
+                    response = await client.get(
+                        f"{root_url}/compatible-mode/v1/models",
+                        headers={"Authorization": f"Bearer {api_key}"},
+                    )
+            latency_ms = round((time.perf_counter() - start_time) * 1000, 1)
+            connected = response.is_success
+            if connected and provider_name == "runninghub":
+                try:
+                    connected = response.json().get("code") == 0
+                except ValueError:
+                    connected = False
+            if connected:
+                return ProviderTestResponse(
+                    connected=True,
+                    message=f"{provider_name} 连接和凭证验证成功。",
+                    latency_ms=latency_ms,
+                )
+            return ProviderTestResponse(
+                connected=False,
+                message=f"{provider_name} 连接验证失败 HTTP {response.status_code}: "
+                f"{redact_sensitive_text(response.text[:300])}",
+                latency_ms=latency_ms,
+            )
+        except httpx.RequestError as exc:
+            return ProviderTestResponse(
+                connected=False,
+                message=f"连接 {provider_name} 失败: {redact_sensitive_text(str(exc))}",
                 latency_ms=round((time.perf_counter() - start_time) * 1000, 1),
             )
 
@@ -1392,7 +1520,6 @@ class ProviderManager:
                 details={"voices_count": len(voices)},
             )
         if provider_name == "volcengine":
-            cfg = VolcengineTTSProvider.normalize_legacy_defaults(cfg)
             api_key = str(creds.get("api_key") or "").strip()
             if not api_key:
                 return ProviderTestResponse(

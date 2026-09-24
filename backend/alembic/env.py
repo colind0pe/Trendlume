@@ -1,10 +1,12 @@
 import asyncio
-from logging.config import fileConfig
 import sys
+from logging.config import fileConfig
 from pathlib import Path
+
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
+
 from alembic import context
 
 # Ensure src is in sys.path
@@ -12,8 +14,8 @@ sys_path = Path(__file__).resolve().parent.parent
 if str(sys_path) not in sys.path:
     sys.path.insert(0, str(sys_path))
 
-from src.core.config import settings
-from src.models import Base
+from src.core.config import settings  # noqa: E402
+from src.models import Base  # noqa: E402
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

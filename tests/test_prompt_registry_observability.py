@@ -3,21 +3,14 @@ from pathlib import Path
 from typing import ClassVar
 
 import pytest
-from sqlalchemy import select
 
-from src.core.exceptions import ProviderException
-from src.models.prompt_observation import PromptCallObservationModel
 from src.providers.llm.protocol import StructuredOutputException
 from src.schemas.generation import (
-    ContentGenerateRequest,
     ScriptGenerateRequest,
     VisualPromptBatch,
 )
 from src.services.durable_pipeline import build_script_generation_inputs
 from src.services.generation_service import GenerationService
-from src.services.prompt_observability import (
-    PromptObservationRecorder,
-)
 from src.services.prompt_registry import (
     PromptRegistry,
     PromptSpec,
@@ -39,8 +32,8 @@ def test_prompt_inventory_and_registry_have_explicit_hashes():
     ids = [entry["prompt_id"] for entry in inventory["prompt_ids"]]
     assert len(ids) == len(set(ids))
     assert {
-        "research_query", "structured_script", "fixed_script_title", "narration",
-        "image_prompt", "video_prompt", "platform_metadata", "structured_repair",
+        "research_query", "structured_script", "fixed_script_title",
+        "fixed_script_visual_batch", "platform_metadata", "structured_repair",
     }.issubset({entry["kind"] for entry in inventory["prompt_ids"]})
     for entry in inventory["prompt_ids"]:
         assert (BACKEND.parent / entry["source"]).is_file()
@@ -75,7 +68,7 @@ def test_prompt_selection_and_content_change_durable_fingerprint():
     base = {
         "mode": "generate",
         "topic": "可持续城市交通",
-        "content_brief": {"goal": "解释核心机制"},
+        "knowledge_brief": {"thesis": "解释核心机制"},
         "provider": {"model": "mock-model", "temperature": 0.7},
     }
     stable = build_script_generation_inputs(base, topic=base["topic"])
@@ -84,7 +77,7 @@ def test_prompt_selection_and_content_change_durable_fingerprint():
         topic=base["topic"],
     )
     changed_brief = build_script_generation_inputs(
-        {**base, "content_brief": {"goal": "解释争议与边界"}}, topic=base["topic"]
+        {**base, "knowledge_brief": {"thesis": "解释争议与边界"}}, topic=base["topic"]
     )
 
     assert stable["prompt_selection"]["script.structured"]["prompt_version"] == "v1"
@@ -93,24 +86,8 @@ def test_prompt_selection_and_content_change_durable_fingerprint():
     assert fingerprint(candidate) != fingerprint(stable)
     assert fingerprint(changed_brief) != fingerprint(stable)
 
-    # A legacy payload without the new fields remains readable and resolves to
-    # the current stable defaults.
-    legacy = build_script_generation_inputs({"mode": "generate"}, topic="旧任务")
-    assert legacy["prompt_selection"]["script.structured"]["prompt_version"] == "v1"
-
-
-class _TextProvider:
-    name = "stage5-text"
-
-    async def generate_text(self, prompt: str, **kwargs) -> str:
-        return "安全标题"
-
-
-class _FailingTextProvider:
-    name = "stage5-failing"
-
-    async def generate_text(self, prompt: str, **kwargs) -> str:
-        raise ProviderException(self.name, "signed_url=https://cdn.example/a?X-Amz-Signature=secret-value")
+    default_inputs = build_script_generation_inputs({"mode": "generate"}, topic="新任务")
+    assert default_inputs["prompt_selection"]["script.structured"]["prompt_version"] == "v1"
 
 
 class _StructuredRepairProvider:
@@ -123,36 +100,6 @@ class _StructuredRepairProvider:
 
     async def generate_structured(self, **kwargs):
         raise StructuredOutputException("offline malformed JSON")
-
-
-@pytest.mark.asyncio
-async def test_observation_records_success_and_redacts_provider_failure(test_session, monkeypatch):
-    service = GenerationService(test_session)
-    provider = _TextProvider()
-
-    async def get_provider():
-        return provider
-
-    monkeypatch.setattr(service, "_get_llm_provider", get_provider)
-    await service.generate_title(ContentGenerateRequest(topic="测试标题"))
-    assert service.prompt_observations.records[-1]["status"] == "success"
-    assert service.prompt_observations.records[-1]["prompt_id"] == "content.title"
-    assert service.prompt_observations.records[-1]["token_usage"] is None
-
-    failing_service = GenerationService(test_session)
-
-    async def get_failing_provider():
-        return _FailingTextProvider()
-
-    monkeypatch.setattr(failing_service, "_get_llm_provider", get_failing_provider)
-    with pytest.raises(ProviderException):
-        await failing_service.generate_title(ContentGenerateRequest(topic="故障标题"))
-    failed = failing_service.prompt_observations.records[-1]
-    assert failed["status"] == "failure"
-    assert failed["failure_category"] == "provider"
-    failed_json = json.dumps(failed, ensure_ascii=False, default=str)
-    assert "secret-value" not in failed_json
-    assert "signed_url" not in failed_json
 
 
 @pytest.mark.asyncio
@@ -207,31 +154,6 @@ async def test_batch_business_downgrade_is_observed_without_provider_retry(test_
     )
     assert batch_record["status"] == "success"
     assert batch_record["fallback_count"] == 1
-
-
-@pytest.mark.asyncio
-async def test_observation_persists_without_exposing_prompt_body(test_session, monkeypatch):
-    service = GenerationService(test_session, task_id="task-stage5", job_id="job-stage5")
-
-    async def get_provider():
-        return _TextProvider()
-
-    monkeypatch.setattr(service, "_get_llm_provider", get_provider)
-    await service.generate_title(ContentGenerateRequest(topic="持久化观测"))
-    await test_session.commit()
-    rows = list(
-        (
-            await test_session.scalars(
-                select(PromptCallObservationModel).where(
-                    PromptCallObservationModel.task_id == "task-stage5"
-                )
-            )
-        ).all()
-    )
-    assert rows
-    assert rows[-1].input_sha256
-    assert rows[-1].output_sha256
-    assert rows[-1].token_usage is None
 
 
 def test_offline_replay_reports_improvement_regression_and_unchanged():

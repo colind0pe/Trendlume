@@ -4,9 +4,9 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.api.dependencies import get_db, get_trend_service, request_session_factory
+from src.api.task_presenter import task_response
 from src.core.exceptions import ValidationException
 from src.schemas.common import APIResponse
-from src.schemas.task import TaskResponse
 from src.schemas.trend import (
     TrendFeedResponse,
     TrendPreferencesResponse,
@@ -26,7 +26,6 @@ from src.schemas.trend import (
 )
 from src.services.trend_scheduler import TrendScheduler, trend_scheduler
 from src.services.trend_service import TrendService
-from src.tasks.manager import task_manager
 
 router = APIRouter(prefix="/trends", tags=["Trends"])
 
@@ -252,15 +251,10 @@ async def reject_trend_proposal(
 def _proposal_action_response(
     proposal, task, job=None, *, queue_status="not_requested", queue_error=None
 ):
-    task_response = TaskResponse.model_validate(task) if task is not None else None
-    if task_response is not None:
-        # A freshly built task has no scenes; avoiding relationship access here
-        # keeps this response safe after the service transaction has committed.
-        task_response.scenes_count = 0
-        task_response.scheduled_publish = (task.input_payload or {}).get("scheduled_publish")
+    task_response_data = task_response(task, scenes_count=0) if task is not None else None
     return TrendProposalActionResponse(
         proposal=proposal,
-        task=task_response,
+        task=task_response_data,
         job=job.to_dict() if hasattr(job, "to_dict") else job,
         queue_status=queue_status,
         queue_error=queue_error,
@@ -278,36 +272,3 @@ async def approve_trend_proposal(
 ):
     proposal, task = await service.approve_proposal(proposal_id, payload)
     return APIResponse(data=_proposal_action_response(proposal, task))
-
-
-@router.post(
-    "/proposals/{proposal_id}/approve-and-run",
-    response_model=APIResponse[TrendProposalActionResponse],
-)
-async def approve_and_run_trend_proposal(
-    proposal_id: str,
-    payload: TrendProposalApproveRequest,
-    service: TrendService = Depends(get_trend_service),
-    db: AsyncSession = Depends(get_db),
-):
-    proposal, task = await service.approve_proposal(proposal_id, payload)
-    try:
-        job = await task_manager.submit_task(
-            task.id,
-            session_factory=request_session_factory(db),
-        )
-    except Exception as exc:
-        failed_proposal, failed_task = await service.mark_proposal_queue_failed(
-            proposal_id, str(exc)[:2000] or type(exc).__name__
-        )
-        return APIResponse(
-            data=_proposal_action_response(
-                failed_proposal,
-                failed_task,
-                queue_status="failed",
-                queue_error=failed_task.error_message if failed_task else str(exc),
-            )
-        )
-    if proposal.status == "queue_failed":
-        proposal = await service.mark_proposal_queue_queued(proposal_id)
-    return APIResponse(data=_proposal_action_response(proposal, task, job, queue_status="queued"))

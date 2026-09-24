@@ -30,8 +30,8 @@ We provide security updates and patches for the current release stream:
 
 | Version | Supported | Notes |
 | :--- | :---: | :--- |
-| `0.1.x` (main) | ✅ | Active development and current release baseline |
-| `< 0.1.0` | ❌ | Early development prototypes; please upgrade |
+| `0.3.x` (main) | ✅ | Active development and current release baseline |
+| `< 0.3.0` | ❌ | Early development prototypes; please upgrade |
 
 ---
 

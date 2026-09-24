@@ -9,7 +9,6 @@ from sqlalchemy.exc import IntegrityError
 
 from src.core.exceptions import ConflictException, NotFoundException, ValidationException
 from src.domain.content_modes import resolve_content_mode
-from src.domain.enums import TaskStatus
 from src.models.project import ProjectModel
 from src.models.task import TaskModel
 from src.models.trend import (
@@ -20,7 +19,7 @@ from src.models.trend import (
     TrendRunModel,
     TrendSourceRunModel,
 )
-from src.schemas.generation import ContentBrief
+from src.schemas.generation import KnowledgeBrief
 from src.schemas.task import TaskCreate
 from src.schemas.trend import (
     TrendProposalApproveRequest,
@@ -91,10 +90,12 @@ class TrendProposalServiceMixin:
         matched_keywords = list(match.matched_keywords or []) if match else []
         proposal_title = item.title.strip()[:255]
         angle = (payload.angle or "").strip() or self._default_angle(proposal_title, relation)
-        brief = payload.content_brief or self._default_content_brief(
+        options = self._normalize_generation_options(payload.generation_options)
+        brief = payload.knowledge_brief or self._default_knowledge_brief(
             proposal_title, angle, observation.source_url
         )
-        options = self._normalize_generation_options(payload.generation_options)
+        if not getattr(brief, "genre", None) or brief.genre == "auto":
+            brief.genre = str(options.get("genre") or "auto")[:100]
         now = datetime.now(UTC)
         proposal = TopicProposalModel(
             id=f"proposal_{uuid.uuid4().hex[:12]}",
@@ -109,7 +110,7 @@ class TrendProposalServiceMixin:
             match_reason=match_reason,
             matched_keywords=matched_keywords,
             trend_snapshot=source_snapshot,
-            content_brief=brief.model_dump(),
+            knowledge_brief=brief.model_dump(),
             generation_options=options,
             created_at=now,
             updated_at=now,
@@ -146,21 +147,21 @@ class TrendProposalServiceMixin:
 
         next_title = proposal.title
         next_angle = proposal.angle
-        next_content_brief = dict(proposal.content_brief or {})
+        next_knowledge_brief = dict(proposal.knowledge_brief or {})
         next_options = dict(proposal.generation_options or {})
         if payload.title is not None and payload.title.strip() != proposal.title:
             next_title = payload.title.strip()
         if payload.angle is not None and payload.angle.strip() != proposal.angle:
             next_angle = payload.angle.strip()
-        if payload.content_brief is not None:
-            next_content_brief = payload.content_brief.model_dump()
+        if payload.knowledge_brief is not None:
+            next_knowledge_brief = payload.knowledge_brief.model_dump()
         if payload.generation_options is not None:
             next_options = self._normalize_generation_options(payload.generation_options)
 
         values = {
             "title": next_title,
             "angle": next_angle,
-            "content_brief": next_content_brief,
+            "knowledge_brief": next_knowledge_brief,
             "generation_options": next_options,
             "revision": TopicProposalModel.revision + 1,
             "updated_at": datetime.now(UTC),
@@ -249,10 +250,10 @@ class TrendProposalServiceMixin:
         )
         target_scene_count = options["target_scene_count"]
         enable_research = options["enable_research"]
-        brief = ContentBrief.model_validate(proposal.content_brief or {})
+        knowledge_brief = KnowledgeBrief.model_validate(proposal.knowledge_brief or {})
         task_payload = {
             "topic": proposal.title,
-            "content_brief": brief.model_dump(),
+            "knowledge_brief": knowledge_brief.model_dump(),
             "trend_provenance": {
                 "proposal_id": proposal.id,
                 "proposal_revision": proposal.revision,
@@ -277,7 +278,6 @@ class TrendProposalServiceMixin:
             "prompt_prefix",
             "voice_id",
             "speed",
-            "voice_speed",
             "bgm_enabled",
             "bgm_asset_id",
             "bgm_volume",
@@ -289,17 +289,26 @@ class TrendProposalServiceMixin:
             task_payload["search_provider_id"] = str(options["search_provider_id"])[:100]
 
         try:
-            task = await TaskService(self.session).build_task(
+            task = await TaskService(self.session).create_task(
                 project.id,
                 TaskCreate(
                     title=proposal.title,
                     description=proposal.angle,
-                    input_payload=task_payload,
-                    target_scene_count=target_scene_count,
-                    enable_research=enable_research,
-                    research_max_queries=task_payload["research_max_queries"],
-                    research_max_results=task_payload["research_max_results"],
-                    search_provider_id=task_payload.get("search_provider_id"),
+                    detail={
+                        "type": "knowledge",
+                        "topic": proposal.title,
+                        "audience": knowledge_brief.audience,
+                        "thesis": knowledge_brief.thesis,
+                        "takeaway": knowledge_brief.viewer_takeaway,
+                        "genre": knowledge_brief.genre,
+                        "claims": [claim.model_dump() for claim in knowledge_brief.key_claims],
+                        "sources": list(knowledge_brief.source_refs),
+                    },
+                    generation_settings={
+                        key: value
+                        for key, value in task_payload.items()
+                        if key not in {"topic", "knowledge_brief"}
+                    },
                 ),
             )
         except Exception:
@@ -307,7 +316,6 @@ class TrendProposalServiceMixin:
             # rejects project/template/provider settings.
             await self.session.rollback()
             raise
-        self.session.add(task)
         proposal.task_id = task.id
         proposal.status = "task_created"
         proposal.updated_at = datetime.now(UTC)
@@ -342,31 +350,6 @@ class TrendProposalServiceMixin:
         proposal = await self.session.get(TopicProposalModel, proposal_id)
         if proposal is None:
             raise NotFoundException("Topic proposal", proposal_id)
-        return self._proposal_response(proposal)
-
-    async def mark_proposal_queue_failed(
-        self, proposal_id: str, error_message: str
-    ) -> tuple[TrendProposalResponse, Any | None]:
-        proposal = await self.session.get(TopicProposalModel, proposal_id)
-        if proposal is None:
-            raise NotFoundException("Topic proposal", proposal_id)
-        task = await self.session.get(TaskModel, proposal.task_id) if proposal.task_id else None
-        proposal.status = "queue_failed"
-        if task is not None:
-            task.status = TaskStatus.DRAFT.value
-            task.error_message = error_message[:2000]
-        proposal.updated_at = datetime.now(UTC)
-        await self.session.commit()
-        return self._proposal_response(proposal), task
-
-    async def mark_proposal_queue_queued(self, proposal_id: str) -> TrendProposalResponse:
-        proposal = await self.session.get(TopicProposalModel, proposal_id)
-        if proposal is None:
-            raise NotFoundException("Topic proposal", proposal_id)
-        if proposal.task_id:
-            proposal.status = "task_created"
-            proposal.updated_at = datetime.now(UTC)
-            await self.session.commit()
         return self._proposal_response(proposal)
 
     async def _latest_observation(self, trend_item_id: str):
@@ -411,17 +394,13 @@ class TrendProposalServiceMixin:
         return f"核验“{title}”的事实边界，再给出克制的背景解读"
 
     @staticmethod
-    def _default_content_brief(title: str, angle: str, source_url: str | None) -> ContentBrief:
-        return ContentBrief(
+    def _default_knowledge_brief(title: str, angle: str, source_url: str | None) -> KnowledgeBrief:
+        return KnowledgeBrief(
             audience="对科技和热点感兴趣的普通用户",
-            goal=f"围绕“{title}”制作一条有来源、有边界的短视频",
-            angle=angle,
-            tone="清晰、克制、易懂",
-            language="zh-CN",
-            key_points=[title],
-            uncertainty="热点信息可能快速变化，生成后请核验原始来源。",
+            thesis=angle or title,
+            viewer_takeaway=f"围绕“{title}”理解一个有来源、有边界的关键事实",
+            key_claims=[{"id": "claim-1", "statement": title}],
             source_refs=[source_url] if source_url else [],
-            production_constraints=["保留来源核验提示", "避免未经证实的绝对化结论"],
         )
 
     @staticmethod
@@ -479,13 +458,7 @@ class TrendProposalServiceMixin:
                 return None
             return str(value)[:maximum]
 
-        speed = bounded_float(
-            "voice_speed",
-            values.get("voice_speed", values.get("speed", 1.0)),
-            1.0,
-            0.5,
-            2.0,
-        )
+        speed = bounded_float("speed", values.get("speed", 1.0), 1.0, 0.5, 2.0)
 
         normalized = {
             "target_scene_count": bounded("target_scene_count", 8, 8, 20),
@@ -499,7 +472,6 @@ class TrendProposalServiceMixin:
             "prompt_prefix": str(values.get("prompt_prefix") or "")[:1000],
             "voice_id": optional_text("voice_id", 100),
             "speed": speed,
-            "voice_speed": speed,
             "bgm_enabled": as_bool(values.get("bgm_enabled"), True),
             "bgm_asset_id": optional_text("bgm_asset_id", 100),
             "bgm_volume": bounded_float("bgm_volume", values.get("bgm_volume", 0.2), 0.2, 0.0, 0.5),
@@ -527,7 +499,7 @@ class TrendProposalServiceMixin:
             match_reason=proposal.match_reason,
             matched_keywords=list(proposal.matched_keywords or []),
             trend_snapshot=dict(proposal.trend_snapshot or {}),
-            content_brief=ContentBrief.model_validate(proposal.content_brief or {}),
+            knowledge_brief=KnowledgeBrief.model_validate(proposal.knowledge_brief or {}),
             generation_options=TrendProposalServiceMixin._normalize_generation_options(
                 proposal.generation_options
             ),

@@ -17,7 +17,6 @@ class EventBroadcaster:
 
     _DEFAULT_STATUS = {
         "job.started": "running",
-        "job.progress": "running",
         "job.retrying": "retrying",
         "job.completed": "completed",
         "job.failed": "failed",
@@ -65,7 +64,7 @@ class EventBroadcaster:
         task_id: str | None = None,
         job_id: str | None = None,
     ) -> dict[str, Any]:
-        """Keep task events on one small, backwards-compatible payload contract."""
+        """Keep task events on one small, stable payload contract."""
         payload = dict(data or {})
         if task_id:
             payload.setdefault("task_id", task_id)
@@ -73,9 +72,7 @@ class EventBroadcaster:
             payload.setdefault("job_id", job_id)
 
         if payload.get("task_id") or payload.get("job_id"):
-            stage = payload.get("stage") or payload.get("current_stage")
-            if not stage:
-                stage = payload.get("step") or payload.get("current_step")
+            stage = payload.get("stage")
             if stage:
                 payload.setdefault("stage", str(stage).lower())
             else:
@@ -91,6 +88,8 @@ class EventBroadcaster:
             payload.setdefault("status", cls._DEFAULT_STATUS.get(event_type, "running"))
             if not payload.get("message"):
                 payload["message"] = payload.get("error") or payload.get("error_message")
+            payload.pop("error", None)
+            payload.pop("error_message", None)
 
         return payload
 
@@ -115,8 +114,6 @@ class EventBroadcaster:
             "data": data,
             "event_id": event_id,
             "created_at": created_at_value,
-            # Keep timestamp for consumers of the original event contract.
-            "timestamp": created_at_value,
         }
         json_data = json.dumps(payload, ensure_ascii=False)
         event_prefix = f"id: {event_id}\n" if event_id is not None else ""

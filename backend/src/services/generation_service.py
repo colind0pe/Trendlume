@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import json
 import re
 import struct
@@ -6,6 +7,7 @@ import time
 import uuid
 import zlib
 from datetime import UTC, datetime
+from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from loguru import logger
@@ -14,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.exceptions import NotFoundException, ProviderException, ValidationException
 from src.core.security import redact_sensitive_text
-from src.domain.enums import AssetType
+from src.domain.enums import AssetType, ProductionMode, VisualRole
 from src.models.scene import SceneModel
 from src.models.task import TaskModel
 from src.models.workflow import WorkflowJobModel
@@ -25,8 +27,7 @@ from src.repositories.project_repository import ProjectRepository
 from src.repositories.scene_repository import SceneRepository
 from src.repositories.task_repository import TaskRepository
 from src.schemas.generation import (
-    ContentGenerateRequest,
-    ContentGenerateResponse,
+    KnowledgeBrief,
     PlatformMetadata,
     ResearchQueryPlan,
     ResearchQueryRecord,
@@ -113,14 +114,14 @@ def _visual_prompt_fallback(narration: str) -> str:
     )
 
 
-def format_content_brief(payload: ScriptGenerateRequest) -> str:
-    if not payload.content_brief:
-        return ""
-    values = payload.content_brief.model_dump(exclude_none=True, exclude_defaults=True)
-    if not values:
+def format_knowledge_brief(payload: ScriptGenerateRequest) -> str:
+    brief = knowledge_brief_for_payload(payload)
+    if not brief.model_dump(exclude_none=True, exclude_defaults=True):
         return ""
     return format_untrusted_prompt_data(
-        json.dumps(values, ensure_ascii=False), label="content_brief", max_chars=5000
+        json.dumps(brief.model_dump(exclude_none=True, exclude_defaults=True), ensure_ascii=False),
+        label="knowledge_brief",
+        max_chars=5000,
     )
 
 # ==================== GENRE & STYLE GUIDES ====================
@@ -147,6 +148,113 @@ def get_genre_instruction(genre: str, *, fallback: str = "general") -> str:
     if genre == "auto":
         return AUTO_GENRE_INSTRUCTION
     return GENRE_INSTRUCTIONS.get(genre, GENRE_INSTRUCTIONS[fallback])
+
+
+def infer_visual_role(text: str) -> VisualRole:
+    """Choose a conservative visual role for fixed scripts without inventing claims."""
+    value = str(text or "").strip()
+    if any(token in value for token in ("引用", "原话", "说道", "表示", "称：", "：“")):
+        return VisualRole.QUOTE
+    if any(token in value for token in ("对比", "区别", "不同", "相比", "而不是", " versus ", "vs.")):
+        return VisualRole.COMPARISON
+    if any(token in value for token in ("时间线", "年代", "阶段", "后来", "此前", "起初", "演变")):
+        return VisualRole.TIMELINE
+    if any(token in value for token in ("数据", "比例", "百分比", "增长", "下降", "%", "统计")):
+        return VisualRole.DATA
+    if any(token in value for token in ("第一步", "第二步", "步骤", "流程", "先", "然后", "最后")):
+        return VisualRole.PROCESS
+    if any(token in value for token in ("例如", "比如", "案例", "场景", "试想")):
+        return VisualRole.EXAMPLE
+    if any(token in value for token in ("什么是", "概念", "定义", "本质", "原理")):
+        return VisualRole.CONCEPT
+    return VisualRole.B_ROLL
+
+
+def knowledge_brief_for_payload(payload: ScriptGenerateRequest) -> KnowledgeBrief:
+    """Resolve the Knowledge Mode brief used by the canonical script contract."""
+    brief = KnowledgeBrief.from_payload(payload.knowledge_brief)
+    if not brief.genre or brief.genre == "auto":
+        brief.genre = payload.genre or "auto"
+    return brief
+
+
+def normalize_knowledge_script(
+    script: StructuredScript,
+    *,
+    payload: ScriptGenerateRequest,
+) -> StructuredScript:
+    """Keep claim/source references closed over the brief and source snapshot."""
+    brief = script.knowledge_brief or knowledge_brief_for_payload(payload)
+    requested = knowledge_brief_for_payload(payload)
+    if not brief.audience and requested.audience:
+        brief.audience = requested.audience
+    if not brief.thesis and requested.thesis:
+        brief.thesis = requested.thesis
+    if not brief.viewer_takeaway and requested.viewer_takeaway:
+        brief.viewer_takeaway = requested.viewer_takeaway
+    if not brief.key_claims and requested.key_claims:
+        brief.key_claims = list(requested.key_claims)
+    if not brief.source_refs and requested.source_refs:
+        brief.source_refs = list(requested.source_refs)
+    if not brief.genre or brief.genre == "auto":
+        brief.genre = payload.genre or requested.genre or "auto"
+
+    allowed_sources = {
+        ref
+        for source in payload.research_sources
+        for ref in (source.ref_id, source.url)
+        if ref
+    }
+    source_aliases = {
+        source.url: source.ref_id
+        for source in payload.research_sources
+        if source.url and source.ref_id
+    }
+    if payload.research_sources and not brief.source_refs:
+        # Fixed scripts do not invent claim-level matches, but they should
+        # still retain the research snapshot for later review instead of
+        # silently dropping all provenance between research and storyboard.
+        brief.source_refs = [source.ref_id for source in payload.research_sources if source.ref_id]
+    for claim in brief.key_claims:
+        claim.source_refs = list(
+            dict.fromkeys(source_aliases.get(ref, ref) for ref in claim.source_refs if ref)
+        )[:20]
+    brief.source_refs = list(
+        dict.fromkeys(source_aliases.get(ref, ref) for ref in brief.source_refs if ref)
+    )[:20]
+    brief.source_refs = list(
+        dict.fromkeys(
+            [*brief.source_refs, *(ref for claim in brief.key_claims for ref in claim.source_refs)]
+        )
+    )[:20]
+    if allowed_sources:
+        # Keep only references present in the research snapshot. User-provided
+        # refs remain valid when no snapshot was supplied, preserving explicit
+        # manual provenance instead of silently inventing a match.
+        brief.source_refs = [ref for ref in brief.source_refs if ref in allowed_sources]
+        for claim in brief.key_claims:
+            claim.source_refs = [ref for ref in claim.source_refs if ref in allowed_sources]
+
+    for scene in script.scenes:
+        scene.source_refs = list(
+            dict.fromkeys(source_aliases.get(ref, ref) for ref in scene.source_refs if ref)
+        )
+    brief.source_refs = list(
+        dict.fromkeys(
+            [*brief.source_refs, *(ref for scene in script.scenes for ref in scene.source_refs)]
+        )
+    )[:20]
+    if allowed_sources:
+        brief.source_refs = [ref for ref in brief.source_refs if ref in allowed_sources]
+
+    claim_ids = {claim.id for claim in brief.key_claims}
+    source_refs = set(brief.source_refs)
+    for scene in script.scenes:
+        scene.visual_role = infer_visual_role(scene.narration_text) if not scene.visual_role else scene.visual_role
+        scene.claim_refs = list(dict.fromkeys(ref for ref in scene.claim_refs if ref in claim_ids))
+        scene.source_refs = [ref for ref in scene.source_refs if ref in source_refs]
+    script.knowledge_brief = brief
+    return script
 
 
 # ==================== 3-SECOND GOLDEN HOOK STRATEGIES ====================
@@ -185,9 +293,6 @@ PROMPT_CALL_BUDGETS = {
     "fixed_title": {"max_calls": 1, "temperature": 0.4, "max_tokens": 120},
     "fixed_visual_batch": {"max_calls": 1, "temperature": 0.5, "max_tokens": 3600},
     "platform_metadata": {"max_calls": 1, "temperature": 0.2, "max_tokens": 800},
-    "content_title": {"max_calls": 1, "temperature": 0.4, "max_tokens": 100},
-    "narration": {"max_calls": 1, "temperature": 0.7, "max_tokens": 2500},
-    "visual_single": {"max_calls": 1, "temperature": 0.5, "max_tokens": 500},
     "metadata_regenerate": {"max_calls": 1, "temperature": 0.2, "max_tokens": 1000},
 }
 
@@ -242,6 +347,61 @@ def parse_script_from_text(
     raw_text: str, default_topic: str = "短视频创作", style_desc: str = ""
 ) -> StructuredScript:
     """从 Markdown 或自由格式的模型文本中解析结构化脚本。"""
+    # The text fallback keeps the structured-generation system prompt, so a
+    # provider may still return a JSON entity. Parse that shape before the
+    # line-oriented compatibility parser; otherwise the whole JSON document is
+    # mistaken for one narration and the requested scene count is lost.
+    json_candidates: list[str] = []
+    stripped = raw_text.strip().lstrip("\ufeff")
+    json_candidates.append(stripped)
+    json_candidates.extend(
+        match.group(1).strip()
+        for match in re.finditer(
+            r"```(?:json)?\s*([\s\S]*?)\s*```", stripped, re.IGNORECASE
+        )
+    )
+    decoder = json.JSONDecoder()
+    for candidate in dict.fromkeys(item for item in json_candidates if item):
+        parsed_values: list[Any] = []
+        try:
+            parsed_values.append(json.loads(candidate))
+        except (TypeError, json.JSONDecodeError):
+            pass
+        for match in re.finditer(r"\{", candidate):
+            try:
+                parsed, _ = decoder.raw_decode(candidate[match.start() :])
+            except json.JSONDecodeError:
+                continue
+            parsed_values.append(parsed)
+        for parsed in parsed_values:
+            if not isinstance(parsed, dict) or not isinstance(parsed.get("scenes"), list):
+                continue
+            values = dict(parsed)
+            values.setdefault("title", default_topic)
+            values.setdefault("hook", "先从已有信息梳理这个问题")
+            values.setdefault(
+                "narration",
+                "\n".join(
+                    str(scene.get("narration_text", "")).strip()
+                    for scene in values["scenes"]
+                    if isinstance(scene, dict) and scene.get("narration_text")
+                ),
+            )
+            try:
+                script = StructuredScript.model_validate(values)
+            except Exception:
+                # A malformed optional Knowledge Brief must not discard valid
+                # scenes produced by the compatibility fallback.
+                values.pop("knowledge_brief", None)
+                try:
+                    script = StructuredScript.model_validate(values)
+                except Exception:
+                    continue
+            for scene in script.scenes:
+                if style_desc and style_desc not in scene.visual_prompt:
+                    scene.visual_prompt = f"{style_desc}, {scene.visual_prompt}"
+            return script
+
     lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
     title = default_topic
     hook = "先从已有信息梳理这个问题"
@@ -272,6 +432,7 @@ def parse_script_from_text(
                         narration_text=current_narration,
                         visual_prompt=vp,
                         badge_text=current_badge or f"Part {len(scenes) + 1}",
+                        visual_role=infer_visual_role(current_narration),
                     )
                 )
                 narration_lines.append(current_narration)
@@ -299,6 +460,7 @@ def parse_script_from_text(
                 narration_text=current_narration,
                 visual_prompt=vp,
                 badge_text=current_badge or f"Part {len(scenes) + 1}",
+                visual_role=infer_visual_role(current_narration),
             )
         )
         narration_lines.append(current_narration)
@@ -315,6 +477,7 @@ def parse_script_from_text(
                     else _visual_prompt_fallback(p)
                 ),
                 badge_text=f"Part {i + 1}",
+                visual_role=infer_visual_role(p),
             )
             for i, p in enumerate(parts)
         ]
@@ -333,8 +496,10 @@ def parse_script_from_text(
                     if style_desc
                     else _visual_prompt_fallback(default_topic)
                 ),
+                visual_role=infer_visual_role(default_topic),
             )
         ],
+        knowledge_brief=KnowledgeBrief(thesis=title, genre="auto"),
     )
 
 
@@ -349,11 +514,13 @@ class GenerationService:
         execution_context=None,
         task_id: str | None = None,
         job_id: str | None = None,
+        production_settings: dict[str, Any] | None = None,
     ):
         self.session = session
         self.execution_context = execution_context
         self.storage = storage
         self.provider_manager = provider_manager or ProviderManager(session)
+        self.production_settings = production_settings
         self.task_repo = TaskRepository(session)
         self.scene_repo = SceneRepository(session)
         self.project_repo = ProjectRepository(session)
@@ -363,6 +530,11 @@ class GenerationService:
         self.prompt_observations = PromptObservationRecorder(
             session, task_id=task_id, job_id=job_id
         )
+
+    def _task_settings(self, task: TaskModel | None) -> dict[str, Any]:
+        if self.production_settings is not None:
+            return self.production_settings
+        return (task.generation_settings if task else {}) or {}
 
     @staticmethod
     def _prompt_spec(prompt_id: str, prompt_versions: dict[str, str] | None = None):
@@ -510,11 +682,16 @@ class GenerationService:
             "你是短视频分镜的批量视觉提示词编辑。只处理输入的旁白，不改写、合并、复制或编造旁白。"
             "必须返回一个 JSON 数据对象，顶层字段为 items；每个输入 sequence_index 恰好对应一个输出项，"
             "索引必须从 0 连续递增，visual_prompt 必须是非空、可直接用于视觉生成的中文提示词。"
+            "画面规划先判断信息角色，再决定构图；可使用 concept、process、comparison、timeline、data、example、quote、b_roll。"
             f"\n{visual_rules}\n"
             "输出对象不能包含 Markdown、解释或额外字段。"
         )
         batch_input = [
-            {"sequence_index": index, "narration_text": narration}
+            {
+                "sequence_index": index,
+                "narration_text": narration,
+                "suggested_visual_role": infer_visual_role(narration).value,
+            }
             for index, narration in enumerate(narrations)
         ]
         prompt = (
@@ -657,16 +834,15 @@ class GenerationService:
             "1:1": (1024, 1024),
         }.get(aspect_ratio, (1024, 1024))
 
-    @classmethod
     def _resolve_template_media(
-        cls, task: TaskModel | None, project_aspect_ratio: str
+        self, task: TaskModel | None, project_aspect_ratio: str
     ) -> tuple[str, int, int]:
         """Use the selected template's media contract, as the Demo does."""
-        payload = (task.input_payload if task else {}) or {}
-        template_id = payload.get("template_id", "default_portrait")
+        payload = self._task_settings(task)
+        template_id = payload.get("template_id", "image_gallery_matted")
         template = template_catalog.get(template_id)
         if not template:
-            width, height = cls._default_media_dimensions(project_aspect_ratio)
+            width, height = self._default_media_dimensions(project_aspect_ratio)
             return project_aspect_ratio, width, height
 
         width, height = template_catalog.get_media_size(template_id)
@@ -940,7 +1116,7 @@ class GenerationService:
 
     @staticmethod
     def _parse_research_query_response(raw_response: str, max_queries: int) -> list[str]:
-        """Parse the query-planning JSON contract and Demo-compatible aliases."""
+        """Parse the query-planning JSON contract from common provider shapes."""
         if not isinstance(raw_response, str) or not raw_response.strip():
             raise ValueError("LLM 未返回查询语句。")
 
@@ -1251,7 +1427,7 @@ class GenerationService:
         task = await self.task_repo.get_by_id(task_id)
         if not task:
             raise NotFoundException("Task", task_id)
-        payload = dict(task.input_payload or {})
+        payload = dict(self._task_settings(task))
         topic = str(payload.get("topic") or task.title or "短视频创作").strip() or "短视频创作"
         cached = payload.get("research")
         if isinstance(cached, dict) and not force and cached.get("status") in {
@@ -1276,7 +1452,7 @@ class GenerationService:
             "completed_at": None,
         }
         payload["research"] = pending
-        task.input_payload = payload
+        task.generation_settings = payload
         if self.execution_context:
             await self.execution_context.fence(self.session)
         await self.task_repo.update(task)
@@ -1316,7 +1492,7 @@ class GenerationService:
             payload["research_context"] = persisted_result.format_for_prompt()
         else:
             payload.pop("research_context", None)
-        task.input_payload = payload
+        task.generation_settings = payload
         if self.execution_context:
             await self.execution_context.fence(self.session)
         await self.task_repo.update(task)
@@ -1330,7 +1506,7 @@ class GenerationService:
         task = await self.task_repo.get_by_id(task_id)
         if not task:
             raise NotFoundException("Task", task_id)
-        payload = dict(task.input_payload or {})
+        payload = dict(self._task_settings(task))
         topic = str(payload.get("topic") or task.title or "短视频创作").strip() or "短视频创作"
         cached = payload.get("research")
         if isinstance(cached, dict):
@@ -1340,137 +1516,6 @@ class GenerationService:
             status="pending",
             summary="该任务尚未执行资料检索。",
         )
-
-    async def generate_title(self, payload: ContentGenerateRequest) -> ContentGenerateResponse:
-        source = (payload.raw_script or payload.narration or payload.topic).strip()
-        if not source:
-            raise ValidationException("生成标题需要提供主题或文案。")
-        llm_provider = await self._get_llm_provider()
-        context_hint = (
-            f"\n补充背景资料（仅用于增强标题事实感，不要改写原文）：{payload.context[:1200]}"
-            if payload.context
-            else ""
-        )
-        title = await self._llm_text(
-            llm_provider,
-            "content.title",
-            "请为下面的短视频内容生成一个 30 字以内、无标点结尾、适合短视频平台的标题。"
-            f"只输出标题，不要解释。{CONTENT_QUALITY_RULES}\n"
-            + format_untrusted_prompt_data(source, label="content", max_chars=500)
-            + context_hint,
-            prompt_versions=payload.prompt_versions,
-            temperature=PROMPT_CALL_BUDGETS["content_title"]["temperature"],
-            max_tokens=PROMPT_CALL_BUDGETS["content_title"]["max_tokens"],
-        )
-        return ContentGenerateResponse(title=normalize_generated_title(title))
-
-    async def generate_narration(self, payload: ContentGenerateRequest) -> ContentGenerateResponse:
-        if payload.raw_script and payload.raw_script.strip():
-            narrations = split_narration_script(payload.raw_script, split_mode="paragraph")
-            return ContentGenerateResponse(narrations=narrations)
-        if payload.narration and payload.narration.strip():
-            return ContentGenerateResponse(
-                narrations=split_narration_script(payload.narration, split_mode="paragraph")
-            )
-        if not payload.topic.strip():
-            raise ValidationException("生成旁白需要提供主题。")
-
-        research_report: ResearchResponse | None = None
-        research_context = payload.context
-        if payload.enable_research:
-            research_report = await self.research_topic(
-                payload.topic,
-                max_results=payload.research_max_results,
-                max_queries=payload.research_max_queries,
-                search_provider_id=payload.search_provider_id,
-                prompt_versions=payload.prompt_versions,
-            )
-            if research_report.status == "completed" and research_report.sources:
-                research_context = research_report.format_for_prompt()
-        else:
-            research_report = ResearchResponse(
-                topic=payload.topic.strip(),
-                status="skipped",
-                summary="已关闭实时资料检索。",
-            )
-
-        llm_provider = await self._get_llm_provider()
-        genre_hint = get_genre_instruction(payload.genre)
-        context_hint = (
-            "\n" + format_untrusted_prompt_data(research_context, max_chars=5000)
-            if research_context else ""
-        )
-        raw = await self._llm_text(
-            llm_provider,
-            "content.narration",
-            format_untrusted_prompt_data(
-                payload.topic, label="user_topic", max_chars=700
-            ) + context_hint,
-            prompt_versions=payload.prompt_versions,
-            system_prompt=(
-                f"请创作 {payload.target_scene_count} 段短视频口语化旁白。"
-                f"题材要求：{genre_hint}。{CONTENT_QUALITY_RULES}"
-                "每段独立成行，只输出旁白，不要编号和解释。"
-            ),
-            temperature=PROMPT_CALL_BUDGETS["narration"]["temperature"],
-            max_tokens=PROMPT_CALL_BUDGETS["narration"]["max_tokens"],
-        )
-        narrations = [
-            re.sub(r"^\s*(?:[-*•]|\d+[.、)]?)\s*", "", line).strip()
-            for line in re.split(r"[\r\n]+", raw or "")
-            if line.strip()
-        ]
-        if (
-            "target_scene_count" in payload.model_fields_set
-            and len(narrations) != payload.target_scene_count
-        ):
-            raise ValidationException(
-                f"旁白数量不符合请求：期望 {payload.target_scene_count} 段旁白，实际 {len(narrations)} 段。"
-            )
-        return ContentGenerateResponse(
-            narrations=(
-                narrations
-                if "target_scene_count" in payload.model_fields_set
-                else narrations[: payload.target_scene_count]
-            ),
-            research=research_report,
-        )
-
-    async def _generate_visual_prompt(
-        self, payload: ContentGenerateRequest, *, video: bool
-    ) -> ContentGenerateResponse:
-        source = (payload.narration or payload.raw_script or payload.topic).strip()
-        if not source:
-            raise ValidationException("生成画面提示词需要提供主题或旁白。")
-        llm_provider = await self._get_llm_provider()
-        style = IMAGE_STYLE_PRESETS.get(payload.style_preset, {}).get("description", "")
-        medium = "动态视频镜头" if video else "静态图片"
-        rules = build_visual_prompt_rules(
-            video=video, aspect_ratio=payload.aspect_ratio, source=source
-        )
-        context_hint = (
-            "\n" + format_untrusted_prompt_data(payload.context, max_chars=2000)
-            if payload.context else ""
-        )
-        prompt = await self._llm_text(
-            llm_provider,
-            "visual.video" if video else "visual.image",
-            f"请为下面的短视频内容生成一条详细、可直接用于{medium}生成的中文画面提示词。"
-            "提示词只描述可见内容，并按照规则组织信息；不要把解释、创作过程或规则原文放进结果。"
-            f"\n视觉风格预设：{style}\n{rules}\n"
-            + format_untrusted_prompt_data(source, label="scene_content", max_chars=1200)
-            + context_hint,
-            prompt_versions=payload.prompt_versions,
-            temperature=PROMPT_CALL_BUDGETS["visual_single"]["temperature"],
-            max_tokens=PROMPT_CALL_BUDGETS["visual_single"]["max_tokens"],
-        )
-        return ContentGenerateResponse(prompt=prompt.strip().strip('"\''))
-
-    async def generate_image_prompt(self, payload: ContentGenerateRequest) -> ContentGenerateResponse:
-        return await self._generate_visual_prompt(payload, video=False)
-
-    async def generate_video_prompt(self, payload: ContentGenerateRequest) -> ContentGenerateResponse:
-        return await self._generate_visual_prompt(payload, video=True)
 
     async def generate_script(self, payload: ScriptGenerateRequest) -> StructuredScript:
         """Generate structured video storyboard script using LLM or fixed text splitting"""
@@ -1547,6 +1592,7 @@ class GenerationService:
                     narration_text=narration,
                     visual_prompt=visual_prompt,
                     badge_text=f"Part {index + 1}",
+                    visual_role=infer_visual_role(narration),
                 )
                 for index, (narration, visual_prompt) in enumerate(
                     zip(narrations, visual_prompts, strict=True)
@@ -1563,14 +1609,19 @@ class GenerationService:
                 research_hint=research_hint,
                 prompt_versions=payload.prompt_versions,
             )
-            return self._finalize_script_metadata(
-                StructuredScript(
-                    title=title,
-                    hook=hook,
-                    narration=raw_text,
-                    scenes=scenes,
-                    metadata=generated_metadata or PlatformMetadata(title=title),
+            script = StructuredScript(
+                title=title,
+                hook=hook,
+                narration=raw_text,
+                scenes=scenes,
+                knowledge_brief=KnowledgeBrief(
+                    **knowledge_brief_for_payload(payload).model_dump()
                 ),
+                metadata=generated_metadata or PlatformMetadata(title=title),
+            )
+            script = normalize_knowledge_script(script, payload=payload)
+            return self._finalize_script_metadata(
+                script,
                 topic=payload.topic or raw_text,
                 genre=payload.genre,
             )
@@ -1613,21 +1664,31 @@ class GenerationService:
 
         system_prompt = (
             "你是一名资深的短视频编剧与视觉导演。\n"
-            "你需要根据用户提供的主题、赛道指引与调研素材，创作一条表达清晰、节奏自然、画面明确的短视频结构化分镜脚本。\n\n"
+            "你需要根据用户提供的主题、Knowledge Brief、赛道指引与调研素材，创作一条表达清晰、节奏自然、画面明确的知识视频结构化分镜脚本。\n\n"
             f"【内容质量】\n{CONTENT_QUALITY_RULES}\n\n"
             f"【题材赛道要求】\n{genre_hint}\n\n"
             f"【黄金3秒钩子要求】\n{hook_hint}\n\n"
+            "【知识表达要求】\n"
+            "先明确 audience、thesis、viewer_takeaway，再拆出 key_claims。每个 key_claims 项必须有稳定 id、statement 和 source_refs；"
+            "source_refs 只能使用调研资料中给出的 source ref_id，无法核验的主张保持空引用并在表达中说明不确定性。"
+            "每个 scene 必须选择一个 visual_role，并用 claim_refs/source_refs 表明它解释或使用的关系；不要只生成与旁白相关的漂亮图片。\n"
+            "visual_role 只能是 concept、process、comparison、timeline、data、example、quote、b_roll；"
+            "concept 解释定义，process 表达步骤，comparison 表达差异，timeline 表达时间顺序，data 承载已有数据，example 落地案例，quote 保留引用关系，b_roll 仅作不承载新事实的补充画面。\n\n"
             + visual_section
             +
             "【输出字段要求】\n"
             "1. title: 清晰、有吸引力且符合平台表达的标题（<= 30 字，末尾无标点）；\n"
             "2. hook: 第一分镜黄金 3 秒抓人文案；\n"
             "3. narration: 完整的口播旁白总览；\n"
-            f"4. scenes: 包含分镜序号、精练口语化旁白 (narration_text)、{scene_visual_field}、角标 (badge_text)；\n"
-            "5. metadata: 抖音发布元数据；title 必须与视频 title 一致，description 用与主题相同的语言写 1-3 句发布文案，"
+            "4. knowledge_brief: audience、thesis、viewer_takeaway、key_claims、source_refs；\n"
+            f"5. scenes: 包含分镜序号、精练口语化旁白 (narration_text)、{scene_visual_field}、角标 (badge_text)、visual_role、claim_refs、source_refs、production_metadata；\n"
+            "6. metadata: 抖音发布元数据；title 必须与视频 title 一致，description 用与主题相同的语言写 1-3 句发布文案，"
             "只能重组脚本已有事实；概括核心价值，评论邀请可选。"
             f"{PLATFORM_TAG_RULES}\n"
-            "declaration 从‘内容由AI生成’、‘内容取材网络’、‘个人观点，仅供参考’中选择合适的一项。"
+            "declaration 从‘内容由AI生成’、‘内容取材网络’、‘个人观点，仅供参考’中选择合适的一项；"
+            "visibility 只能填写枚举值 public、friend 或 private，不得填写中文或其他同义词；"
+            "allow_download 必须是 true 或 false。knowledge_brief 必须是对象或 null，"
+            "其中 audience、thesis、viewer_takeaway 必须是字符串，key_claims 必须是数组。"
         )
 
         user_prompt = (
@@ -1637,7 +1698,21 @@ class GenerationService:
 
         if payload.research_context:
             user_prompt += "\n" + format_untrusted_prompt_data(payload.research_context) + "\n"
-        brief = format_content_brief(payload)
+        if payload.research_sources:
+            source_index = [
+                {
+                    "ref_id": source.ref_id,
+                    "title": source.title,
+                    "url": source.url,
+                }
+                for source in payload.research_sources
+            ]
+            user_prompt += "\n可用来源 ref_id（只能从中选择）：\n" + format_untrusted_prompt_data(
+                json.dumps(source_index, ensure_ascii=False),
+                label="source_index",
+                max_chars=3000,
+            ) + "\n"
+        brief = format_knowledge_brief(payload)
         if brief:
             user_prompt += "\n" + brief + "\n"
         if payload.prompt_prefix and not online_asset:
@@ -1683,6 +1758,8 @@ class GenerationService:
                 text_prompt = (
                     f"{user_prompt}\n\n"
                     "请按以下格式输出短视频分镜脚本：\n"
+                    f"必须输出恰好 {payload.target_scene_count} 个分镜，编号从 1 到 {payload.target_scene_count}；"
+                    "下面仅展示格式示例，不是数量限制。\n"
                     "标题：<视频标题>\n"
                     "钩子：<黄金3秒文案>\n"
                     f"分镜 1：\n旁白：<台词>\n{fallback_visual}\n"
@@ -1709,6 +1786,8 @@ class GenerationService:
             raise ValidationException(
                 f"分镜数量不符合请求：期望 {payload.target_scene_count} 个分镜，实际 {len(script.scenes)} 个。"
             )
+
+        script = normalize_knowledge_script(script, payload=payload)
 
         # Repair missing/title-derived tags once, without replacing valid metadata.
         valid_tags = self._filter_platform_tags(script.metadata.tags, script.title)
@@ -1757,13 +1836,13 @@ class GenerationService:
             raise ValidationException("请等待视频生成完成后再重新生成发布信息。")
         scenes = await self.scene_repo.list_by_task_id(task_id)
         narration = "\n".join(scene.narration_text for scene in scenes if scene.narration_text.strip())
-        narration = narration or (task.input_payload or {}).get("narration") or ""
+        narration = narration or self._task_settings(task).get("narration") or ""
         if not narration.strip():
             raise ValidationException("请先保存视频旁白，再重新生成发布信息。")
         provider = await self._get_llm_provider()
         if not provider:
             raise ValidationException("请先配置大语言模型服务。")
-        prompt_versions = (task.input_payload or {}).get("prompt_versions")
+        prompt_versions = self._task_settings(task).get("prompt_versions")
         prompt = (
             "根据视频旁白重新生成平台发布信息，保留旁白事实，不生成新分镜。只输出 JSON："
             '{"title":"30字以内的新标题","description":"1-3句发布描述","tags":["话题"]}。\n'
@@ -1787,18 +1866,13 @@ class GenerationService:
         metadata.tags = self._filter_platform_tags(metadata.tags, metadata.title)[:5]
         if not metadata.title or not metadata.description or not metadata.tags:
             raise ValidationException("模型未返回完整有效的标题、描述和话题，原发布信息已保留。")
-        previous = dict((task.input_payload or {}).get("metadata") or {})
+        previous = dict(self._task_settings(task).get("metadata") or {})
         merged = PlatformMetadata.model_validate({
             **previous, "title": metadata.title, "description": metadata.description, "tags": metadata.tags,
         })
         task.title = merged.title
         task.description = merged.description
-        task.input_payload = {**(task.input_payload or {}), "metadata": merged.model_dump()}
-        asset_id = (task.result_payload or {}).get("final_video_asset_id")
-        if asset_id:
-            asset = await self.asset_service.asset_repo.get_by_id(asset_id)
-            if asset:
-                asset.metadata_json = {**(asset.metadata_json or {}), "metadata": merged.model_dump()}
+        task.generation_settings = {**(task.generation_settings or {}), "metadata": merged.model_dump()}
         if self.execution_context:
             await self.execution_context.fence(self.session)
         await self.session.commit()
@@ -1814,13 +1888,20 @@ class GenerationService:
         task.title = script.title
         task.description = script.hook
         metadata_payload = script.metadata.model_dump()
-        if (task.input_payload or {}).get("content_mode") == "online_asset":
+        if self._task_settings(task).get("content_mode") == "online_asset":
             metadata_payload["declaration"] = "内容取材网络"
-        task.input_payload = {
-            **(task.input_payload or {}),
+        script_payload = {
             "hook": script.hook,
             "narration": script.narration,
             "metadata": metadata_payload,
+        }
+        if task.project.mode == ProductionMode.KNOWLEDGE.value:
+            script_payload["knowledge_brief"] = (
+                script.knowledge_brief or KnowledgeBrief()
+            ).model_dump()
+        task.generation_settings = {
+            **(task.generation_settings or {}),
+            **script_payload,
         }
         if self.execution_context:
             await self.execution_context.fence(self.session)
@@ -1835,6 +1916,24 @@ class GenerationService:
                 layout_params={
                     **({"badge_text": sc.badge_text} if sc.badge_text else {}),
                 },
+                visual_role=sc.visual_role,
+                claim_refs=list(sc.claim_refs),
+                source_refs=list(sc.source_refs),
+                production_metadata=(
+                    dict(sc.production_metadata)
+                    if sc.production_metadata
+                    else (
+                        {
+                            "knowledge": {
+                                "visual_role": sc.visual_role.value,
+                                "claim_refs": list(sc.claim_refs),
+                                "source_refs": list(sc.source_refs),
+                            }
+                        }
+                        if task.project.mode == ProductionMode.KNOWLEDGE.value
+                        else {}
+                    )
+                ),
             )
             for i, sc in enumerate(script.scenes)
         ]
@@ -1859,14 +1958,10 @@ class GenerationService:
         task = await self.task_repo.get_by_id(scene.task_id)
         target_voice = voice_id
         if not target_voice and task:
-            target_voice = task.input_payload.get("voice_id")
-            if not target_voice:
-                project = await self.project_repo.get_by_id(task.project_id)
-                if project and project.default_voice_id:
-                    target_voice = project.default_voice_id
+            target_voice = self._task_settings(task).get("voice_id")
         target_voice = target_voice or await self.provider_manager.get_default_tts_voice()
 
-        target_speed = speed or (task.input_payload.get("speed") if task else 1.0) or 1.0
+        target_speed = speed or self._task_settings(task).get("speed") or 1.0
 
         try:
             tts_provider = await self._get_tts_provider()
@@ -1878,19 +1973,12 @@ class GenerationService:
             raise
 
         try:
-            try:
-                if self.execution_context:
-                    await self.execution_context.fence(self.session)
-                await self.session.commit()
-                tts_result = await tts_provider.synthesize(
-                    scene.narration_text, voice_id=target_voice, speed=float(target_speed)
-                )
-            except TypeError:
-                # Compatibility with third-party providers implementing the old protocol.
-                if self.execution_context:
-                    await self.execution_context.fence(self.session)
-                await self.session.commit()
-                tts_result = await tts_provider.synthesize(scene.narration_text, voice_id=target_voice)
+            if self.execution_context:
+                await self.execution_context.fence(self.session)
+            await self.session.commit()
+            tts_result = await tts_provider.synthesize(
+                scene.narration_text, voice_id=target_voice, speed=float(target_speed)
+            )
         except Exception as exc:
             await self._set_scene_generation_status(scene, "tts", "failed", str(exc))
             if self.execution_context:
@@ -1975,8 +2063,37 @@ class GenerationService:
         await self.scene_repo.update(scene)
         return scene
 
+    @staticmethod
+    def _provider_accepts(
+        provider,
+        parameter: str,
+        method: str = "generate_image",
+        *,
+        strict: bool = False,
+    ) -> bool:
+        """Detect optional capability without treating ``**kwargs`` as proof.
+
+        Legacy providers can still receive non-semantic optional context via
+        ``**kwargs``. Explicit reference-frame inputs use ``strict=True`` so a
+        provider must declare and implement the capability visibly.
+        """
+        try:
+            signature = inspect.signature(getattr(provider, method))
+        except (AttributeError, TypeError, ValueError):
+            return False
+        return parameter in signature.parameters or (
+            not strict
+            and any(item.kind == inspect.Parameter.VAR_KEYWORD for item in signature.parameters.values())
+        )
+
     async def generate_scene_image(
-        self, scene_id: str, prompt_override: str | None = None
+        self,
+        scene_id: str,
+        prompt_override: str | None = None,
+        *,
+        reference_image_path: str | None = None,
+        reference_image_paths: list[str] | None = None,
+        continuity_input: dict | None = None,
     ) -> SceneModel:
         """Generate a real visual image for a scene and bind it to the scene."""
         scene = await self.scene_repo.get_by_id(scene_id)
@@ -1997,8 +2114,8 @@ class GenerationService:
             project = await self.project_repo.get_by_id(task.project_id)
             if project:
                 aspect_ratio = project.aspect_ratio
-            workflow_snapshot = (task.input_payload or {}).get("image_workflow_snapshot") or {}
-            workflow_target = workflow_snapshot.get("path") or (task.input_payload or {}).get(
+            workflow_snapshot = self._task_settings(task).get("image_workflow_snapshot") or {}
+            workflow_target = workflow_snapshot.get("path") or self._task_settings(task).get(
                 "image_workflow_id"
             )
 
@@ -2011,6 +2128,31 @@ class GenerationService:
                 await self.execution_context.fence(self.session)
             await self.session.commit()
             raise ValidationException("未配置可用的图片 Provider，无法生成真实分镜画面。")
+        reference_paths = [item for item in (reference_image_paths or []) if item]
+        if reference_image_path and reference_image_path not in reference_paths:
+            reference_paths.insert(0, reference_image_path)
+        accepts_multiple_references = self._provider_accepts(
+            image_provider, "reference_image_paths", "generate_image", strict=True
+        )
+        if len(reference_paths) > 1 and not accepts_multiple_references:
+            message = "当前图片 Provider 不支持多参考图输入；不能只取第一张并静默丢弃角色或场景约束。"
+            await self._set_scene_generation_status(scene, "image", "failed", message)
+            if self.execution_context:
+                await self.execution_context.fence(self.session)
+            await self.session.commit()
+            raise ValidationException(message)
+        if reference_paths and not accepts_multiple_references and not self._provider_accepts(
+            image_provider, "reference_image_path", "generate_image", strict=True
+        ):
+            message = (
+                "当前图片 Provider 不支持参考图输入；请配置支持 img2img 的工作流，"
+                "不能静默退化为文生图。"
+            )
+            await self._set_scene_generation_status(scene, "image", "failed", message)
+            if self.execution_context:
+                await self.execution_context.fence(self.session)
+            await self.session.commit()
+            raise ValidationException(message)
         img_bytes = None
         width, height = media_width, media_height
         fmt = "png"
@@ -2023,24 +2165,27 @@ class GenerationService:
         await self.session.commit()
 
         try:
-            try:
-                img_result = await image_provider.generate_image(
-                    prompt,
-                    aspect_ratio=aspect_ratio,
-                    workflow=workflow_target,
-                    width=media_width,
-                    height=media_height,
-                )
-            except TypeError:
-                try:
-                    img_result = await image_provider.generate_image(
-                        prompt, aspect_ratio=aspect_ratio, workflow=workflow_target
-                    )
-                except TypeError:
-                    # Compatibility with providers implementing the pre-workflow protocol.
-                    img_result = await image_provider.generate_image(
-                        prompt, aspect_ratio=aspect_ratio
-                    )
+            img_result = await image_provider.generate_image(
+                prompt,
+                **{
+                    "aspect_ratio": aspect_ratio,
+                    "workflow": workflow_target,
+                    "width": media_width,
+                    "height": media_height,
+                    **(
+                        {"reference_image_paths": reference_paths}
+                        if reference_paths and accepts_multiple_references
+                        else {"reference_image_path": reference_paths[0]}
+                        if reference_paths and self._provider_accepts(image_provider, "reference_image_path", "generate_image", strict=True)
+                        else {}
+                    ),
+                    **(
+                        {"continuity_input": continuity_input}
+                        if continuity_input and self._provider_accepts(image_provider, "continuity_input", "generate_image")
+                        else {}
+                    ),
+                },
+            )
             img_bytes = img_result.image_bytes
             width = img_result.width
             height = img_result.height
@@ -2076,6 +2221,13 @@ class GenerationService:
                     "prompt": prompt,
                     "scene_id": scene.id,
                     "provider": getattr(image_provider, "name", "unknown"),
+                    "reference_strategy": (
+                        "provider_reference"
+                        if reference_paths
+                        else "deterministic_prompt_anchor"
+                    ),
+                    "reference_image_paths": reference_paths,
+                    "continuity_input": continuity_input or {},
                 },
             )
         except Exception as exc:
@@ -2100,7 +2252,11 @@ class GenerationService:
         return scene
 
     async def generate_scene_video(
-        self, scene_id: str, prompt_override: str | None = None
+        self,
+        scene_id: str,
+        prompt_override: str | None = None,
+        *,
+        continuity_input: dict | None = None,
     ) -> SceneModel:
         """Generate video clip for a scene, save as Asset, and bind to Scene"""
         scene = await self.scene_repo.get_by_id(scene_id)
@@ -2128,8 +2284,8 @@ class GenerationService:
             project = await self.project_repo.get_by_id(task.project_id)
             if project:
                 aspect_ratio = project.aspect_ratio
-            workflow_snapshot = (task.input_payload or {}).get("video_workflow_snapshot") or {}
-            workflow_target = workflow_snapshot.get("path") or (task.input_payload or {}).get(
+            workflow_snapshot = self._task_settings(task).get("video_workflow_snapshot") or {}
+            workflow_target = workflow_snapshot.get("path") or self._task_settings(task).get(
                 "video_workflow_id"
             )
 
@@ -2139,6 +2295,49 @@ class GenerationService:
             source_asset = await self.asset_service.asset_repo.get_by_id(scene.media_asset_id)
             if source_asset and source_asset.mime_type.startswith("image/"):
                 first_frame_path = str(self.storage.get_path(source_asset.file_path))
+
+        last_frame_path = (continuity_input or {}).get("last_frame_path")
+        reference_image_paths = [
+            item for item in ((continuity_input or {}).get("reference_image_paths") or []) if item
+        ]
+        accepts_video_references = self._provider_accepts(
+            video_provider, "reference_image_urls", "generate_video", strict=True
+        )
+        if reference_image_paths and not accepts_video_references and not first_frame_path:
+            if self._provider_accepts(video_provider, "image_url", "generate_video", strict=True):
+                first_frame_path = reference_image_paths[0]
+                reference_image_paths = []
+            else:
+                message = "当前视频 Provider 不支持短剧参考图输入；不能静默退化为纯文生视频。"
+                await self._set_scene_generation_status(scene, "video", "failed", message)
+                if self.execution_context:
+                    await self.execution_context.fence(self.session)
+                await self.session.commit()
+                raise ValidationException(message)
+        if first_frame_path and not self._provider_accepts(video_provider, "image_url", "generate_video", strict=True):
+            message = (
+                "当前视频 Provider 不支持首帧参考图输入；请配置 image-to-video 工作流，"
+                "不能静默退化为文生视频。"
+            )
+            await self._set_scene_generation_status(scene, "video", "failed", message)
+            if self.execution_context:
+                await self.execution_context.fence(self.session)
+            await self.session.commit()
+            raise ValidationException(message)
+        if (
+            last_frame_path
+            and not first_frame_path
+            and not self._provider_accepts(video_provider, "last_frame_url", "generate_video", strict=True)
+            and not self._provider_accepts(video_provider, "image_url", "generate_video", strict=True)
+        ):
+            message = (
+                "当前视频 Provider 不支持连续性参考帧输入；请配置支持首帧或末帧的工作流。"
+            )
+            await self._set_scene_generation_status(scene, "video", "failed", message)
+            if self.execution_context:
+                await self.execution_context.fence(self.session)
+            await self.session.commit()
+            raise ValidationException(message)
 
         try:
             requested_duration = float(scene.duration_seconds or 4.0)
@@ -2152,33 +2351,19 @@ class GenerationService:
             }
             if first_frame_path:
                 video_kwargs["image_url"] = first_frame_path
-            try:
-                if self.execution_context:
-                    await self.execution_context.fence(self.session)
-                await self.session.commit()
-                vid_result = await video_provider.generate_video(**video_kwargs)
-            except TypeError:
-                video_kwargs.pop("image_url", None)
-                try:
-                    if self.execution_context:
-                        await self.execution_context.fence(self.session)
-                    await self.session.commit()
-                    vid_result = await video_provider.generate_video(
-                        prompt=prompt,
-                        aspect_ratio=aspect_ratio,
-                        duration_seconds=requested_duration,
-                        workflow=workflow_target,
-                    )
-                except TypeError:
-                    # Compatibility with providers implementing the pre-workflow protocol.
-                    if self.execution_context:
-                        await self.execution_context.fence(self.session)
-                    await self.session.commit()
-                    vid_result = await video_provider.generate_video(
-                        prompt=prompt,
-                        aspect_ratio=aspect_ratio,
-                        duration_seconds=requested_duration,
-                    )
+            if last_frame_path and self._provider_accepts(video_provider, "last_frame_url", "generate_video", strict=True):
+                video_kwargs["last_frame_url"] = last_frame_path
+            elif last_frame_path and not first_frame_path and self._provider_accepts(video_provider, "image_url", "generate_video", strict=True):
+                # Existing video Providers expose first-frame input as
+                # image_url. Use it as a generic continuity hand-off when a
+                # dedicated last-frame parameter is unavailable.
+                video_kwargs["image_url"] = last_frame_path
+            if reference_image_paths and accepts_video_references:
+                video_kwargs["reference_image_urls"] = reference_image_paths
+            if self.execution_context:
+                await self.execution_context.fence(self.session)
+            await self.session.commit()
+            vid_result = await video_provider.generate_video(**video_kwargs)
 
             if not vid_result.video_bytes:
                 raise ValidationException("视频 Provider 返回空文件")
@@ -2197,6 +2382,14 @@ class GenerationService:
                     "prompt": prompt,
                     "scene_id": scene.id,
                     "provider": getattr(video_provider, "name", "unknown"),
+                    "continuity_strategy": (
+                        "provider_last_frame"
+                        if last_frame_path and self._provider_accepts(video_provider, "last_frame_url", "generate_video", strict=True)
+                        else "provider_first_frame"
+                        if first_frame_path or last_frame_path
+                        else "deterministic_prompt_anchor"
+                    ),
+                    "continuity_input": continuity_input or {},
                     "declared_duration_seconds": vid_result.duration_seconds,
                     "duration_source": "provider_declared",
                 },
@@ -2223,8 +2416,8 @@ class GenerationService:
             await self.asset_service.asset_repo.update(asset)
 
             scene.media_asset_id = asset.id
-            # Keep the raw generated video visible to legacy clients; composition will
-            # replace it with a subtitle/audio-aware scene clip.
+            # Keep the generated source available until the composition stage
+            # replaces it with the subtitle/audio-aware scene clip.
             scene.rendered_segment_asset_id = asset.id
             scene.layout_params = {
                 **(scene.layout_params or {}),

@@ -7,6 +7,7 @@ from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.core.database import Base
+from src.domain.enums import VisualRole
 
 if TYPE_CHECKING:
     from src.models.task import TaskModel
@@ -24,6 +25,12 @@ class SceneModel(Base):
     visual_prompt: Mapped[str] = mapped_column(Text, default="", nullable=False)
     duration_seconds: Mapped[float] = mapped_column(Float, default=4.0, nullable=False)
     layout_params: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    visual_role: Mapped[str] = mapped_column(
+        String(30), default=VisualRole.CONCEPT.value, nullable=False
+    )
+    claim_refs: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    source_refs: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    production_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     audio_asset_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     media_asset_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     rendered_segment_asset_id: Mapped[str | None] = mapped_column(String(36), nullable=True)

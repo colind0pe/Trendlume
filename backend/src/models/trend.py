@@ -166,9 +166,7 @@ class TopicProposalModel(Base):
 
     __tablename__ = "topic_proposals"
     __table_args__ = (
-        UniqueConstraint(
-            "project_id", "trend_item_id", name="uq_topic_proposal_project_item"
-        ),
+        UniqueConstraint("project_id", "trend_item_id", name="uq_topic_proposal_project_item"),
         Index("ix_topic_proposals_project_status", "project_id", "status"),
     )
 
@@ -195,7 +193,7 @@ class TopicProposalModel(Base):
     match_reason: Mapped[str] = mapped_column(Text, default="", nullable=False)
     matched_keywords: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     trend_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
-    content_brief: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    knowledge_brief: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     generation_options: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(UTC), nullable=False
@@ -228,9 +226,7 @@ class TrendSubscriptionModel(Base):
     timezone: Mapped[str] = mapped_column(String(64), default="UTC", nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="active", nullable=False)
     retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    last_run_id: Mapped[str | None] = mapped_column(
-        String(36), nullable=True
-    )
+    last_run_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     last_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_success_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     next_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

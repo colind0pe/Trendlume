@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.exceptions import NotFoundException, ValidationException
 from src.domain.enums import AssetType
 from src.models.asset import AssetModel
-from src.models.project import ProjectModel
+from src.models.project import ProjectAssetBindingModel, ProjectModel
 from src.models.scene import SceneModel
 from src.models.task import TaskModel
 from src.providers.materials import MaterialCandidate, MaterialProvider
@@ -424,7 +424,14 @@ class MaterialService:
             }
 
     async def _deduplicated_asset(self, project_id: str, content_hash: str) -> AssetModel | None:
-        rows = await self.session.scalars(select(AssetModel).where(AssetModel.project_id == project_id))
+        rows = await self.session.scalars(
+            select(AssetModel)
+            .join(
+                ProjectAssetBindingModel,
+                ProjectAssetBindingModel.asset_id == AssetModel.id,
+            )
+            .where(ProjectAssetBindingModel.project_id == project_id)
+        )
         for asset in rows:
             if (asset.metadata_json or {}).get("content_sha256") == content_hash:
                 return asset

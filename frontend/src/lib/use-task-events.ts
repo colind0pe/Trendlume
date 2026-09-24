@@ -2,37 +2,39 @@
 
 import { useEffect, useRef, useState } from "react";
 
-export const TASK_EVENT_NAMES = [
-  "task_queued",
-  "task_started",
-  "task_progress",
-  "task_completed",
-  "task_failed",
-  "task_cancelled",
-  "task.queued",
+export const TASK_LIFECYCLE_EVENTS = new Set([
   "task.started",
-  "task.progress",
   "task.completed",
   "task.failed",
   "task.cancelled",
+]);
+
+export const JOB_LIFECYCLE_EVENTS = new Set([
   "job.started",
-  "job.progress",
   "job.retrying",
   "job.completed",
   "job.failed",
   "job.cancelled",
   "job.uncertain",
+]);
+
+export const TASK_REFRESH_EVENTS = new Set([
+  ...TASK_LIFECYCLE_EVENTS,
+  ...JOB_LIFECYCLE_EVENTS,
   "step.started",
   "step.completed",
+  "scene.status_changed",
+  "asset.created",
+  "video.preview_ready",
+]);
+
+export const TASK_EVENT_NAMES = [
+  ...TASK_REFRESH_EVENTS,
   "step.failed",
   "step.reused",
   "step.retrying",
   "step.interrupted",
   "step.cancelled",
-  "progress",
-  "scene.status_changed",
-  "asset.created",
-  "video.preview_ready",
   "research.warning",
   "publish.verification_needed",
 ];
@@ -45,14 +47,9 @@ export interface TaskEventData {
   attempt?: number;
   artifact_ids?: string[];
   stage?: string;
-  current_stage?: string;
-  current_step?: string;
-  step?: string;
   status?: string;
   progress?: number;
   message?: string;
-  error?: string;
-  error_message?: string;
   current_scene?: number;
   total_scenes?: number;
   scene_id?: string;
@@ -70,8 +67,6 @@ export interface TaskEvent {
   data: TaskEventData;
   event_id?: number | string | null;
   created_at: string;
-  // Kept as a readable alias for the original hook contract.
-  timestamp: string;
 }
 
 export interface UseTaskEventsOptions {
@@ -154,8 +149,7 @@ export function useTaskEvents({
             parsed?.data && typeof parsed.data === "object" ? parsed.data : parsed;
           const actualEvent = parsed?.event || eventType;
           const eventId = (parsed?.event_id ?? event.lastEventId) || null;
-          const createdAt =
-            parsed?.created_at || parsed?.timestamp || new Date().toISOString();
+          const createdAt = parsed?.created_at || new Date().toISOString();
           const numericEventId = eventId !== null && eventId !== "" ? Number(eventId) : NaN;
 
           if (Number.isFinite(numericEventId)) {
@@ -182,7 +176,6 @@ export function useTaskEvents({
             data: payload || {},
             event_id: eventId,
             created_at: createdAt,
-            timestamp: createdAt,
           };
           onEventRef.current?.(taskEvent);
         } catch (error) {

@@ -2,11 +2,17 @@ import {
   Asset,
   AssetBatchResult,
   AccountCheckResponse,
-  ContentMode,
   Project,
+  DramaCharacter,
+  DramaLocation,
+  DramaProp,
   ProjectDetail,
   ProjectTemplate,
   ProjectTemplateUpdate,
+  Product,
+  ProductionMode,
+  ProductionRecipe,
+  ProductionReadiness,
   ProviderConfigItem,
   ProviderCreatePayload,
   ImageGenerationTestResult,
@@ -16,7 +22,6 @@ import {
   PublishingJob,
   PlatformMetadata,
   ResearchResponse,
-  ScheduledPublishConfig,
   Scene,
   SceneCreate,
   ScriptGenerateRequest,
@@ -28,8 +33,6 @@ import {
   VerificationRequestItem,
   VoiceInfo,
   WorkflowJob,
-  WorkflowSnapshot,
-  VisualMode,
   QRStartResponse,
   QRStatusResponse,
   TrendFeedResponse,
@@ -59,7 +62,10 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+async function request<T>(
+  endpoint: string,
+  options: RequestInit = {},
+): Promise<T> {
   const url = `${BASE_URL}${endpoint}`;
   const res = await fetch(url, {
     ...options,
@@ -89,24 +95,27 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 }
 
 export const api = {
-  getWorkflow: (taskId: string) => request<WorkflowSnapshot>(`/tasks/${taskId}/workflow`),
-  retryWorkflowStep: (taskId: string, step: string, unitKey?: string) => request<WorkflowJob>(`/tasks/${taskId}/steps/${step}/retry`, { method: "POST", body: JSON.stringify({ unit_key: unitKey }) }),
-  workflowArtifactUrl: (taskId: string, artifactId: string) => `${BASE_URL}/artifacts/${encodeURIComponent(artifactId)}/download?task_id=${encodeURIComponent(taskId)}`,
+  workflowArtifactUrl: (jobId: string, artifactId: string) =>
+    `${BASE_URL}/artifacts/${encodeURIComponent(artifactId)}/download?job_id=${encodeURIComponent(jobId)}`,
 
   // Projects
   listProjects: (limit = 50, offset = 0) =>
     request<Project[]>(`/projects?limit=${limit}&offset=${offset}`),
 
   // Trend discovery feed and real public-source collection.
-  listTrends: (filters: {
-    projectId?: string;
-    platform?: string;
-    freshness?: TrendFreshness;
-  } = {}) => {
+  listTrends: (
+    filters: {
+      projectId?: string;
+      platform?: string;
+      freshness?: TrendFreshness;
+    } = {},
+  ) => {
     const params = new URLSearchParams();
     if (filters.projectId) params.set("project_id", filters.projectId);
-    if (filters.platform && filters.platform !== "all") params.set("platform", filters.platform);
-    if (filters.freshness && filters.freshness !== "all") params.set("freshness", filters.freshness);
+    if (filters.platform && filters.platform !== "all")
+      params.set("platform", filters.platform);
+    if (filters.freshness && filters.freshness !== "all")
+      params.set("freshness", filters.freshness);
     const query = params.toString();
     return request<TrendFeedResponse>(`/trends${query ? `?${query}` : ""}`);
   },
@@ -114,28 +123,39 @@ export const api = {
   listTrendSources: () => request<TrendSourceCatalog[]>("/trends/sources"),
 
   listTrendRuns: (limit = 10) =>
-    request<TrendRun[]>(`/trends/runs?limit=${Math.max(1, Math.min(100, limit))}`),
+    request<TrendRun[]>(
+      `/trends/runs?limit=${Math.max(1, Math.min(100, limit))}`,
+    ),
 
-  refreshTrends: (data: { platforms?: string[]; source_keys?: string[] } = {}) =>
+  refreshTrends: (
+    data: { platforms?: string[]; source_keys?: string[] } = {},
+  ) =>
     request<TrendRun>("/trends/refresh", {
       method: "POST",
       body: JSON.stringify(data),
     }),
 
   getTrendPreferences: (projectId: string) =>
-    request<TrendPreferences>(`/trends/projects/${encodeURIComponent(projectId)}/preferences`),
+    request<TrendPreferences>(
+      `/trends/projects/${encodeURIComponent(projectId)}/preferences`,
+    ),
 
   updateTrendPreferences: (
     projectId: string,
     data: TrendPreferencesUpdateRequest,
   ) =>
-    request<TrendPreferences>(`/trends/projects/${encodeURIComponent(projectId)}/preferences`, {
-      method: "PATCH",
-      body: JSON.stringify(data),
-    }),
+    request<TrendPreferences>(
+      `/trends/projects/${encodeURIComponent(projectId)}/preferences`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      },
+    ),
 
   listTrendSubscriptions: (projectId?: string) =>
-    request<TrendSubscription[]>(`/trends/subscriptions${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""}`),
+    request<TrendSubscription[]>(
+      `/trends/subscriptions${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""}`,
+    ),
 
   createTrendSubscription: (data: TrendSubscriptionCreateRequest) =>
     request<TrendSubscription>("/trends/subscriptions", {
@@ -143,14 +163,23 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
-  updateTrendSubscription: (subscriptionId: string, data: TrendSubscriptionRequest) =>
-    request<TrendSubscription>(`/trends/subscriptions/${encodeURIComponent(subscriptionId)}`, {
-      method: "PATCH",
-      body: JSON.stringify(data),
-    }),
+  updateTrendSubscription: (
+    subscriptionId: string,
+    data: TrendSubscriptionRequest,
+  ) =>
+    request<TrendSubscription>(
+      `/trends/subscriptions/${encodeURIComponent(subscriptionId)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      },
+    ),
 
   runTrendSubscription: (subscriptionId: string) =>
-    request<TrendSubscription>(`/trends/subscriptions/${encodeURIComponent(subscriptionId)}/run`, { method: "POST" }),
+    request<TrendSubscription>(
+      `/trends/subscriptions/${encodeURIComponent(subscriptionId)}/run`,
+      { method: "POST" },
+    ),
 
   createTrendProposal: (data: TrendProposalCreateRequest) =>
     request<TrendProposal>("/trends/proposals", {
@@ -158,51 +187,47 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
-  updateTrendProposal: (
-    proposalId: string,
-    data: TrendProposalUpdateRequest,
-  ) =>
-    request<TrendProposal>(`/trends/proposals/${encodeURIComponent(proposalId)}`, {
-      method: "PATCH",
-      body: JSON.stringify(data),
-    }),
+  updateTrendProposal: (proposalId: string, data: TrendProposalUpdateRequest) =>
+    request<TrendProposal>(
+      `/trends/proposals/${encodeURIComponent(proposalId)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      },
+    ),
 
   rejectTrendProposal: (proposalId: string, expectedRevision: number) =>
-    request<TrendProposal>(`/trends/proposals/${encodeURIComponent(proposalId)}/reject`, {
-      method: "POST",
-      body: JSON.stringify({ expected_revision: expectedRevision }),
-    }),
+    request<TrendProposal>(
+      `/trends/proposals/${encodeURIComponent(proposalId)}/reject`,
+      {
+        method: "POST",
+        body: JSON.stringify({ expected_revision: expectedRevision }),
+      },
+    ),
 
-  approveTrendProposal: (
-    proposalId: string,
-    expectedRevision: number,
-  ) =>
-    request<TrendProposalActionResponse>(`/trends/proposals/${encodeURIComponent(proposalId)}/approve-and-create-task`, {
-      method: "POST",
-      body: JSON.stringify({ expected_revision: expectedRevision }),
-    }),
-
-  approveAndRunTrendProposal: (
-    proposalId: string,
-    expectedRevision: number,
-  ) =>
-    request<TrendProposalActionResponse>(`/trends/proposals/${encodeURIComponent(proposalId)}/approve-and-run`, {
-      method: "POST",
-      body: JSON.stringify({ expected_revision: expectedRevision }),
-    }),
+  approveTrendProposal: (proposalId: string, expectedRevision: number) =>
+    request<TrendProposalActionResponse>(
+      `/trends/proposals/${encodeURIComponent(proposalId)}/approve-and-create-task`,
+      {
+        method: "POST",
+        body: JSON.stringify({ expected_revision: expectedRevision }),
+      },
+    ),
 
   getProject: (id: string) => request<ProjectDetail>(`/projects/${id}`),
 
-  createProject: (data: {
-    name: string;
-    description?: string;
-    aspect_ratio?: string;
-    default_voice_id?: string;
-    bgm_asset_id?: string | null;
-    settings?: Record<string, any>;
-  }) =>
+  createProject: (data: Record<string, unknown>) =>
     request<Project>("/projects", {
       method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  getProjectProduct: (projectId: string) =>
+    request<Product>(`/projects/${projectId}/product`),
+
+  putProjectProduct: (projectId: string, data: Record<string, unknown>) =>
+    request<Product>(`/projects/${projectId}/product`, {
+      method: "PUT",
       body: JSON.stringify(data),
     }),
 
@@ -212,8 +237,106 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
+  listDramaCharacters: (projectId: string) =>
+    request<DramaCharacter[]>(`/projects/${projectId}/characters`),
+  createDramaCharacter: (projectId: string, data: Record<string, unknown>) =>
+    request<DramaCharacter>(`/projects/${projectId}/characters`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateDramaCharacter: (
+    projectId: string,
+    resourceId: string,
+    data: Record<string, unknown>,
+  ) =>
+    request<DramaCharacter>(`/projects/${projectId}/characters/${resourceId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  approveDramaCharacter: (projectId: string, resourceId: string) =>
+    request<DramaCharacter>(
+      `/projects/${projectId}/characters/${resourceId}/approve`,
+      { method: "POST" },
+    ),
+  deleteDramaCharacter: (projectId: string, resourceId: string) =>
+    request<boolean>(`/projects/${projectId}/characters/${resourceId}`, {
+      method: "DELETE",
+    }),
+
+  listDramaLocations: (projectId: string) =>
+    request<DramaLocation[]>(`/projects/${projectId}/locations`),
+  createDramaLocation: (projectId: string, data: Record<string, unknown>) =>
+    request<DramaLocation>(`/projects/${projectId}/locations`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateDramaLocation: (
+    projectId: string,
+    resourceId: string,
+    data: Record<string, unknown>,
+  ) =>
+    request<DramaLocation>(`/projects/${projectId}/locations/${resourceId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  approveDramaLocation: (projectId: string, resourceId: string) =>
+    request<DramaLocation>(
+      `/projects/${projectId}/locations/${resourceId}/approve`,
+      { method: "POST" },
+    ),
+  deleteDramaLocation: (projectId: string, resourceId: string) =>
+    request<boolean>(`/projects/${projectId}/locations/${resourceId}`, {
+      method: "DELETE",
+    }),
+
+  listDramaProps: (projectId: string) =>
+    request<DramaProp[]>(`/projects/${projectId}/props`),
+  createDramaProp: (projectId: string, data: Record<string, unknown>) =>
+    request<DramaProp>(`/projects/${projectId}/props`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateDramaProp: (
+    projectId: string,
+    resourceId: string,
+    data: Record<string, unknown>,
+  ) =>
+    request<DramaProp>(`/projects/${projectId}/props/${resourceId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  approveDramaProp: (projectId: string, resourceId: string) =>
+    request<DramaProp>(`/projects/${projectId}/props/${resourceId}/approve`, {
+      method: "POST",
+    }),
+  deleteDramaProp: (projectId: string, resourceId: string) =>
+    request<boolean>(`/projects/${projectId}/props/${resourceId}`, {
+      method: "DELETE",
+    }),
+
   getProjectBgm: (projectId: string) =>
-    request<Asset[]>(`/projects/${projectId}/bgm`),
+    request<Array<{ asset: Asset }>>(
+      `/projects/${projectId}/assets?purpose=bgm`,
+    ).then((bindings) => bindings.map((binding) => binding.asset)),
+
+  listBgmCandidates: (projectId: string) =>
+    request<Asset[]>(`/projects/${projectId}/bgm-candidates`),
+
+  bindProjectAsset: (projectId: string, assetId: string, purpose: string) =>
+    request<{ binding_id: string }>(`/projects/${projectId}/assets`, {
+      method: "POST",
+      body: JSON.stringify({ asset_id: assetId, purpose }),
+    }),
+
+  addProjectProductAsset: (
+    projectId: string,
+    assetId: string,
+    role = "gallery",
+  ) =>
+    request<Record<string, unknown>>(`/projects/${projectId}/product/assets`, {
+      method: "POST",
+      body: JSON.stringify({ asset_id: assetId, role }),
+    }),
 
   deleteProject: (id: string) =>
     request<boolean>(`/projects/${id}`, {
@@ -236,7 +359,9 @@ export const api = {
     if (aspect_ratio) params.set("aspect_ratio", aspect_ratio);
     if (content_mode) params.set("content_mode", content_mode);
     const query = params.toString();
-    return request<TemplateCatalogItem[]>(query ? `/templates?${query}` : "/templates");
+    return request<TemplateCatalogItem[]>(
+      query ? `/templates?${query}` : "/templates",
+    );
   },
 
   previewTemplate: (
@@ -248,7 +373,7 @@ export const api = {
       video_asset_id?: string | null;
       params?: Record<string, any>;
       custom_css?: string | null;
-    } = {}
+    } = {},
   ) =>
     request<{
       template_id: string;
@@ -263,7 +388,7 @@ export const api = {
   // Project Tasks (1:N)
   listProjectTasks: (projectId: string, status?: string) =>
     request<Task[]>(
-      `/projects/${projectId}/tasks${status ? `?status=${status}` : ""}`
+      `/projects/${projectId}/tasks${status ? `?status=${status}` : ""}`,
     ),
 
   createProjectTask: (
@@ -271,28 +396,10 @@ export const api = {
     data: {
       title: string;
       description?: string;
-      job_type?: string;
-      input_payload?: Record<string, any>;
-      visual_mode?: VisualMode;
-      template_id?: string;
-      bgm_asset_id?: string | null;
-      bgm_enabled?: boolean;
-      bgm_volume?: number;
-      voice_id?: string | null;
-      voice_speed?: number;
-      content_mode?: ContentMode;
-      material_provider_id?: string | null;
-      template_params?: Record<string, any>;
-      source_asset_id?: string | null;
-      enable_research?: boolean;
-      search_provider_id?: string | null;
-      research_max_queries?: number;
-      research_max_results?: number;
-      image_workflow_id?: string | null;
-      video_workflow_id?: string | null;
-      target_scene_count?: number;
-      scheduled_publish?: ScheduledPublishConfig | null;
-    }
+      detail: Record<string, any> & { type: ProductionMode };
+      generation_settings?: Record<string, any>;
+      publishing_settings?: Record<string, any>;
+    },
   ) =>
     request<Task>(`/projects/${projectId}/tasks`, {
       method: "POST",
@@ -300,12 +407,18 @@ export const api = {
     }),
 
   // Tasks Resource & Workflow Actions
-  listAllTasks: (limit = 50, offset = 0, status?: string) =>
+  listAllTasks: (limit = 50, offset = 0, productionStatus?: string) =>
     request<Task[]>(
-      `/tasks?limit=${limit}&offset=${offset}${status ? `&status=${status}` : ""}`
+      `/tasks?limit=${limit}&offset=${offset}${productionStatus ? `&production_status=${productionStatus}` : ""}`,
     ),
 
   getTask: (taskId: string) => request<TaskDetail>(`/tasks/${taskId}`),
+
+  listProductionRecipes: (mode: ProductionMode) =>
+    request<ProductionRecipe[]>(`/tasks/recipes?mode=${encodeURIComponent(mode)}`),
+
+  getTaskReadiness: (taskId: string) =>
+    request<ProductionReadiness>(`/tasks/${taskId}/readiness`),
 
   getTaskResearch: (taskId: string) =>
     request<ResearchResponse>(`/tasks/${taskId}/research`),
@@ -321,88 +434,39 @@ export const api = {
       method: "DELETE",
     }),
 
-  generateTaskVideo: (taskId: string) =>
-    request<WorkflowJob>(`/tasks/${taskId}/generate`, {
+  approveTask: (taskId: string) =>
+    request<TaskDetail>(`/tasks/${taskId}/approve`, { method: "POST" }),
+
+  createWorkflowJob: (taskId: string) =>
+    request<WorkflowJob>(`/tasks/${taskId}/jobs`, {
       method: "POST",
     }),
 
-  cancelTaskGeneration: (taskId: string) =>
-    request<boolean>(`/tasks/${taskId}/cancel`, {
+  retrySceneMedia: (taskId: string, sceneId: string) =>
+    request<WorkflowJob>(`/tasks/${taskId}/scenes/${sceneId}/retry`, {
       method: "POST",
     }),
 
-  cancelScheduledPublish: (taskId: string) =>
-    request<boolean>(`/tasks/${taskId}/scheduled-publish/cancel`, {
-      method: "POST",
-    }),
+  listTaskJobs: (taskId: string) =>
+    request<WorkflowJob[]>(`/tasks/${taskId}/jobs`),
 
-  retryTaskGeneration: (taskId: string) =>
-    request<WorkflowJob>(`/tasks/${taskId}/retry`, {
-      method: "POST",
-    }),
+  getWorkflowJob: (jobId: string) =>
+    request<WorkflowJob>(`/workflow-jobs/${jobId}`),
+
+  retryWorkflowJob: (jobId: string) =>
+    request<WorkflowJob>(`/workflow-jobs/${jobId}/retry`, { method: "POST" }),
+
+  cancelWorkflowJob: (jobId: string) =>
+    request<WorkflowJob>(`/workflow-jobs/${jobId}/cancel`, { method: "POST" }),
 
   duplicateTask: (
     taskId: string,
-    payload: { mode?: "settings_only" | "settings_and_script"; title?: string } = {}
+    payload: {
+      mode?: "settings_only" | "settings_and_script";
+      title?: string;
+    } = {},
   ) =>
     request<TaskDetail>(`/tasks/${taskId}/duplicate`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }),
-
-  rerenderTask: (
-    taskId: string,
-    payload: {
-      template_id?: string;
-      template_params?: Record<string, any>;
-      bgm_enabled?: boolean | null;
-      bgm_asset_id?: string | null;
-      bgm_volume?: number | null;
-    } = {}
-  ) =>
-    request<{ task_id: string; job: WorkflowJob }>(`/tasks/${taskId}/rerender`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }),
-
-  resumeTaskGeneration: (taskId: string, jobId?: string) =>
-    request<WorkflowJob>(`/tasks/${taskId}/resume`, {
-      method: "POST",
-      body: JSON.stringify(jobId ? { job_id: jobId } : {}),
-    }),
-
-  composeTaskVideo: (taskId: string) =>
-    request<Asset>(`/tasks/${taskId}/compose`, {
-      method: "POST",
-    }),
-
-  publishTaskVideo: (
-    taskId: string,
-    payload: {
-    account_id?: string;
-    title?: string;
-    description?: string;
-    tags?: string[];
-    cover_asset_id?: string | null;
-    } = {}
-  ) =>
-    request<PublishingJob>(`/tasks/${taskId}/publish`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }),
-
-  scheduleTaskVideo: (
-    taskId: string,
-    payload: {
-      scheduled_at: string;
-      account_id?: string;
-      title?: string;
-      description?: string;
-      tags?: string[];
-      cover_asset_id?: string | null;
-    }
-  ) =>
-    request<PublishingJob>(`/tasks/${taskId}/schedule`, {
       method: "POST",
       body: JSON.stringify(payload),
     }),
@@ -416,11 +480,20 @@ export const api = {
   // AI Content Generation
   researchTopic: (
     topic: string,
-    options: { max_results?: number; max_queries?: number; search_provider_id?: string | null } = {}
+    options: {
+      max_results?: number;
+      max_queries?: number;
+      search_provider_id?: string | null;
+    } = {},
   ) =>
     request<ResearchResponse>("/generation/research", {
       method: "POST",
-      body: JSON.stringify({ topic, max_results: options.max_results ?? 5, max_queries: options.max_queries ?? 3, search_provider_id: options.search_provider_id }),
+      body: JSON.stringify({
+        topic,
+        max_results: options.max_results ?? 5,
+        max_queries: options.max_queries ?? 3,
+        search_provider_id: options.search_provider_id,
+      }),
     }),
 
   researchTask: (taskId: string) =>
@@ -454,6 +527,12 @@ export const api = {
 
   generateSceneVideo: (sceneId: string, promptOverride?: string) =>
     request<Scene>(`/generation/scenes/${sceneId}/video`, {
+      method: "POST",
+      body: JSON.stringify({ prompt_override: promptOverride }),
+    }),
+
+  generateSceneOnlineMaterial: (sceneId: string, promptOverride?: string) =>
+    request<Scene>(`/generation/scenes/${sceneId}/online-material`, {
       method: "POST",
       body: JSON.stringify({ prompt_override: promptOverride }),
     }),
@@ -509,7 +588,11 @@ export const api = {
       let errorMsg = `HTTP Error ${res.status}`;
       try {
         const errorData = await res.json();
-        errorMsg = errorData?.error?.message || errorData?.detail || errorData?.message || errorMsg;
+        errorMsg =
+          errorData?.error?.message ||
+          errorData?.detail ||
+          errorData?.message ||
+          errorMsg;
       } catch {
         // Ignore non-JSON error responses.
       }
@@ -571,10 +654,17 @@ export const api = {
 
   listComfyUIWorkflows: () =>
     request<
-      { id: string; name: string; type: string; subfolder?: string; file_name: string }[]
+      {
+        id: string;
+        name: string;
+        type: string;
+        subfolder?: string;
+        file_name: string;
+      }[]
     >("/providers/comfyui/workflows"),
 
-  listVoices: (active = false) => request<VoiceInfo[]>(`/providers/voices${active ? "?active=true" : ""}`),
+  listVoices: (active = false) =>
+    request<VoiceInfo[]>(`/providers/voices${active ? "?active=true" : ""}`),
 
   testVoice: async (
     voiceId: string,
@@ -602,7 +692,7 @@ export const api = {
   // Publishing
   listAccounts: (platform?: string) =>
     request<SocialAccount[]>(
-      `/publishing/accounts${platform ? `?platform=${platform}` : ""}`
+      `/publishing/accounts${platform ? `?platform=${platform}` : ""}`,
     ),
 
   deleteAccount: (accountId: string) =>
@@ -625,7 +715,11 @@ export const api = {
   getQRAuthStatus: (sessionId: string) =>
     request<QRStatusResponse>(`/publishing/auth/qr/status/${sessionId}`),
 
-  completeQRAuth: (data: { session_id: string; account_name: string; username?: string }) =>
+  completeQRAuth: (data: {
+    session_id: string;
+    account_name: string;
+    username?: string;
+  }) =>
     request<SocialAccount>("/publishing/auth/qr/complete", {
       method: "POST",
       body: JSON.stringify(data),
@@ -636,8 +730,27 @@ export const api = {
     if (projectId) params.append("project_id", projectId);
     if (status) params.append("status", status);
     const query = params.toString();
-    return request<PublishingJob[]>(`/publishing/jobs${query ? `?${query}` : ""}`);
+    return request<PublishingJob[]>(
+      `/publishing/jobs${query ? `?${query}` : ""}`,
+    );
   },
+
+  createPublishingJob: (data: {
+    project_id: string;
+    workflow_job_id: string;
+    artifact_id: string;
+    account_id: string;
+    platform: "douyin";
+    title: string;
+    description?: string;
+    tags?: string[];
+    cover_asset_id?: string | null;
+    scheduled_at?: string | null;
+  }) =>
+    request<PublishingJob>("/publishing/jobs", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
 
   executePublishingJob: (jobId: string) =>
     request<PublishingJob>(`/publishing/jobs/${jobId}/publish`, {
@@ -663,9 +776,15 @@ export const api = {
     request<boolean>(`/publishing/jobs/${jobId}`, { method: "DELETE" }),
 
   regenerateTaskMetadata: (taskId: string) =>
-    request<PlatformMetadata>(`/generation/tasks/${taskId}/metadata/regenerate`, { method: "POST" }),
+    request<PlatformMetadata>(
+      `/generation/tasks/${taskId}/metadata/regenerate`,
+      { method: "POST" },
+    ),
 
-  resolveUncertainPublishingJob: (jobId: string, action: "retry" | "acknowledge") =>
+  resolveUncertainPublishingJob: (
+    jobId: string,
+    action: "retry" | "acknowledge",
+  ) =>
     request<PublishingJob>(`/publishing/jobs/${jobId}/resolve-uncertain`, {
       method: "POST",
       body: JSON.stringify({ action }),

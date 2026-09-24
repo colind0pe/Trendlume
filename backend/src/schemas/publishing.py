@@ -107,30 +107,14 @@ class ManualCookieImportRequest(BaseModel):
 # ============================================================================
 
 
-class TaskPublishRequest(BaseModel):
-    account_id: str | None = None
-    title: str | None = None
-    description: str | None = None
-    tags: list[str] | None = None
-    cover_asset_id: str | None = None
-
-
-class TaskScheduleRequest(BaseModel):
-    scheduled_at: datetime
-    account_id: str | None = None
-    title: str | None = None
-    description: str | None = None
-    tags: list[str] | None = None
-    cover_asset_id: str | None = None
-
-
 class UncertainPublishResolveRequest(BaseModel):
     action: str = Field(description="retry or acknowledge")
 
 
 class PublishingJobCreate(BaseModel):
     project_id: str
-    video_asset_id: str
+    workflow_job_id: str
+    artifact_id: str
     account_id: str
     platform: PlatformType
     title: str = Field(min_length=1, max_length=255)

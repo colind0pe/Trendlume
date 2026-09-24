@@ -1,7 +1,6 @@
 """Generate brand-derived test media and previews for every active template.
 
-This intentionally scans only the three active template size directories. The
-legacy archive is evidence-only and is never rendered or modified.
+This intentionally scans only the three active template size directories.
 
 Run from the repository root with:
 
@@ -12,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import shutil
 import sys
 from pathlib import Path
 
@@ -182,7 +180,7 @@ async def main() -> None:
     assert len(renders) == 19
 
     template_catalog.invalidate()
-    print(f"Rendering all {len(renders)} active templates; legacy_archive is excluded...")
+    print(f"Rendering all {len(renders)} active templates...")
     for size, (template_id, title, text, image_path, params) in renders:
         custom_params = {
             "author": "@Trendlume",
@@ -200,17 +198,6 @@ async def main() -> None:
             output_path=output,
         )
         print(f"[OK] Rendered {size}/{output.name}")
-
-    # Keep the existing portrait default preview aliases in sync with active templates.
-    alias_copies = (
-        ("image_gallery_matted.png", "image_default.png"),
-        ("video_full_overlay.png", "video_default.png"),
-        ("static_editorial_quote.png", "static_default.png"),
-    )
-    portrait_preview_dir = PREVIEWS_DIR / "1080x1920"
-    for source_name, target_name in alias_copies:
-        shutil.copyfile(portrait_preview_dir / source_name, portrait_preview_dir / target_name)
-        print(f"[OK] Updated portrait alias {target_name}")
 
     print("All 19 active template previews rendered successfully.")
 

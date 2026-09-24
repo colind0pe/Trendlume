@@ -1,6 +1,7 @@
 from unittest.mock import AsyncMock
 
 import pytest
+
 from src.providers.publishing.douyin import (
     _fill_and_verify_douyin_caption,
     _verify_douyin_caption_after_blur,

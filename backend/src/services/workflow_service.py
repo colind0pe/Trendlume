@@ -143,11 +143,10 @@ class WorkflowService:
         cls, workflow_target: str | None, workflows_dir: Path | None = None
     ) -> Path | None:
         """
-        Resolve a workflow target string to an actual existing file Path.
-        Supports:
-        1. Exact relative path (e.g. 'image/image_flux.json')
-        2. Subfolder filename match (e.g. 'image_flux.json')
-        3. Legacy path backward compatibility (e.g. 'selfhost/image_flux.json' -> finds 'image/image_flux.json')
+        Resolve a canonical workflow catalog id to an actual existing file.
+
+        Workflow ids are persisted in task/provider snapshots, so resolution
+        must not guess from a basename or silently select a different file.
         """
         if not workflow_target or not workflow_target.strip():
             return None
@@ -166,23 +165,7 @@ class WorkflowService:
         except ValueError:
             return None
 
-        # 1. Direct path check
-        direct = candidate
-        if direct.is_file():
-            return direct
-
-        # 2. Match by exact filename across any subfolder
-        filename = target_path.name
-        matches = [p for p in base_dir.rglob(filename) if p.is_file()]
-        if matches:
-            return matches[0]
-
-        # 3. Match by stem with .json extension
-        stem_matches = [p for p in base_dir.rglob(f"{target_path.stem}.json") if p.is_file()]
-        if stem_matches:
-            return stem_matches[0]
-
-        return None
+        return candidate if candidate.is_file() else None
 
     @classmethod
     def get_workflow_snapshot(
